@@ -18,16 +18,147 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 32,
+  "id": 31,
   "links": [],
   "panels": [
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 32,
+      "panels": [
+        {
+          "datasource": {
+            "default": false,
+            "type": "prometheus",
+            "uid": "eefjuam4js934a"
+          },
+          "description": "",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "fillOpacity": 70,
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineWidth": 1
+              },
+              "mappings": [
+                {
+                  "options": {
+                    "0": {
+                      "color": "green",
+                      "index": 0,
+                      "text": "OK"
+                    },
+                    "1": {
+                      "color": "dark-red",
+                      "index": 1,
+                      "text": "Not OK"
+                    }
+                  },
+                  "type": "value"
+                },
+                {
+                  "options": {
+                    "from": 1,
+                    "result": {
+                      "color": "dark-red",
+                      "index": 2,
+                      "text": "Not OK"
+                    },
+                    "to": 1000
+                  },
+                  "type": "range"
+                }
+              ],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "dark-red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 0,
+            "y": 1
+          },
+          "id": 33,
+          "options": {
+            "colWidth": 0.9,
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "rowHeight": 0.9,
+            "showValue": "auto",
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "11.5.2",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "eefjuam4js934a"
+              },
+              "editorMode": "code",
+              "exemplar": true,
+              "expr": "devicestatus{hostname=~\"$bcm_hostname\"}",
+              "legendFormat": "{{hostname}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Device Status",
+          "transformations": [
+            {
+              "id": "calculateField",
+              "options": {
+                "mode": "binary",
+                "reduce": {
+                  "reducer": "sum"
+                }
+              }
+            }
+          ],
+          "type": "status-history"
+        }
+      ],
+      "title": "Node Health - BCM Required",
+      "type": "row"
+    },
     {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "id": 16,
       "panels": [],
@@ -100,7 +231,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 1
+        "y": 2
       },
       "id": 2,
       "options": {
@@ -111,11 +242,12 @@
           "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "single",
           "sort": "none"
         }
       },
-      "pluginVersion": "11.2.2+security-01",
+      "pluginVersion": "11.5.2",
       "targets": [
         {
           "datasource": {
@@ -166,7 +298,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 1
+        "y": 2
       },
       "id": 6,
       "options": {
@@ -184,7 +316,7 @@
         "showThresholdMarkers": true,
         "sizing": "auto"
       },
-      "pluginVersion": "11.2.2+security-01",
+      "pluginVersion": "11.5.2",
       "targets": [
         {
           "datasource": {
@@ -268,7 +400,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 9
+        "y": 10
       },
       "id": 30,
       "options": {
@@ -279,10 +411,12 @@
           "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "single",
           "sort": "none"
         }
       },
+      "pluginVersion": "11.5.2",
       "targets": [
         {
           "datasource": {
@@ -366,7 +500,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 9
+        "y": 10
       },
       "id": 29,
       "options": {
@@ -377,10 +511,12 @@
           "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "single",
           "sort": "none"
         }
       },
+      "pluginVersion": "11.5.2",
       "targets": [
         {
           "datasource": {
@@ -464,7 +600,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 17
+        "y": 18
       },
       "id": 28,
       "options": {
@@ -475,10 +611,12 @@
           "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "single",
           "sort": "none"
         }
       },
+      "pluginVersion": "11.5.2",
       "targets": [
         {
           "datasource": {
@@ -562,7 +700,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 17
+        "y": 18
       },
       "id": 10,
       "options": {
@@ -579,7 +717,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "11.5.1",
+      "pluginVersion": "11.5.2",
       "targets": [
         {
           "datasource": {
@@ -602,7 +740,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 25
+        "y": 26
       },
       "id": 31,
       "panels": [],
@@ -635,7 +773,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 26
+        "y": 27
       },
       "id": 26,
       "options": {
@@ -675,7 +813,7 @@
           "reverse": false
         }
       },
-      "pluginVersion": "11.2.2+security-01",
+      "pluginVersion": "11.5.2",
       "targets": [
         {
           "datasource": {
@@ -726,11 +864,17 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 26
+        "y": 27
       },
       "id": 25,
       "options": {
         "displayMode": "basic",
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
         "maxVizHeight": 23,
         "minVizHeight": 16,
         "minVizWidth": 8,
@@ -747,7 +891,7 @@
         "sizing": "manual",
         "valueMode": "color"
       },
-      "pluginVersion": "11.2.2+security-01",
+      "pluginVersion": "11.5.2",
       "targets": [
         {
           "datasource": {
@@ -806,7 +950,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 34
+        "y": 35
       },
       "id": 27,
       "options": {
@@ -846,7 +990,7 @@
           "reverse": false
         }
       },
-      "pluginVersion": "11.2.2+security-01",
+      "pluginVersion": "11.5.2",
       "targets": [
         {
           "datasource": {
@@ -899,11 +1043,17 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 34
+        "y": 35
       },
       "id": 12,
       "options": {
         "displayMode": "basic",
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
         "maxVizHeight": 23,
         "minVizHeight": 16,
         "minVizWidth": 8,
@@ -920,7 +1070,7 @@
         "sizing": "manual",
         "valueMode": "color"
       },
-      "pluginVersion": "11.2.2+security-01",
+      "pluginVersion": "11.5.2",
       "targets": [
         {
           "datasource": {
@@ -938,19 +1088,19 @@
       "type": "bargauge"
     }
   ],
+  "preload": false,
   "refresh": "5s",
-  "schemaVersion": 39,
+  "schemaVersion": 40,
   "tags": [],
   "templating": {
     "list": [
       {
         "current": {
-          "selected": true,
           "text": [
-            "All"
+            "10.184.203.113:9100"
           ],
           "value": [
-            "$__all"
+            "10.184.203.113:9100"
           ]
         },
         "datasource": {
@@ -959,7 +1109,6 @@
         },
         "definition": "label_values(node_cpu_seconds_total, instance)",
         "description": "",
-        "hide": 0,
         "includeAll": true,
         "label": "instance",
         "multi": true,
@@ -972,8 +1121,43 @@
         },
         "refresh": 1,
         "regex": "",
-        "skipUrlSync": false,
-        "sort": 0,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "Prometheus",
+          "value": "prometheus"
+        },
+        "includeAll": true,
+        "label": "data",
+        "name": "data",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "eefjuam4js934a"
+        },
+        "definition": "label_values(hostname)",
+        "includeAll": true,
+        "label": "BCM hostname",
+        "name": "bcm_hostname",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(hostname)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
         "type": "query"
       }
     ]
@@ -985,7 +1169,7 @@
   "timepicker": {},
   "timezone": "",
   "title": "CPU + Storage Metrics Dashboard",
-  "uid": "cpu-metrics",
-  "version": 46,
+  "uid": "beilmqsmzh24ga",
+  "version": 1,
   "weekStart": ""
 }
