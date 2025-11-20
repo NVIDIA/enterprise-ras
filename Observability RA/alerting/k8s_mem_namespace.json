@@ -1,0 +1,58 @@
+{
+  "orgID": 1,
+  "folderUID": "hifromthe3rateam",
+  "ruleGroup": "Alert Rules",
+  "title": "Kubernetes - High Memory Usage by Namespace",
+  "condition": "C",
+  "data": [
+    {
+      "refId": "A",
+      "queryType": "",
+      "relativeTimeRange": { "from": 300, "to": 0 },
+      "datasourceUid": "prometheus",
+      "model": {
+        "expr": "sum(container_memory_usage_bytes{container!=\"\"}) by (namespace)",
+        "interval": "",
+        "intervalMs": 1000,
+        "legendFormat": "{{namespace}}",
+        "editorMode": "code",
+        "maxDataPoints": 43200,
+        "refId": "A",
+        "instant": true,
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      }
+    },
+    {
+      "refId": "C",
+      "queryType": "",
+      "relativeTimeRange": { "from": 0, "to": 0 },
+      "datasourceUid": "__expr__",
+      "model": {
+        "type": "threshold",
+        "expression": "A",
+        "refId": "C",
+        "conditions": [
+          {
+            "evaluator": { "type": "gt", "params": [4294967296] },
+            "operator": { "type": "and" },
+            "query": { "params": ["A"] },
+            "reducer": { "type": "max", "params": [] },
+            "type": "query"
+          }
+        ],
+        "datasource": { "type": "__expr__","uid": "__expr__" },
+        "intervalMs": 1000,
+        "maxDataPoints": 43200
+      }
+    }
+  ],
+  "noDataState": "NoData",
+  "execErrState": "Error",
+  "for": "5m",
+  "labels": { "source": "api" },
+  "annotations": {
+    "summary": "Kubernetes - Namespace {{ $labels.namespace }} is using high memory (>4 GB) for at least 5 mins"
+  },
+  "isPaused": false
+}
+

@@ -1,0 +1,82 @@
+{
+  "orgID": 1,
+  "folderUID": "hifromthe3rateam",
+  "ruleGroup": "Alert Rules",
+  "title": "Kubernetes - Kubelet Down",
+  "condition": "C",
+  "data": [
+    {
+      "refId": "A",
+      "queryType": "",
+      "relativeTimeRange": {
+        "from": 3000,
+        "to": 0
+      },
+      "datasourceUid": "prometheus",
+      "model": {
+        "expr": "up{job=\"kubelet\", metrics_path=\"/metrics\"}",
+        "interval": "",
+        "intervalMs": 1000,
+        "legendFormat": "{{instance}} {{node}}",
+        "editorMode": "code",
+        "maxDataPoints": 43200,
+        "refId": "A",
+        "instant": true,
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        }
+      }
+    },
+    {
+      "refId": "C",
+      "queryType": "",
+      "relativeTimeRange": {
+        "from": 0,
+        "to": 0
+      },
+      "datasourceUid": "__expr__",
+      "model": {
+        "type": "threshold",
+        "expression": "A",
+        "refId": "C",
+        "conditions": [
+          {
+            "evaluator": {
+              "type": "lt",
+              "params": [1]
+            },
+            "operator": {
+              "type": "and"
+            },
+            "query": {
+              "params": ["A"]
+            },
+            "reducer": {
+              "type": "max",
+              "params": []
+            },
+            "type": "query"
+          }
+        ],
+        "datasource": {
+          "type": "__expr__",
+          "uid": "__expr__"
+        },
+        "intervalMs": 1000,
+        "maxDataPoints": 43200
+      }
+    }
+  ],
+  "noDataState": "NoData",
+  "execErrState": "Error",
+  "for": "5m",
+  "labels": {
+    "source": "api"
+  },
+  "annotations": {
+    "summary": "Kubernetes - Kubelet is down on one or more nodes (max in window < 1)"
+  },
+  "isPaused": false
+}
+

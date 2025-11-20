@@ -1,0 +1,39 @@
+{
+  "apiVersion": 1,
+  "groups": [
+    {
+      "name": "Storage Alert",
+      "folderUID": "hifromthe3rateam",
+      "interval": "1m",
+      "rules": [
+        {
+          "title": "Storage Free Bytes Below 10",
+          "condition": "A",
+          "data": [
+            {
+              "refId": "A",
+              "queryType": "metrics",
+              "relativeTimeRange": { "from": 60, "to": 0 },
+              "datasourceUid": "prometheus",
+              "model": {
+                "expr": "node_filesystem_free_bytes",
+                "intervalMs": 1000,
+                "maxDataPoints": 100,
+                "refId": "A",
+                "instant": true,
+                "datasource": { "type": "prometheus", "uid": "prometheus" }
+              }
+            }
+          ],
+          "noDataState": "NoData",
+          "execErrState": "Error",
+          "for": "1m",
+          "labels": { "source": "storage_monitor" },
+          "annotations": { "summary": "A filesystem has less than 10 bytes free." },
+          "isPaused": false
+        }
+      ]
+    }
+  ]
+}
+

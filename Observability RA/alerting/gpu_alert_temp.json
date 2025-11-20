@@ -1,0 +1,82 @@
+{
+  "orgID": 1,
+  "folderUID": "hifromthe3rateam",
+  "ruleGroup": "Alert Rules",
+  "title": "Any GPU Temp > 80C (Max Value)",
+  "condition": "C",
+  "data": [
+    {
+      "refId": "A",
+      "queryType": "",
+      "relativeTimeRange": {
+        "from": 600,
+        "to": 0
+      },
+      "datasourceUid": "prometheus",
+      "model": {
+        "expr": "DCGM_FI_DEV_GPU_TEMP",
+        "interval": "",
+        "intervalMs": 1000,
+        "legendFormat": "",
+        "editorMode": "code",
+        "maxDataPoints": 43200,
+        "refId": "A",
+        "instant": true,
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        }
+      }
+    },
+    {
+      "refId": "C",
+      "queryType": "",
+      "relativeTimeRange": {
+        "from": 0,
+        "to": 0
+      },
+      "datasourceUid": "__expr__",
+      "model": {
+        "type": "threshold",
+        "expression": "A",
+        "refId": "C",
+        "conditions": [
+          {
+            "evaluator": {
+              "type": "gt",
+              "params": [80]
+            },
+            "operator": {
+              "type": "and"
+            },
+            "query": {
+              "params": ["A"]
+            },
+            "reducer": {
+              "type": "max",
+              "params": []
+            },
+            "type": "query"
+          }
+        ],
+        "datasource": {
+          "type": "__expr__",
+          "uid": "__expr__"
+        },
+        "intervalMs": 1000,
+        "maxDataPoints": 43200
+      }
+    }
+  ],
+  "noDataState": "NoData",
+  "execErrState": "Error",
+  "for": "1m",
+  "labels": {
+    "source": "api"
+  },
+  "annotations": {
+    "summary": "At least one GPU temperature (max in window) is above 80C"
+  },
+  "isPaused": false
+}
+
