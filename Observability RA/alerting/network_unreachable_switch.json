@@ -1,0 +1,82 @@
+{
+  "orgID": 1,
+  "folderUID": "hifromthe3rateam",
+  "ruleGroup": "Alert Rules",
+  "title": "Network - Unreachable Switch",
+  "condition": "C",
+  "data": [
+    {
+      "refId": "A",
+      "queryType": "",
+      "relativeTimeRange": {
+        "from": 300,
+        "to": 0
+      },
+      "datasourceUid": "bf5tx99atauwwe",
+      "model": {
+        "expr": "1 - max by (net_host_name) (up)",
+        "interval": "",
+        "intervalMs": 1000,
+        "legendFormat": "{{net_host_name}}",
+        "editorMode": "code",
+        "maxDataPoints": 43200,
+        "refId": "A",
+        "instant": true,
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        }
+      }
+    },
+    {
+      "refId": "C",
+      "queryType": "",
+      "relativeTimeRange": {
+        "from": 0,
+        "to": 0
+      },
+      "datasourceUid": "__expr__",
+      "model": {
+        "type": "threshold",
+        "expression": "A",
+        "refId": "C",
+        "conditions": [
+          {
+            "evaluator": {
+              "type": "gt",
+              "params": [0]
+            },
+            "operator": {
+              "type": "and"
+            },
+            "query": {
+              "params": ["A"]
+            },
+            "reducer": {
+              "type": "max",
+              "params": []
+            },
+            "type": "query"
+          }
+        ],
+        "datasource": {
+          "type": "__expr__",
+          "uid": "__expr__"
+        },
+        "intervalMs": 1000,
+        "maxDataPoints": 43200
+      }
+    }
+  ],
+  "noDataState": "NoData",
+  "execErrState": "Error",
+  "for": "1m",
+  "labels": {
+    "source": "api"
+  },
+  "annotations": {
+    "summary": "Network - One or more switches are unreachable (up == 0 for at least 1 minute)"
+  },
+  "isPaused": false
+}
+

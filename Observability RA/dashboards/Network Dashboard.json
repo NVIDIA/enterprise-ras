@@ -22,19 +22,6 @@
   "links": [],
   "panels": [
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 0
-      },
-      "id": 9,
-      "panels": [],
-      "title": "Inventory",
-      "type": "row"
-    },
-    {
       "datasource": {
         "type": "prometheus",
         "uid": "bf5tx99atauwwe"
@@ -42,40 +29,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "mode": "thresholds"
           },
           "mappings": [],
           "thresholds": {
@@ -96,23 +50,25 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 11,
+        "w": 5,
         "x": 0,
-        "y": 1
+        "y": 0
       },
-      "id": 12,
+      "id": 19,
       "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
       },
       "pluginVersion": "11.5.2",
       "targets": [
@@ -122,14 +78,27 @@
             "uid": "bf5tx99atauwwe"
           },
           "editorMode": "code",
-          "expr": "max(rate(nvswitch_interface_ether_stats_octets[$__rate_interval])) * 8 / 1e9",
-          "legendFormat": "Bandwidth",
+          "expr": "sum by () (\n  max by (net.host.name) (up)\n)",
+          "legendFormat": "Reachable Switches",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "bf5tx99atauwwe"
+          },
+          "editorMode": "code",
+          "expr": "sum by () (\n  1 - max by (net.host.name) (up)\n) or 0",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Unreachable Switches",
+          "range": true,
+          "refId": "B"
         }
       ],
-      "title": "Max Port Bandwidth (Gbit/s)",
-      "type": "timeseries"
+      "title": "Reachable vs. Unreachable switches",
+      "type": "gauge"
     },
     {
       "datasource": {
@@ -160,15 +129,15 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 13,
-        "x": 11,
-        "y": 1
+        "w": 7,
+        "x": 5,
+        "y": 0
       },
       "id": 6,
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "graphMode": "none",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -179,6 +148,9 @@
           "values": false
         },
         "showPercentChange": false,
+        "text": {
+          "valueSize": 85
+        },
         "textMode": "auto",
         "wideLayout": true
       },
@@ -232,7 +204,7 @@
           "refId": "Link Stats"
         }
       ],
-      "title": "Live Switches",
+      "title": "Stats from Live Switches",
       "transformations": [
         {
           "id": "renameByRegex",
@@ -306,9 +278,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 11,
-        "x": 0,
-        "y": 9
+        "w": 12,
+        "x": 12,
+        "y": 0
       },
       "id": 7,
       "options": {
@@ -374,7 +346,7 @@
           "refId": "Link Stats"
         }
       ],
-      "title": "Live Switches",
+      "title": "Stats from Live Switches - Timeline",
       "type": "timeseries"
     },
     {
@@ -385,15 +357,237 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "mode": "palette-classic"
           },
           "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto",
-              "wrapText": true
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
             },
-            "inspect": false
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "fieldMinMax": false,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "bf5tx99atauwwe"
+          },
+          "editorMode": "code",
+          "expr": "100 - (\n  avg by (net.host.name) (\n    rate(node_cpu_seconds_total{mode=\"idle\"}[5m])\n  ) * 100\n)",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "CPU Utilization by Switch (%)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "bf5tx99atauwwe"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "bf5tx99atauwwe"
+          },
+          "editorMode": "code",
+          "expr": "100 *\n(\n  1 -\n  avg by (net.host.name) (\n    node_memory_MemAvailable_bytes\n    /\n    node_memory_MemTotal_bytes\n  )\n)",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Memory Utilization by Switch (%)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "bf5tx99atauwwe"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
           "mappings": [],
           "thresholds": {
@@ -414,22 +608,23 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 13,
-        "x": 11,
-        "y": 9
+        "w": 12,
+        "x": 0,
+        "y": 16
       },
-      "id": 5,
+      "id": 12,
       "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
         },
-        "showHeader": true
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "pluginVersion": "11.5.2",
       "targets": [
@@ -439,63 +634,111 @@
             "uid": "bf5tx99atauwwe"
           },
           "editorMode": "code",
-          "exemplar": false,
-          "expr": "node_os_info",
-          "format": "table",
-          "instant": true,
-          "interval": "",
+          "expr": "sum by (net.host.name) (\n  rate(nvswitch_interface_ether_stats_octets[$__rate_interval])\n) * 8 / 1e9",
           "legendFormat": "__auto",
-          "range": false,
+          "range": true,
           "refId": "A"
         }
       ],
-      "title": "Switch Software",
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "Value": true,
-              "__name__": true,
-              "http.scheme": true,
-              "id": true,
-              "id_like": true,
-              "name": true,
-              "net.host.port": true,
-              "opid": true,
-              "pretty_name": true,
-              "server.address": true,
-              "server.port": true,
-              "service.instance.id": true,
-              "service.name": true,
-              "url.scheme": true,
-              "version_id": true
-            },
-            "includeByName": {},
-            "indexByName": {},
-            "renameByName": {
-              "Value": "",
-              "net.host.name": "Switch name",
-              "version": "Cumulus Linux version"
-            }
-          }
-        }
-      ],
-      "type": "table"
+      "title": "Aggregate Bandwidth (Gbit/s)",
+      "type": "timeseries"
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 17
+      "datasource": {
+        "type": "prometheus",
+        "uid": "bf5tx99atauwwe"
       },
-      "id": 4,
-      "panels": [],
-      "title": "Link Summary",
-      "type": "row"
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "bf5tx99atauwwe"
+          },
+          "editorMode": "code",
+          "expr": "sum by (net.host.name) (\n  rate(nvswitch_interface_ether_stats_drop_events[$__rate_interval])\n)",
+          "legendFormat": "{{net.host.name}} errors/s",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Aggregate Interface Errors (errors/sec)",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -544,9 +787,9 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 11,
+        "w": 12,
         "x": 0,
-        "y": 18
+        "y": 24
       },
       "id": 1,
       "options": {
@@ -589,275 +832,8 @@
           "refId": "A"
         }
       ],
-      "title": "Link Status",
+      "title": "Interfaces up per switch",
       "type": "barchart"
-    },
-    {
-      "datasource": {
-        "uid": "bf5tx99atauwwe"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "center",
-            "cellOptions": {
-              "type": "auto",
-              "wrapText": true
-            },
-            "inspect": false
-          },
-          "mappings": [
-            {
-              "options": {
-                "1": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "UP"
-                },
-                "2": {
-                  "color": "dark-red",
-                  "index": 1,
-                  "text": "DOWN"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              },
-              {
-                "color": "red",
-                "value": 2
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "__name__"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "http.scheme"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "url.scheme"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "service.name"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "service.instance.id"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "server.port"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "server.address"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "opid"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Last *"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "thresholds"
-                }
-              },
-              {
-                "id": "displayName",
-                "value": "Status"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Field"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "net.host.name"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "Switch Name"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "net.host.port"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "Port"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "interface"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "Interface"
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 13,
-        "x": 11,
-        "y": 18
-      },
-      "id": 14,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "enablePagination": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": true,
-            "displayName": "net.host.port"
-          }
-        ]
-      },
-      "pluginVersion": "11.5.2",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "nvswitch_interface_oper_state",
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Link (Interface) Status",
-      "transformations": [
-        {
-          "id": "reduce",
-          "options": {
-            "labelsToFields": true,
-            "reducers": [
-              "lastNotNull"
-            ]
-          }
-        }
-      ],
-      "type": "table"
     },
     {
       "datasource": {
@@ -920,10 +896,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 11,
-        "x": 0,
-        "y": 27
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 24
       },
       "id": 2,
       "options": {
@@ -960,10 +936,24 @@
       "type": "timeseries"
     },
     {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "id": 11,
+      "panels": [],
+      "title": "Routing",
+      "type": "row"
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "bf5tx99atauwwe"
       },
+      "description": "Number of IPv4 + IPv6 unicast routes received from the BGP neighbor after applying any policies. This count is the number of routes present in the post-policy Adj-RIB-In for the neighbor.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1021,11 +1011,11 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 13,
-        "x": 11,
-        "y": 27
+        "w": 12,
+        "x": 0,
+        "y": 34
       },
-      "id": 3,
+      "id": 21,
       "options": {
         "legend": {
           "calcs": [],
@@ -1047,28 +1037,307 @@
             "uid": "bf5tx99atauwwe"
           },
           "editorMode": "code",
-          "expr": "increase(nvswitch_interface_dot3_stats_symbol_errors[$__rate_interval])",
-          "interval": "10s",
-          "legendFormat": "{{net.host.name}} {{interface}}",
+          "expr": "sum by (service.instance.id) (\n  nvrouting_bgp_peer_rib_adj_in_ipv4_unicast{state=\"Established\"}\n  + nvrouting_bgp_peer_rib_adj_in_ipv6_unicast{state=\"Established\"}\n)",
+          "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Symbol errors",
+      "title": "BGP (IPv4 + IPv6) Routes Received per Switch",
       "type": "timeseries"
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 35
+      "datasource": {
+        "type": "prometheus",
+        "uid": "bf5tx99atauwwe"
       },
-      "id": 11,
-      "panels": [],
-      "title": "Routing",
-      "type": "row"
+      "description": "Number of EVPN routes received from the BGP neighbor after applying any policies. This count is the number of routes present in the post-policy Adj-RIB-In for the neighbor.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "bf5tx99atauwwe"
+          },
+          "editorMode": "code",
+          "expr": "sum by (service.instance.id) (\n  nvrouting_bgp_peer_rib_adj_in_l2vpn_evpn{state=\"Established\"}\n)",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "EVPN Prefixes Received",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "bf5tx99atauwwe"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 42
+      },
+      "id": 20,
+      "options": {
+        "displayMode": "gradient",
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "top",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "bf5tx99atauwwe"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "count by (service.instance.id, state) (\n  nvrouting_bgp_peer_state\n)",
+          "format": "time_series",
+          "instant": true,
+          "legendFormat": "{{service.instance.id}} : {{state}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "BGP Peer States per Switch",
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {}
+        }
+      ],
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "bf5tx99atauwwe"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 42
+      },
+      "id": 13,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "pluginVersion": "11.5.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "bf5tx99atauwwe"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "nvrouting_rib_count",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Number of BGP routes per VRF",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "opid": true,
+              "service.name": true,
+              "service.namespace": true,
+              "service.version": true,
+              "telemetry.sdk.language": true,
+              "telemetry.sdk.name": true,
+              "telemetry.sdk.version": true
+            },
+            "includeByName": {},
+            "indexByName": {
+              "Time": 0,
+              "Value": 13,
+              "__name__": 1,
+              "opid": 2,
+              "peer-id": 4,
+              "service.instance.id": 3,
+              "service.name": 5,
+              "service.namespace": 6,
+              "service.version": 7,
+              "state": 8,
+              "telemetry.sdk.language": 9,
+              "telemetry.sdk.name": 10,
+              "telemetry.sdk.version": 11,
+              "vrf": 12
+            },
+            "renameByName": {
+              "Value": "Count",
+              "peer-id": "Peer",
+              "service.instance.id": "Switch",
+              "state": "State",
+              "vrf": "VRF"
+            }
+          }
+        }
+      ],
+      "type": "table"
     },
     {
       "datasource": {
@@ -1106,9 +1375,9 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 11,
+        "w": 12,
         "x": 0,
-        "y": 36
+        "y": 50
       },
       "id": 10,
       "options": {
@@ -1198,7 +1467,8 @@
           "custom": {
             "align": "auto",
             "cellOptions": {
-              "type": "auto"
+              "type": "auto",
+              "wrapText": true
             },
             "inspect": false
           },
@@ -1221,11 +1491,11 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 13,
-        "x": 11,
-        "y": 36
+        "w": 12,
+        "x": 12,
+        "y": 50
       },
-      "id": 13,
+      "id": 5,
       "options": {
         "cellHeight": "sm",
         "footer": {
@@ -1247,53 +1517,44 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "nvrouting_rib_count",
+          "expr": "node_os_info",
           "format": "table",
           "instant": true,
+          "interval": "",
           "legendFormat": "__auto",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Number of BGP routes per VRF",
+      "title": "Switch Software Versions",
       "transformations": [
         {
           "id": "organize",
           "options": {
             "excludeByName": {
               "Time": true,
+              "Value": true,
               "__name__": true,
+              "http.scheme": true,
+              "id": true,
+              "id_like": true,
+              "name": true,
+              "net.host.port": true,
               "opid": true,
+              "pretty_name": true,
+              "server.address": true,
+              "server.port": true,
+              "service.instance.id": true,
               "service.name": true,
-              "service.namespace": true,
-              "service.version": true,
-              "telemetry.sdk.language": true,
-              "telemetry.sdk.name": true,
-              "telemetry.sdk.version": true
+              "url.scheme": true,
+              "version_id": true
             },
             "includeByName": {},
-            "indexByName": {
-              "Time": 0,
-              "Value": 13,
-              "__name__": 1,
-              "opid": 2,
-              "peer-id": 4,
-              "service.instance.id": 3,
-              "service.name": 5,
-              "service.namespace": 6,
-              "service.version": 7,
-              "state": 8,
-              "telemetry.sdk.language": 9,
-              "telemetry.sdk.name": 10,
-              "telemetry.sdk.version": 11,
-              "vrf": 12
-            },
+            "indexByName": {},
             "renameByName": {
-              "Value": "Count",
-              "peer-id": "Peer",
-              "service.instance.id": "Switch",
-              "state": "State",
-              "vrf": "VRF"
+              "Value": "",
+              "net.host.name": "Switch name",
+              "version": "Cumulus Linux version"
             }
           }
         }
@@ -1309,13 +1570,13 @@
     "list": []
   },
   "time": {
-    "from": "now-30m",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
   "title": "Network Dashboard",
   "uid": "af67xpcdcpq0wf",
-  "version": 20,
+  "version": 55,
   "weekStart": ""
 }
