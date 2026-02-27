@@ -1,0 +1,66 @@
+name: Monorepo Folder Release
+
+on:
+  push:
+    tags:
+      - 'sp-*-v*'   # spectrum-era subfolder: sp-2-4-3-v3.0.0 → spectrum-era/2-4-3-200
+      - 'obs-v*'    # entire Observability RA: obs-v1.0.0 → Observability RA/
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Parse Tag and Resolve Release Path
+        id: info
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+          if [[ "$TAG" == obs-v* ]]; then
+            # obs-v1.0.0 → entire Observability RA folder
+            RELEASE_PATH="Observability RA"
+            echo "path=$RELEASE_PATH" >> $GITHUB_OUTPUT
+            echo "Release path: $RELEASE_PATH"
+            exit 0
+          fi
+
+          if [[ "$TAG" == sp-*-v* ]]; then
+            # sp-2-4-3-v3.0.0 → spectrum-era/2-4-3-200 (match prefix 2-4-3)
+            # Strip "sp-" and "-v*" to get segment e.g. "2-4-3"
+            SEGMENT="${TAG#sp-}"
+            SEGMENT="${SEGMENT%-v*}"
+            if [[ -z "$SEGMENT" ]]; then
+              echo "::error::Could not parse segment from tag: $TAG"
+              exit 1
+            fi
+            # Find the spectrum-era subfolder that starts with this segment (e.g. 2-4-3-200)
+            CANDIDATE=$(find spectrum-era -maxdepth 1 -type d -name "${SEGMENT}*" | head -n1)
+            if [[ -z "$CANDIDATE" || ! -d "$CANDIDATE" ]]; then
+              echo "::error::No spectrum-era subfolder matching '${SEGMENT}*' for tag: $TAG"
+              exit 1
+            fi
+            RELEASE_PATH="$CANDIDATE"
+            echo "path=$RELEASE_PATH" >> $GITHUB_OUTPUT
+            echo "Release path: $RELEASE_PATH (segment: $SEGMENT)"
+            exit 0
+          fi
+
+          echo "::error::Tag does not match sp-*-v* or obs-v*: $TAG"
+          exit 1
+
+      - name: Zip Folder
+        run: |
+          zip -r "${{ steps.info.outputs.tag }}.zip" "${{ steps.info.outputs.path }}/"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.info.outputs.tag }}
+          files: ${{ steps.info.outputs.tag }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
