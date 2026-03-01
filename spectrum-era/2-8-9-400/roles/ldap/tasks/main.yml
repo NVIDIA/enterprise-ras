@@ -1,0 +1,135 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+---
+- name: Install debconf-utils package
+  apt:
+    name: debconf-utils
+    state: present
+    update_cache: yes
+
+- name: Purge existing slapd
+  apt:
+    name: slapd
+    state: absent
+    purge: yes
+
+- name: Clear existing slapd debconf entries
+  shell: echo PURGE | debconf-communicate slapd
+  ignore_errors: yes
+
+- name: Preseed debconf with slapd configuration BEFORE installation
+  shell: echo "slapd {{ item.question }} {{ item.vtype }} {{ item.value }}" | debconf-set-selections
+  loop:
+    - { question: "slapd/password1", value: "{{ ldap.admin_password }}", vtype: "password" }
+    - { question: "slapd/password2", value: "{{ ldap.admin_password }}", vtype: "password" }
+    - { question: "slapd/domain", value: "{{ ldap.domain }}", vtype: "string" }
+    - { question: "slapd/backend", value: "MDB", vtype: "select" }
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Install OpenLDAP server and utils
+  apt:
+    name:
+      - slapd
+      - ldap-utils
+    state: present
+    update_cache: yes
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Ensure the slapd service is running
+  service:
+    name: slapd
+    state: started
+    enabled: yes
+
+- name: Generate SSHA hash for LDAP admin password
+  command: slappasswd -s "{{ ldap.admin_password }}"
+  register: ldap_admin_hash
+  changed_when: false
+
+- name: Show hashed password (debug)
+  debug:
+    msg: "Generated hash: {{ ldap_admin_hash.stdout }}"
+      
+- name: Update database configuration with correct RootDN and RootPW
+  copy:
+    dest: /tmp/update_db_config.ldif
+    content: |
+      dn: olcDatabase={1}mdb,cn=config
+      changetype: modify
+      replace: olcRootDN
+      olcRootDN: {{ ldap.root_dn }}
+      -
+      replace: olcRootPW
+      olcRootPW: {{ ldap_admin_hash.stdout }}
+    mode: '0644'
+
+- name: Apply database configuration updates
+  command: ldapmodify -Y EXTERNAL -H ldapi:/// -f /tmp/update_db_config.ldif
+
+- name: Add Users organizational unit
+  shell: |
+    cat <<EOF | ldapadd -x -D "{{ ldap.root_dn }}" -w "{{ ldap.admin_password }}"
+    dn: ou=Users,{{ ldap.base_dn }}
+    objectClass: top
+    objectClass: organizationalUnit
+    ou: Users
+    EOF
+  register: add_users_ou
+  failed_when: add_users_ou.rc != 0 and 'Already exists' not in add_users_ou.stderr
+  changed_when: add_users_ou.rc == 0
+
+- name: Add Groups organizational unit
+  shell: |
+    cat <<EOF | ldapadd -x -D "{{ ldap.root_dn }}" -w "{{ ldap.admin_password }}"
+    dn: ou=Groups,{{ ldap.base_dn }}
+    objectClass: top
+    objectClass: organizationalUnit
+    ou: Groups
+    EOF
+  register: add_groups_ou
+  failed_when: add_groups_ou.rc != 0 and 'Already exists' not in add_groups_ou.stderr
+  changed_when: add_groups_ou.rc == 0
+
+- name: Add admin user to LDAP
+  shell: |
+    cat <<EOF | ldapadd -x -D "{{ ldap.root_dn }}" -w "{{ ldap.admin_password }}"
+    dn: cn=admin,ou=Users,{{ ldap.base_dn }}
+    objectClass: organizationalPerson
+    objectClass: inetOrgPerson
+    objectClass: top
+    cn: admin
+    sn: Administrator
+    uid: admin
+    userPassword: {{ ldap_admin_hash.stdout }}
+    EOF
+  register: add_admin_user
+  failed_when: add_admin_user.rc != 0 and 'Already exists' not in add_admin_user.stderr
+  changed_when: add_admin_user.rc == 0
+
+- name: Generate SSHA passwords for users
+  command: "slappasswd -s {{ item.password }}"
+  loop: "{{ ldap.users }}"
+  register: ldap_passwords
+  changed_when: false
+
+- name: Combine users with hashed passwords
+  set_fact:
+    ldap_users_hashed: []
+
+- name: Build hashed user list
+  set_fact:
+    ldap_users_hashed: "{{ ldap_users_hashed + [ item.0 | combine({'ssha_password': item.1.stdout }) ] }}"
+  loop: "{{ ldap.users | zip(ldap_passwords.results) | list }}"
+
+- name: Save LDIF file to create users
+  ansible.builtin.template:
+    src: users.j2
+    dest: /tmp/add_users.ldif
+
+- name: Add users to LDAP directory
+  command: ldapadd -x -D "{{ ldap.root_dn }}" -w "{{ ldap.admin_password }}" -f /tmp/add_users.ldif
+  register: ldapadd_users
+  failed_when: "'Entry Already Exists' not in ldapadd_users.stderr and ldapadd_users.rc != 0"
+  changed_when: "'adding new entry' in ldapadd_users.stdout"

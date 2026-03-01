@@ -73,6 +73,12 @@ interfaces_down:
   - 'swp26'
   - 'swp27'
 
+interfaces_disabled: 
+  - 'swp56'
+  - 'swp58'
+  - 'swp62'
+  - 'swp64'
+
 vlan_config:
   - { id: '200', vni: '4200' }
   - { id: '300', vni: '4300' }
@@ -101,22 +107,22 @@ bond_config:
   - { id: 'bond53s1', segmentid: 531, member: 'swp53s1' }
   - { id: 'bond53s2', segmentid: 532, member: 'swp53s2' }
   - { id: 'bond53s3', segmentid: 533, member: 'swp53s3' }
-  - { id: 'bond55s0', segmentid: 540, member: 'swp55s0' }
-  - { id: 'bond55s1', segmentid: 541, member: 'swp55s1' }
-  - { id: 'bond55s2', segmentid: 542, member: 'swp55s2' }
-  - { id: 'bond55s3', segmentid: 543, member: 'swp55s3' }
-  - { id: 'bond55s4', segmentid: 544, member: 'swp55s4' }
-  - { id: 'bond55s5', segmentid: 545, member: 'swp55s5' }
-  - { id: 'bond55s6', segmentid: 546, member: 'swp55s6' }
-  - { id: 'bond55s7', segmentid: 547, member: 'swp55s7' }
-  - { id: 'bond57s0', segmentid: 560, member: 'swp57s0' }
-  - { id: 'bond57s1', segmentid: 561, member: 'swp57s1' }
-  - { id: 'bond57s2', segmentid: 562, member: 'swp57s2' }
-  - { id: 'bond57s3', segmentid: 563, member: 'swp57s3' }
-  - { id: 'bond57s4', segmentid: 564, member: 'swp57s4' }
-  - { id: 'bond57s5', segmentid: 565, member: 'swp57s5' }
-  - { id: 'bond57s6', segmentid: 566, member: 'swp57s6' }
-  - { id: 'bond57s7', segmentid: 567, member: 'swp57s7' }
+  - { id: 'bond55s0', segmentid: 550, member: 'swp55s0' }
+  - { id: 'bond55s1', segmentid: 551, member: 'swp55s1' }
+  - { id: 'bond55s2', segmentid: 552, member: 'swp55s2' }
+  - { id: 'bond55s3', segmentid: 553, member: 'swp55s3' }
+  - { id: 'bond55s4', segmentid: 554, member: 'swp55s4' }
+  - { id: 'bond55s5', segmentid: 555, member: 'swp55s5' }
+  - { id: 'bond55s6', segmentid: 556, member: 'swp55s6' }
+  - { id: 'bond55s7', segmentid: 557, member: 'swp55s7' }
+  - { id: 'bond57s0', segmentid: 570, member: 'swp57s0' }
+  - { id: 'bond57s1', segmentid: 571, member: 'swp57s1' }
+  - { id: 'bond57s2', segmentid: 572, member: 'swp57s2' }
+  - { id: 'bond57s3', segmentid: 573, member: 'swp57s3' }
+  - { id: 'bond57s4', segmentid: 574, member: 'swp57s4' }
+  - { id: 'bond57s5', segmentid: 575, member: 'swp57s5' }
+  - { id: 'bond57s6', segmentid: 576, member: 'swp57s6' }
+  - { id: 'bond57s7', segmentid: 577, member: 'swp57s7' }
 
 breakout_config:
   - { id: 'swp1', breakout: '4x', lanes: 2 }
@@ -143,10 +149,9 @@ breakout_config:
   - { id: 'swp22', breakout: '2x', lanes: 4 }
   - { id: 'swp23', breakout: '2x', lanes: 4 }
   - { id: 'swp24', breakout: '2x', lanes: 4 }
-  - { id: 'swp25', breakout: '4x', lanes: 2 }
-  - { id: 'swp26', breakout: '4x', lanes: 2 }
+  - { id: 'swp25', breakout: '2x', lanes: 4 }
+  - { id: 'swp26', breakout: '2x', lanes: 4 }
   - { id: 'swp27', breakout: '2x', lanes: 4 }
-  - { id: 'swp28', breakout: '2x', lanes: 4 }
   - { id: 'swp28', breakout: '2x', lanes: 4 }
   - { id: 'swp29', breakout: '2x', lanes: 4 }
   - { id: 'swp30', breakout: '2x', lanes: 4 }
@@ -348,12 +353,12 @@ edge_interfaces:
   - 'swp63s4'
   - 'swp63s5'
 
-edge_vrf: 'COMMON'
+edge_vrf: 'EXIT'
 
 bgp_asn: 4260394788
 
 anycast_mac: '44:38:39:ff:00:ff'
 
 dhcp_relay:
-  - { id: 'COMMON', interface: ['swp61s0', 'swp61s1', 'swp61s2', 'swp61s3', 'swp61s4', 'swp61s5','swp63s0', 'swp63s1', 'swp63s2', 'swp63s3', 'swp63s4', 'swp63s5', 'vlan3004_l3'], server: ['192.168.210.41', '192.168.220.42'] }
+  - { id: 'EXIT', interface: ['swp61s0', 'swp61s1', 'swp61s2', 'swp61s3', 'swp61s4', 'swp61s5','swp63s0', 'swp63s1', 'swp63s2', 'swp63s3', 'swp63s4', 'swp63s5', 'vlan3004_l3'], server: ['192.168.210.41', '192.168.220.42'] }
   - { id: 'OOB', interface: ['vlan200', 'vlan3001_l3'], server: ['192.168.200.2', '192.168.210.2','192.168.220.2'] }

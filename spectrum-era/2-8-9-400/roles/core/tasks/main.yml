@@ -91,6 +91,17 @@
               lanes_per_port: '{{ item.lanes }}'
   loop: "{{ breakout_config }}"
 
+- name: Disable interfaces
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item }}'
+        link:
+          breakout:
+            - id: 'disabled'
+  loop: "{{ interfaces_disabled }}"
+
 - name: Set bond interfaces
   nvidia.nvue.interface:
     state: merged
@@ -336,13 +347,13 @@
                 match:
                   ip_prefix_list: 'ALL_PREFIXES'
                   type: 'ipv4'
-          - id: 'COMMON_FILTER'
+          - id: 'EXIT_FILTER'
             rule:
               - id: 10
                 action:
                   - id: 'deny'
                 match:
-                  ip_prefix_list: 'COMMON_LOCAL_IF'
+                  ip_prefix_list: 'EXIT_LOCAL_IF'
                   type: 'ipv4'
               - id: 20
                 action:
@@ -448,7 +459,7 @@
     state: merged
     revid: '{{ revision.revid }}'
     data:
-      - id: 'COMMON'
+      - id: 'EXIT'
         router:
           bgp:
             address_family:
@@ -459,26 +470,9 @@
                     list:
                       - id: 'INBAND'
                       - id: 'OOB'
-                    route_map: COMMON_FILTER
+                    route_map: EXIT_FILTER
             route_export:
               to_evpn:
-            neighbor:
-              - id: 'swp61s0'
-                peer_group: 'underlay-esl-external'
-                type: 'unnumbered'
-                update_source: '{{ bgp_routerid }}'
-              - id: 'swp61s1'
-                peer_group: 'underlay-esl-external'
-                type: 'unnumbered'
-                update_source: '{{ bgp_routerid }}'
-              - id: 'swp63s0'
-                peer_group: 'underlay-esl-external'
-                type: 'unnumbered'
-                update_source: '{{ bgp_routerid }}'
-              - id: 'swp63s1'
-                peer_group: 'underlay-esl-external'
-                type: 'unnumbered'
-                update_source: '{{ bgp_routerid }}'
             peer_group:
               - id: 'underlay-esl-external'
                 address_family:
@@ -497,7 +491,7 @@
                   from_vrf:
                     enable: 'on'
                     list:
-                      - id: 'COMMON'
+                      - id: 'EXIT'
                     route_map: INBAND_FILTER
             route_export:
               to_evpn:
@@ -512,7 +506,7 @@
                   from_vrf:
                     enable: 'on'
                     list:
-                      - id: 'COMMON'
+                      - id: 'EXIT'
                     route_map: OOB_FILTER
             route_export:
       - id : 'default'  
@@ -551,7 +545,7 @@
     state: merged
     revid: '{{ revision.revid }}'
     data:
-      - id: 'COMMON'
+      - id: 'EXIT'
         router:
           bgp:
             neighbor:
