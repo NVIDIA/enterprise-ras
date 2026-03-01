@@ -15,11 +15,11 @@ vlan_interfaces:
   - { id: 'vlan400', ip: '172.16.179.2/24', vrr: '172.16.179.1/24', vlan: '400', vrf: 'INBAND' }
   - { id: 'vlan500', ip: '172.16.180.2/24', vrr: '172.16.180.1/24', vlan: '500', vrf: 'INBAND' }
   - { id: 'vlan900', ip: '192.168.110.2/24', vrr: '192.168.110.1/24', vlan: '900', vrf: 'GPU' }
-nve_vxlan: { her: '172.16.176.12', source: '172.16.176.11' }
+nve_vxlan: { her: 'evpn', source: '172.16.176.11' }
 bgp_routerid: '172.16.176.11'
 prefix_list:
   - { id: 'ALL_PREFIXES', rule: [{ id: '10', match: '0.0.0.0/0', max_len: '32' }] }
-  - { id: 'COMMON_LOCAL_IF', rule: [{ id: '10', match: '172.16.176.5/32', max_len: '32' }] }
+  - { id: 'EXIT_LOCAL_IF', rule: [{ id: '10', match: '172.16.176.5/32', max_len: '32' }] }
   - { id: 'INBAND_LOCAL_IF', rule: [{ id: '10', match: '172.16.176.3/32', max_len: '32' },{ id: '20', match: '172.16.178.2/32', max_len: '32' },{ id: '30', match: '172.16.179.2/32', max_len: '32' },{ id: '40', match: '172.16.180.2/32', max_len: '32' }] }
   - { id: 'INBAND_PREFIXES', rule: [{ id: '10', match: '172.16.178.0/24', max_len: '32' },{ id: '20', match: '172.16.179.0/24', max_len: '32' },{ id: '30', match: '172.16.180.0/24', max_len: '32' },{ id: '40', match: '172.16.176.3/32', max_len: '32' }] }
   - { id: 'ERA_PREFIXES', rule: [{ id: '10', match: '172.16.176.0/21', max_len: '24' },{ id: '20', match: '172.16.176.0/24', max_len: '32' }] }
@@ -28,7 +28,7 @@ prefix_list:
   - { id: 'OOB_PREFIXES', rule: [{ id: '10', match: '172.16.177.0/24', max_len: '32' },{ id: '20', match: '172.16.176.1/32', max_len: '32' }] }
   - { id: 'VTEP_PREFIXES', rule: [{ id: '5', match: '172.16.176.8/29', max_len: '32' }] }
 vrf_config:
-  - { id: 'COMMON', lo: '172.16.176.5/32', vlan: 3004, vni: '5004', rd: '172.16.176.11:5004' }
+  - { id: 'EXIT', lo: '172.16.176.5/32', vlan: 3004, vni: '5004', rd: '172.16.176.11:5004' }
   - { id: 'INBAND', lo: '172.16.176.3/32', vlan: 3002, vni: '5002', rd: '172.16.176.11:5002' }
   - { id: 'GPU', lo: '192.168.110.5/32', vlan: 3003, vni: '5003', rd: '172.16.176.11:5003' }
   - { id: 'OOB', lo: '172.16.176.1/32', vlan: 3001, vni: '5001', rd: '172.16.176.11:5001' }

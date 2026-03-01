@@ -21,16 +21,16 @@
             swp51: {}
             swp52: {}
         type: bond
-      spine_bond,swp1-6,10-16,28-40,53-57,60-61:
+      spine_bond,swp1-6,10-17,28-40,53-57,60-61:
         bridge:
           domain:
             br_default:
               access: 200
-      spine_bond,swp1-6,10-16,28-40,49-57,60-61:
+      spine_bond,swp1-6,10-17,28-40,49-57,60-61:
         link:
           state:
             up: {}  
-      swp1-6,10-16,28-40,53-57,60-61:
+      swp1-6,10-17,28-40,53-57,60-61:
         type: swp  
       vlan200:
         ip:
