@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+---
+- name: Save DNS config in localhost
+  ansible.builtin.template:
+    src: hosts.j2
+    dest: /etc/hosts
