@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+---
+- name: Push interface configuration to the nodes
+  ansible.builtin.template:
+    src: interfaces.j2
+    dest: /etc/netplan/10-netcfg.yaml
+    mode: 0644
+  notify: netplan apply
