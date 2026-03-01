@@ -1,0 +1,19 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: MIT #}
+
+{% for user in ldap_users_hashed %}
+dn: uid={{ user.username }},ou=Users,{{ ldap.base_dn }}
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: top
+cn: {{ user.username }}
+sn: {{ user.username }}
+uid: {{ user.username }}
+uidNumber: {{ 2000 + loop.index }}
+gidNumber: 2000
+homeDirectory: /home/{{ user.username }}
+loginShell: /bin/bash
+userPassword: {{ user.ssha_password }}
+
+{% endfor %}
+

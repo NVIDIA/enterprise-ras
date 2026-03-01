@@ -4,13 +4,13 @@
     model: vx
     nvue-api-version: nvue_v1
     rev-id: 1.0
-    version: Cumulus Linux 5.12.1
+    version: Cumulus Linux 5.13.0
 - set:
     bridge:
       domain:
         br_default:
           vlan:
-            '10': {}
+            '200': {}
     interface:
       eth0:
         ip:
@@ -27,20 +27,19 @@
         bridge:
           domain:
             br_default:
-              access: 10
+              access: 200
       spine_bond,swp1-49,51:
         link:
           state:
             up: {}
       swp1-49,51:
         type: swp
-      vlan10:
+      vlan200:
         ip:
           address:
             192.168.200.2/24: {}
-            192.168.200.3/24: {}
         type: svi
-        vlan: 10
+        vlan: 200
     service:
       ntp:
         mgmt:

@@ -23,10 +23,6 @@ support-[01:05]
 dhcp-oob
 dhcp-edge
 
-[servers:vars]
-ansible_user=ubuntu
-ansible_password=nvidia
-
 [switches:children]
 core
 edge
@@ -42,6 +38,10 @@ nodes
 storage
 support
 dhcp
+
+[servers:vars]
+ansible_user=ubuntu
+ansible_password=nvidia
 
 [dhcp_config]
 dhcp-edge

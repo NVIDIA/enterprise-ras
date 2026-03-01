@@ -4,31 +4,28 @@
     model: vx
     nvue-api-version: nvue_v1
     rev-id: 1.0
-    version: Cumulus Linux 5.12.1
+    version: Cumulus Linux 5.13.0
 - set:
     bridge:
       domain:
         br_default:
           type: vlan-aware
           vlan:
-            '10':
+            '200':
               vni:
-                '4010': {}
-            '20':
+                '4200': {}
+            '300':
               vni:
-                '4020': {}
-            '25':
+                '4300': {}
+            '400':
               vni:
-                '4025': {}
-            '30':
+                '4400': {}
+            '500':
               vni:
-                '4030': {}
-            '40':
+                '4500': {}
+            '900':
               vni:
-                '4040': {}
-            '50':
-              vni:
-                '4050': {}
+                '4900': {}
     evpn:
       enable: on
       multihoming:
@@ -46,11 +43,11 @@
         bridge:
           domain:
             br_default:
-              access: 20
-      bond1s0-3,bond25s0-3,bond26s0-2,bond2s0-3,bond3s0-3,bond4s0-3,bond5s0-3,bond6s0-3,bond7s0-3,bond8s0-3:
+              access: 300
+      bond1s0-3,bond2s0-3,bond3s0-3,bond4s0-3,bond5s0-3,bond6s0-3,bond7s0-3,bond8s0-3,bond25s0-3,bond26s0-2:
         bond:
           lacp-bypass: on
-      bond1s0-3,bond25s0-3,bond26s0-3,bond2s0-3,bond3s0-3,bond4s0-3,bond59s0-4,bond5s0-3,bond6s0-3,bond7s0-3,bond8s0-3:
+      bond1s0-3,bond2s0-3,bond3s0-3,bond4s0-3,bond5s0-3,bond6s0-3,bond7s0-3,bond8s0-3,bond25s0-3,bond26s0-2,bond59s0-4:
         evpn:
           multihoming:
             segment:
@@ -313,17 +310,17 @@
           multihoming:
             segment:
               local-id: 250
-      bond25s0-1:
+      bond25s0-3,bond26s0:
         bridge:
           domain:
             br_default:
               vlan:
-                25,30: {}
+                '400': {}
       bond25s0-3,bond26s0-2:
         bridge:
           domain:
             br_default:
-              untagged: 20
+              untagged: 300
       bond25s1:
         bond:
           member:
@@ -340,12 +337,6 @@
           multihoming:
             segment:
               local-id: 252
-      bond25s2-3,bond26s0:
-        bridge:
-          domain:
-            br_default:
-              vlan:
-                '30': {}
       bond25s3:
         bond:
           member:
@@ -375,7 +366,7 @@
           domain:
             br_default:
               vlan:
-                '40': {}
+                '500': {}
       bond26s2:
         bond:
           member:
@@ -384,14 +375,6 @@
           multihoming:
             segment:
               local-id: 262
-      bond26s3:
-        bond:
-          member:
-            swp26s3: {}
-        evpn:
-          multihoming:
-            segment:
-              local-id: 263
       bond59s0:
         bond:
           member:
@@ -404,7 +387,7 @@
         bridge:
           domain:
             br_default:
-              access: 10
+              access: 200
       bond59s1:
         bond:
           member:
@@ -457,8 +440,22 @@
           breakout:
             4x:
               lanes-per-port: '2'
-      ? swp1-59,61,63,swp10s0-1,swp11s0-1,swp12s0-1,swp13s0-1,swp14s0-1,swp15s0-1,swp16s0-1,swp17s0-1,swp18s0-1,swp19s0-1,swp20s0-1,swp21s0-1,swp22s0-1,swp23s0-1,swp24s0-1,swp27s0-1,swp28s0-1,swp29s0-1,swp30s0-1,swp31s0-1,swp32s0-1,swp33s0-1,swp34s0-1,swp35s0-1,swp36s0-1,swp37s0-1,swp38s0-1,swp39s0-1,swp40s0-1,swp41s0-1,swp42s0-1,swp61s0-1,swp63s0-1,swp9s0-1
+      ? swp1-64,swp1s0-3,swp2s0-3,swp3s0-3,swp4s0-3,swp5s0-3,swp6s0-3,swp7s0-3,swp8s0-3,swp9s0-1,swp10s0-1,swp11s0-1,swp12s0-1,swp13s0-1,swp14s0-1,swp15s0-1,swp16s0-1,swp17s0-1,swp18s0-1,swp19s0-1,swp20s0-1,swp21s0-1,swp22s0-1,swp23s0-1,swp24s0-1,swp25s0-3,swp26s0-2,swp27s0-1,swp28s0-1,swp29s0-1,swp30s0-1,swp31s0-1,swp32s0-1,swp33s0-1,swp34s0-1,swp35s0-1,swp36s0-1,swp37s0-1,swp38s0-1,swp39s0-1,swp40s0-1,swp41s0-1,swp42s0-1,swp59s0-4,swp61s0-1,swp63s0-1
       : type: swp
+      ? swp1s0-3,swp2s0-3,swp3s0-3,swp4s0-3,swp5s0-3,swp6s0-3,swp7s0-3,swp8s0-3,swp9s0-1,swp10s0-1,swp11s0-1,swp12s0-1,swp13s0-1,swp14s0-1,swp15s0-1,swp16s0-1,swp17s0-1,swp18s0-1,swp19s0-1,swp20s0-1,swp21s0-1,swp22s0-1,swp23s0-1,swp24s0-1,swp25s0-3,swp26s0-2,swp27s0-1,swp28s0-1,swp29s0-1,swp30s0-1,swp31s0-1,swp32s0-1,swp33s0-1,swp34s0-1,swp35s0-1,swp36s0-1,swp37s0-1,swp38s0-1,swp39s0-1,swp40s0-1,swp41s0-1,swp42s0-1,swp59s0-4,swp61s0-1,swp63s0-1
+      : telemetry:
+          histogram:
+            counter:
+              counter-type:
+                rx-packet: {}
+                tx-packet: {}
+            egress-buffer:
+              traffic-class:
+                '0': {}
+            ingress-buffer:
+              priority-group:
+                '0': {}
+                '1': {}
       swp2-8:
         link:
           state:
@@ -468,11 +465,11 @@
           breakout:
             2x:
               lanes-per-port: '4'
-      ? swp10s0-1,swp11s0-1,swp12s0-1,swp13s0-1,swp14s0-1,swp15s0-1,swp16s0-1,swp17s0-1,swp18s0-1,swp19s0-1,swp20s0-1,swp21s0-1,swp22s0-1,swp23s0-1,swp24s0-1,swp9s0-1
+      ? swp9s0-1,swp10s0-1,swp11s0-1,swp12s0-1,swp13s0-1,swp14s0-1,swp15s0-1,swp16s0-1,swp17s0-1,swp18s0-1,swp19s0-1,swp20s0-1,swp21s0-1,swp22s0-1,swp23s0-1,swp24s0-1
       : bridge:
           domain:
             br_default:
-              access: 50
+              access: 900
         qos:
           pfc-watchdog:
             state: enable
@@ -486,11 +483,15 @@
           breakout:
             8x:
               lanes-per-port: '1'
+      swp60,62,64:
+        link:
+          breakout:
+            disabled: {}
       swp61s0-1,swp63s0-1:
         description: Edge uplinks
         ip:
-          vrf: COMMON
-      vlan10:
+          vrf: EXIT
+      vlan200:
         ip:
           address:
             172.16.177.3/24: {}
@@ -498,50 +499,42 @@
           vrr:
             address:
               172.16.177.1/24: {}
-        vlan: 10
-      vlan10,20,25,30,40,50:
+        vlan: 200
+      vlan200,300,400,500,900:
         ip:
           vrr:
             enable: on
             state:
               up: {}
         type: svi
-      vlan20:
+      vlan300:
         ip:
           address:
             172.16.178.3/24: {}
           vrr:
             address:
               172.16.178.1/24: {}
-        vlan: 20
-      vlan20,25,30,40:
+        vlan: 300
+      vlan300,400,500:
         ip:
-          vrf: CONSOL
-      vlan25:
-        ip:
-          address:
-            192.168.120.3/24: {}
-          vrr:
-            address:
-              192.168.120.1/24: {}
-        vlan: 25
-      vlan30:
+          vrf: INBAND
+      vlan400:
         ip:
           address:
             172.16.179.3/24: {}
           vrr:
             address:
               172.16.179.1/24: {}
-        vlan: 30
-      vlan40:
+        vlan: 400
+      vlan500:
         ip:
           address:
             172.16.180.3/24: {}
           vrr:
             address:
               172.16.180.1/24: {}
-        vlan: 40
-      vlan50:
+        vlan: 500
+      vlan900:
         ip:
           address:
             192.168.110.3/24: {}
@@ -549,7 +542,7 @@
           vrr:
             address:
               192.168.110.1/24: {}
-        vlan: 50
+        vlan: 900
     nve:
       vxlan:
         decapsulation:
@@ -562,7 +555,7 @@
         flooding:
           enable: on
           head-end-replication:
-            172.16.176.11: {}
+            evpn: {}
         source:
           address: 172.16.176.12
     qos:
@@ -595,14 +588,26 @@
                 match:
                   0.0.0.0/0:
                     max-prefix-len: 32
-          COMMON_LOCAL_IF:
+          ERA_PREFIXES:
+            rule:
+              '10':
+                action: permit
+                match:
+                  172.16.176.0/21:
+                    max-prefix-len: 24
+              '20':
+                action: permit
+                match:
+                  172.16.176.0/24:
+                    max-prefix-len: 32
+          EXIT_LOCAL_IF:
             rule:
               '10':
                 action: permit
                 match:
                   172.16.176.6/32:
                     max-prefix-len: 32
-          CONSOL_LOCAL_IF:
+          INBAND_LOCAL_IF:
             rule:
               '10':
                 action: permit
@@ -624,7 +629,7 @@
                 match:
                   172.16.180.3/32:
                     max-prefix-len: 32
-          CONSOL_PREFIXES:
+          INBAND_PREFIXES:
             rule:
               '10':
                 action: permit
@@ -645,18 +650,6 @@
                 action: permit
                 match:
                   172.16.176.4/32:
-                    max-prefix-len: 32
-          ERA_PREFIXES:
-            rule:
-              '10':
-                action: permit
-                match:
-                  172.16.176.0/21:
-                    max-prefix-len: 24
-              '20':
-                action: permit
-                match:
-                  172.16.176.0/24:
                     max-prefix-len: 32
           LOCAL_OOB_LOOPBACK:
             rule:
@@ -711,13 +704,13 @@
                 match:
                   ip-prefix-list: ALL_PREFIXES
                   type: ipv4
-          COMMON_FILTER:
+          EXIT_FILTER:
             rule:
               '10':
                 action:
                   deny: {}
                 match:
-                  ip-prefix-list: COMMON_LOCAL_IF
+                  ip-prefix-list: EXIT_LOCAL_IF
                   type: ipv4
               '20':
                 action:
@@ -725,7 +718,7 @@
                 set:
                   community:
                     11:11: {}
-          CONSOL_FILTER:
+          INBAND_FILTER:
             rule:
               '5':
                 action:
@@ -742,7 +735,7 @@
                 action:
                   deny: {}
                 match:
-                  ip-prefix-list: CONSOL_LOCAL_IF
+                  ip-prefix-list: INBAND_LOCAL_IF
                   type: ipv4
               '20':
                 action:
@@ -761,7 +754,7 @@
                 action:
                   deny: {}
                 match:
-                  ip-prefix-list: CONSOL_PREFIXES
+                  ip-prefix-list: INBAND_PREFIXES
                   type: ipv4
               '15':
                 action:
@@ -787,7 +780,7 @@
         enable: on
     service:
       dhcp-relay:
-        COMMON:
+        EXIT:
           interface:
             swp61s0: {}
             swp61s1: {}
@@ -796,14 +789,14 @@
             vlan3004_l3: {}
           server:
             192.168.200.2: {}
-            192.168.200.3: {}
+            192.168.210.2: {}
         OOB:
           interface:
-            vlan10: {}
+            vlan200: {}
             vlan3001_l3: {}
           server:
             192.168.200.2: {}
-            192.168.200.3: {}
+            192.168.210.2: {}
       ntp:
         mgmt:
           server:
@@ -813,6 +806,11 @@
             3.cumulusnetworks.pool.ntp.org: {}
     system:
       aaa:
+        authentication-order:
+          '1':
+            local: {}
+          '2':
+            ldap: {}
         class:
           nvapply:
             action: allow
@@ -829,6 +827,14 @@
             command-path:
               /:
                 permission: all
+        ldap:
+          base-dn: dc=example,dc=com
+          bind-dn: cn=admin,ou=Users,dc=example,dc=com
+          secret: $nvsec$04176b6cfafbbc04ca27fc8fa12b52fa
+          server:
+            192.168.200.252: {}
+            192.168.210.252:
+              priority: 2
         role:
           nvue-admin:
             class:
@@ -876,6 +882,25 @@
         mode: cold
       ssh-server:
         state: enabled
+      telemetry:
+        enable: on
+        histogram:
+          counter:
+            bin-min-boundary: 3552
+            histogram-size: 55008
+            sample-interval: 1024
+          egress-buffer:
+            bin-min-boundary: 960
+            histogram-size: 9830400
+            sample-interval: 1024
+          ingress-buffer:
+            bin-min-boundary: 960
+            histogram-size: 2457600
+            sample-interval: 1024
+        snapshot-file:
+          count: 120
+          name: /var/run/cumulus/histogram_stats
+        snapshot-interval: 10
       timezone: Etc/Zulu
       wjh:
         channel:
@@ -886,7 +911,7 @@
               tunnel: {}
         enable: on
     vrf:
-      COMMON:
+      EXIT:
         evpn:
           enable: on
           vlan: 3004
@@ -911,27 +936,15 @@
                   from-vrf:
                     enable: on
                     list:
-                      CONSOL: {}
+                      INBAND: {}
                       OOB: {}
-                    route-map: COMMON_FILTER
+                    route-map: EXIT_FILTER
               l2vpn-evpn:
                 enable: on
             autonomous-system: 4260394788
             enable: on
             neighbor:
-              swp61s0:
-                peer-group: underlay-esl-external
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp61s1:
-                peer-group: underlay-esl-external
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp63s0:
-                peer-group: underlay-esl-external
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp63s1:
+              swp61s0-1,swp63s0-1:
                 peer-group: underlay-esl-external
                 type: unnumbered
                 update-source: 172.16.176.12
@@ -947,7 +960,34 @@
             rd: 172.16.176.12:5004
             route-export: {}
             router-id: 172.16.176.12
-      CONSOL:
+      GPU:
+        evpn:
+          enable: on
+          vlan: 3003
+          vni:
+            '5003': {}
+        loopback:
+          ip:
+            address:
+              192.168.110.6/32: {}
+        router:
+          bgp:
+            address-family:
+              ipv4-unicast:
+                enable: on
+                redistribute:
+                  connected:
+                    enable: on
+                route-export:
+                  to-evpn:
+                    enable: on
+              l2vpn-evpn:
+                enable: on
+            autonomous-system: 4260394788
+            enable: on
+            rd: 172.16.176.12:5003
+            router-id: 172.16.176.12
+      INBAND:
         evpn:
           enable: on
           vlan: 3002
@@ -972,8 +1012,8 @@
                   from-vrf:
                     enable: on
                     list:
-                      COMMON: {}
-                    route-map: CONSOL_FILTER
+                      EXIT: {}
+                    route-map: INBAND_FILTER
               l2vpn-evpn:
                 enable: on
             autonomous-system: 4260394788
@@ -981,33 +1021,6 @@
             rd: 172.16.176.12:5002
             route-export: {}
             route-import: {}
-            router-id: 172.16.176.12
-      GPU:
-        evpn:
-          enable: on
-          vlan: 3003
-          vni:
-            '5003': {}
-        loopback:
-          ip:
-            address:
-              192.168.111.6/32: {}
-        router:
-          bgp:
-            address-family:
-              ipv4-unicast:
-                enable: on
-                redistribute:
-                  connected:
-                    enable: on
-                route-export:
-                  to-evpn:
-                    enable: on
-              l2vpn-evpn:
-                enable: on
-            autonomous-system: 4260394788
-            enable: on
-            rd: 172.16.176.12:5003
             router-id: 172.16.176.12
       OOB:
         evpn:
@@ -1034,7 +1047,7 @@
                   from-vrf:
                     enable: on
                     list:
-                      COMMON: {}
+                      EXIT: {}
                     route-map: OOB_FILTER
               l2vpn-evpn:
                 enable: on
@@ -1055,194 +1068,8 @@
                 enable: on
             enable: on
             neighbor:
-              swp27s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp27s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp28s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp28s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp29s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp29s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp30s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp30s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp31s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp31s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp32s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp32s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp33s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp33s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp34s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp34s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp35s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp35s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp36s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp36s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp37s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp37s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp38s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp38s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp39s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp39s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp40s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp40s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp41s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp41s1:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp42s0:
-                peer-group: underlay
-                ttl-security:
-                  hops: 1
-                type: unnumbered
-                update-source: 172.16.176.12
-              swp42s1:
-                peer-group: underlay
+              ? swp27s0-1,swp28s0-1,swp29s0-1,swp30s0-1,swp31s0-1,swp32s0-1,swp33s0-1,swp34s0-1,swp35s0-1,swp36s0-1,swp37s0-1,swp38s0-1,swp39s0-1,swp40s0-1,swp41s0-1,swp42s0-1
+              : peer-group: underlay
                 ttl-security:
                   hops: 1
                 type: unnumbered

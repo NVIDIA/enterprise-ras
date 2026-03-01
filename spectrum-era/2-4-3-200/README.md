@@ -2,12 +2,12 @@
 <!-- SPDX-License-Identifier: MIT -->
 
 # ERA switch automation using NVIDIA NVUE Collection
-![release](https://img.shields.io/badge/release-v1.0.0-blue)
+![release](https://img.shields.io/badge/release-v3.0.0-blue)
 ![architecture](https://img.shields.io/badge/architecture-2--4--3--200-green)
 
 This repository contains the files to setup ERA configuration on the core switches. You can change the values in the inventory files to customize the variables.
 
-2-4-3-200 Release v1.0.0
+2-4-3-200 Release v3.0.0
 
 ## Deploying the setup on Air
 
@@ -152,7 +152,7 @@ Pull this git repo to use it for configuring the setup:
 
 ```
 ubuntu@ubuntu:~$ git clone https://github.com/NVIDIA/enterprise-ras.git
-ubuntu@ubuntu:~$ git checkout sp-2-4-3-v1.0.0
+ubuntu@ubuntu:~$ git checkout sp-2-4-3-200-v3.0.0
 ubuntu@ubuntu:~$ cd spectrum-era/2-4-3-200
 ```
 
