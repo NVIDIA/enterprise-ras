@@ -1,0 +1,97 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+---
+common:
+  gpu_network: 192.168.110.0/24
+  gpu_gateway: 192.168.110.1
+  gpu_vlan: 50
+  cpu_network: 172.16.178.0/24
+  cpu_gateway: 172.16.178.1
+  cpu_vlan: 20
+  support_network: 172.16.179.0/24
+  support_gateway: 172.16.179.1
+  support_vlan: 30
+  storage_gateway: 172.16.180.1
+  storage_network: 172.16.180.0/24
+  storage_vlan: 40
+devices:
+  su-01-node-01:
+    eth0_ip: 192.168.200.11
+    mac: 44:38:39:22:AA:03
+    gpu_ip1: 192.168.110.201/24
+    gpu_ip2: 192.168.110.202/24
+    bond_ip: 172.16.178.201/24
+  su-01-node-02:
+    eth0_ip: 192.168.200.12
+    mac: 44:38:39:22:AA:04
+    gpu_ip1: 192.168.110.203/24
+    gpu_ip2: 192.168.110.204/24
+    bond_ip: 172.16.178.203/24
+  su-01-node-03:
+    eth0_ip: 192.168.200.13
+    mac: 44:38:39:22:AA:05
+    gpu_ip1: 192.168.110.205/24
+    gpu_ip2: 192.168.110.206/24
+    bond_ip: 172.16.178.205/24
+  su-01-node-04:
+    eth0_ip: 192.168.200.14
+    mac: 44:38:39:22:AA:06
+    gpu_ip1: 192.168.110.207/24
+    gpu_ip2: 192.168.110.208/24
+    bond_ip: 172.16.178.207/24
+  support-01:
+    eth0_ip: 192.168.200.21
+    mac: 44:38:39:22:AA:07
+    bond_ip1: 172.16.179.101/24
+    bond_ip2: 172.16.179.102/24
+  support-02:
+    eth0_ip: 192.168.200.22
+    mac: 44:38:39:22:AA:08
+    bond_ip1: 172.16.179.103/24
+    bond_ip2: 172.16.179.104/24
+  support-03:
+    eth0_ip: 192.168.200.23
+    mac: 44:38:39:22:AA:09
+    bond_ip1: 172.16.179.105/24
+    bond_ip2: 172.16.179.106/24
+  support-04:
+    eth0_ip: 192.168.200.24
+    mac: 44:38:39:22:AA:10
+    bond_ip1: 172.16.179.107/24
+    bond_ip2: 172.16.179.108/24
+  support-05:
+    eth0_ip: 192.168.200.25
+    mac: 44:38:39:22:AA:11
+    bond_ip1: 172.16.179.109/24
+    bond_ip2: 172.16.179.110/24
+  storage-01:
+    eth0_ip: 192.168.200.31
+    mac: 44:38:39:22:AA:12
+    bond_ip1: 172.16.180.101/24
+    bond_ip2: 172.16.180.102/24
+  storage-02:
+    eth0_ip: 192.168.200.32
+    mac: 44:38:39:22:AA:13
+    bond_ip1: 172.16.180.103/24
+    bond_ip2: 172.16.180.104/24
+  core-01:
+    eth0_ip: 192.168.200.5
+    mac: 44:38:39:22:AA:01
+  core-02:
+    eth0_ip: 192.168.200.6
+    mac: 44:38:39:22:AA:02
+  cust-net-edge-01:
+    eth0_ip: 192.168.200.41
+    mac: 44:38:39:22:AA:14
+  cust-net-edge-02:
+    eth0_ip: 192.168.200.42
+    mac: 44:38:39:22:AA:15
+  dhcp-edge:
+    eth0_ip: 192.168.200.45
+    mac: 44:38:39:22:AA:16
+  dhcp-oob:
+    eth0_ip: 192.168.200.252
+  oob-switch-01:
+    eth0_ip: 192.168.200.2
+  oob-switch-02:
+    eth0_ip: 192.168.200.3

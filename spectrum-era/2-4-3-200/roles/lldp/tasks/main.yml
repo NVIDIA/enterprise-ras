@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+---
+- name: Package installs
+  apt:
+    pkg:
+      - lldpd
+    state: present
+
+- name: Force all notified handlers to run at this point, not waiting for normal sync points
+  meta: flush_handlers
+
+- name: Copy lldp configuration
+  copy:
+    src: port_info.conf
+    dest: /etc/lldpd.d/port_info.conf
+    mode: 0644
+  notify: restart lldpd
