@@ -1,0 +1,131 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+- header:
+    model: vx
+    nvue-api-version: nvue_v1
+    rev-id: 1.0
+    version: Cumulus Linux 5.12.0
+- set:
+    bridge:
+      domain:
+        br_default:
+          vlan:
+            '200': {}
+    interface:
+      eth0:
+        ip:
+          address:
+            dhcp: {}
+          vrf: mgmt
+        type: eth
+      spine_bond:
+        bond:
+          member:
+            swp49-52: {}
+        type: bond
+      spine_bond,swp1-5,25-41,45-47,49-57,60-61:
+        link:
+          state:
+            up: {}
+      spine_bond,swp1-5,25-41,45-47,53-57,60-61:
+        bridge:
+          domain:
+            br_default:
+              access: 200
+      swp1-5,25-41,45-47,49-57,60-61:
+        type: swp
+      vlan200:
+        ip:
+          address:
+            192.168.210.2/24: {}
+        type: svi
+        vlan: 200
+    service:
+      ntp:
+        mgmt:
+          server:
+            0.cumulusnetworks.pool.ntp.org: {}
+            1.cumulusnetworks.pool.ntp.org: {}
+            2.cumulusnetworks.pool.ntp.org: {}
+            3.cumulusnetworks.pool.ntp.org: {}
+    system:
+      aaa:
+        class:
+          nvapply:
+            action: allow
+            command-path:
+              /:
+                permission: all
+          nvshow:
+            action: allow
+            command-path:
+              /:
+                permission: ro
+          sudo:
+            action: allow
+            command-path:
+              /:
+                permission: all
+        role:
+          nvue-admin:
+            class:
+              nvapply: {}
+          nvue-monitor:
+            class:
+              nvshow: {}
+          system-admin:
+            class:
+              nvapply: {}
+              sudo: {}
+        user:
+          cumulus:
+            full-name: cumulus,,,
+            hashed-password: '*'
+            role: system-admin
+      api:
+        state: enabled
+      config:
+        auto-save:
+          state: enabled
+      control-plane:
+        acl:
+          acl-default-dos:
+            inbound: {}
+          acl-default-whitelist:
+            inbound: {}
+      hostname: oob-switch-02
+      message:
+        post-login: |
+          #####################################################################################
+          #                     You are successfully logged in to: oob-switch-02              #
+          #####################################################################################
+        pre-login: |
+          #####################################################################################
+          #  Welcome to NVIDIA Cumulus VX (TM)                                                #
+          #  NVIDIA Cumulus VX (TM) is a community supported virtual appliance designed       #
+          #  for experiencing, testing and prototyping NVIDIA Cumulus'"'"' latest technology. #
+          #  For any questions or technical support, visit our community site at:             #
+          #  https://www.nvidia.com/en-us/support                                             #
+          #####################################################################################
+      reboot:
+        mode: cold
+      ssh-server:
+        state: enabled
+      timezone: Etc/Zulu
+      wjh:
+        channel:
+          forwarding:
+            trigger:
+              l2: {}
+              l3: {}
+              tunnel: {}
+        enable: on
+    vrf:
+      default:
+        router:
+          static:
+            0.0.0.0/0:
+              address-family: ipv4-unicast
+              via:
+                192.168.210.1:
+                  type: ipv4-address

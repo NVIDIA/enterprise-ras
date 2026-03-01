@@ -1,0 +1,10 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: MIT #}
+group{
+  option domain-name-servers 192.168.200.1;
+  option domain-name "era-simulation";
+  option routers 192.168.200.1;
+{% for host in groups.dhcp_config %}
+host {{ host }} {hardware ethernet {{ devices[host].mac }}; fixed-address {{ devices[host].eth0_ip }}; option host-name "{{ host }}"; }
+{% endfor %}
+}

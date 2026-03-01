@@ -1,0 +1,600 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+---
+- name: Create new revision
+  nvidia.nvue.config:
+    state: new
+  register: revision
+
+- name: Dump revision
+  ansible.builtin.debug:
+    msg: '{{ revision.revid }}'
+
+- name: Set system settings
+  nvidia.nvue.system:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      hostname: '{{ hostname }}'
+      timezone: '{{ timezone }}'
+      login_message:
+        post_login: '{{ post_login_message }}'
+        pre_login: '{{ pre_login_message }}'
+      system_global:
+        anycast_mac: '{{ anycast_mac }}'
+
+- name: Set DHCP Relay interface
+  nvidia.nvue.service:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      dhcp_relay:
+        - id: '{{ item.0.id }}'
+          interface:
+            - id: '{{ item.1 }}'
+  loop: "{{ dhcp_relay | subelements('interface') }}"
+
+- name: Set DHCP Relay server
+  nvidia.nvue.service:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      dhcp_relay:
+        - id: '{{ item.0.id }}'
+          server:
+            - id: '{{ item.1 }}'
+  loop: "{{ dhcp_relay | subelements('server') }}"
+        
+- name: Set interfaces up
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item }}'
+        link:
+          state:
+            - id: 'up'
+        type: 'swp'
+  loop: "{{ interfaces_up }}"
+
+- name: Set interfaces down
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item }}'
+        link:
+          state:
+            - id: 'down'
+        type: 'swp'
+  loop: "{{ interfaces_down }}"
+
+- name: Set loopback interface IP address
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: 'lo'
+        ip:
+          address:
+            - id: '{{ lo_ip }}'
+
+- name: Breakout interfaces
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item.id }}'
+        link:
+          breakout:
+            - id: '{{ item.breakout }}'
+              lanes_per_port: '{{ item.lanes }}'
+  loop: "{{ breakout_config }}"
+
+- name: Set bond interfaces
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item.id }}'
+        bond:
+          member:
+            - id: '{{ item.member }}'
+        evpn:
+          multihoming:
+            segment:
+              local_id: '{{ item.segmentid | int }}'
+              enable: 'on'
+              mac_address: '{{ mh_mac }}'
+        type: 'bond'
+  loop: "{{ bond_config }}"
+
+- name: Set bridge
+  nvidia.nvue.bridge:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: 'br_default'
+        type: 'vlan-aware'
+        vlan:
+          - id: '{{ item.id }}'
+            vni:
+              - id: '{{ item.vni }}'
+  loop: "{{ vlan_config }}"
+
+- name: Set Storage interfaces
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item }}'
+        bridge:
+          domain:
+            - id: 'br_default'
+              untagged: '{{ storage_untagged | int }}'
+              vlan:
+                - id: '{{ storage_vlan }}'
+        bond:
+          lacp_bypass: 'on'
+  loop: '{{ storage_interfaces }}'
+
+- name: Set support interfaces
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item }}'
+        bridge:
+          domain:
+            - id: 'br_default'
+              untagged: '{{ support_untagged | int }}'
+              vlan:
+                - id: '{{ support_vlan }}'
+        bond:
+          lacp_bypass: 'on'
+  loop: '{{ support_interfaces }}'
+
+- name: Set OOB interfaces
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item }}'
+        bridge:
+          domain:
+            - id: 'br_default'
+              access: '{{ oob_access | int }}'
+  loop: '{{ oob_interfaces }}'
+
+- name: Set CPU interfaces
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item }}'
+        bridge:
+          domain:
+            - id: 'br_default'
+              access: '{{ cpu_access | int }}'
+        bond:
+          lacp_bypass: 'on'
+  loop: '{{ cpu_interfaces }}'
+
+- name: Set GPU interfaces
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item }}'
+        bridge:
+          domain:
+            - id: 'br_default'
+              access: '{{ gpu_access | int }}'
+        qos:
+          pfc_watchdog:
+            state: 'enable'
+  loop: '{{ gpu_interfaces }}'
+
+- name: Set ISL interfaces
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item }}'
+        description: 'ISL to other core switch'
+        evpn:
+          multihoming:
+            uplink: 'on'
+  loop: '{{ isl_interfaces }}'
+
+- name: Set edge interfaces
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item }}'
+        description: 'Edge uplinks'
+        ip:
+          vrf: '{{ edge_vrf }}'
+  loop: '{{ edge_interfaces }}'
+
+- name: Set VLAN interfaces
+  nvidia.nvue.interface:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item.id }}'
+        ip:
+          address:
+            - id: '{{ item.ip }}'
+          vrr:
+            address:
+              - id: '{{ item.vrr }}'
+            state:
+              - id: 'up'
+          vrf: '{{ item.vrf }}'
+        vlan: '{{ item.vlan  | int }}'
+        type: 'svi'
+  loop: '{{ vlan_interfaces}}'
+
+- name: Set vxlan
+  nvidia.nvue.vxlan:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      enable: 'on'
+      source:
+        address: '{{ nve_vxlan.source }}'
+      flooding:
+        enable: 'on'
+        head_end_replication: 
+          - id: '{{ nve_vxlan.her }}'
+      encapsulation:
+        dscp:
+          action: 'copy'
+      decapsulation:
+        dscp:
+          action: 'preserve'
+
+- name: Set evpn
+  nvidia.nvue.evpn:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      enable: 'on'
+      multihoming:
+        enable: 'on'
+      route_advertise:
+
+- name: Set ROCE
+  nvidia.nvue.qos:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      roce:
+        enable: 'on'
+        mode: 'lossless'
+      traffic_pool:
+        - id: 'default-lossy'
+          memory_percent: 10
+        - id: 'roce-lossless'
+          memory_percent: 90
+
+- name: Set router
+  nvidia.nvue.router:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      bgp:
+        enable: 'on'
+        autonomous_system: '{{ bgp_asn  | int }}'
+        router_id: '{{ bgp_routerid }}'
+
+- name: Set prefix lists on router
+  nvidia.nvue.router:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      policy:
+        prefix_list:
+          - id: '{{ item.0.id }}'
+            rule:
+              - id: '{{ item.1.id | int }}'
+                match:
+                  - id: '{{ item.1.match }}'
+                    max_prefix_len: '{{ item.1.max_len }}'
+                action: 'permit'
+  loop: "{{ prefix_list | subelements('rule') }}"
+
+- name: Set route maps and community lists on router
+  nvidia.nvue.router:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      vrr:
+        enable: 'on'
+      policy:
+        community_list:
+          - id: '11'
+            rule:
+              - id: 100
+                action: 'permit'
+                community:
+                  - id: '11:11'
+        route_map:
+          - id: 'BLOCK_VTEPS'
+            rule:
+              - id: 10
+                action:
+                  - id: 'deny'
+                match:
+                  ip_prefix_list: 'VTEP_PREFIXES'
+                  type: 'ipv4'
+              - id: 20
+                action:
+                  - id: 'permit'
+                match:
+                  ip_prefix_list: 'ALL_PREFIXES'
+                  type: 'ipv4'
+          - id: 'COMMON_FILTER'
+            rule:
+              - id: 10
+                action:
+                  - id: 'deny'
+                match:
+                  ip_prefix_list: 'COMMON_LOCAL_IF'
+                  type: 'ipv4'
+              - id: 20
+                action:
+                  - id: 'permit'
+                set:
+                  community:
+                    - id: '11:11'
+          - id: 'INBAND_FILTER'
+            rule:
+              - id: 5
+                action:
+                  - id: 'deny'
+                match:
+                  community_list: '11'
+              - id: 10
+                action:
+                  - id: 'deny'
+                match:
+                  ip_prefix_list: 'OOB_PREFIXES'
+                  type: 'ipv4'
+              - id: 15
+                action:
+                  - id: 'deny'
+                match:
+                  ip_prefix_list: 'INBAND_LOCAL_IF'
+                  type: 'ipv4'
+              - id: 20
+                action:
+                  - id: 'permit'
+                match:
+                  ip_prefix_list: 'ALL_PREFIXES'
+                  type: 'ipv4'
+          - id: 'OOB_FILTER'
+            rule:
+              - id: 5
+                action:
+                  - id: 'deny'
+                match:
+                  community_list: '11'
+              - id: 10
+                action:
+                  - id: 'deny'
+                match:
+                  ip_prefix_list: 'INBAND_PREFIXES'
+                  type: 'ipv4'
+              - id: 15
+                action:
+                  - id: 'deny'
+                match:
+                  ip_prefix_list: 'OOB_LOCAL_IF'
+                  type: 'ipv4'
+              - id: 20
+                action:
+                  - id: 'permit'
+                match:
+                  ip_prefix_list: 'ALL_PREFIXES'
+                  type: 'ipv4'
+          - id: 'OUTBOUND_ERA_PREFIXES'
+            rule:
+              - id: 10
+                action:
+                  - id: 'permit'
+                match:
+                  ip_prefix_list: 'ERA_PREFIXES'
+                  type: 'ipv4'
+
+- name: Set vrf
+  nvidia.nvue.vrf:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: '{{ item.id }}'
+        evpn:
+          enable: 'on'
+          vlan: '{{ item.vlan  | int }}'
+          vni:
+            - id: '{{ item.vni }}'
+        loopback:
+          ip:
+            address:
+              - id: '{{ item.lo }}'
+        router:
+          bgp:
+            address_family:
+              ipv4_unicast:
+                enable: 'on'
+                redistribute:
+                  connected:
+                    enable: 'on'
+                route_export:
+                  to_evpn:
+                    enable: 'on'
+              l2vpn_evpn:
+                enable: 'on'
+            autonomous_system: '{{ bgp_asn  | int }}'
+            enable: 'on'
+            router_id: '{{ router_id }}'
+            rd: '{{ item.rd }}'
+  loop: '{{ vrf_config }}'
+
+- name: Add vrf settings
+  nvidia.nvue.vrf:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: 'COMMON'
+        router:
+          bgp:
+            address_family:
+              ipv4_unicast:
+                route_import:
+                  from_vrf:
+                    enable: 'on'
+                    list:
+                      - id: 'INBAND'
+                      - id: 'OOB'
+                    route_map: COMMON_FILTER
+            route_export:
+              to_evpn:
+            neighbor:
+              - id: 'swp61s0'
+                peer_group: 'underlay-esl-external'
+                type: 'unnumbered'
+                update_source: '{{ bgp_routerid }}'
+              - id: 'swp61s1'
+                peer_group: 'underlay-esl-external'
+                type: 'unnumbered'
+                update_source: '{{ bgp_routerid }}'
+              - id: 'swp63s0'
+                peer_group: 'underlay-esl-external'
+                type: 'unnumbered'
+                update_source: '{{ bgp_routerid }}'
+              - id: 'swp63s1'
+                peer_group: 'underlay-esl-external'
+                type: 'unnumbered'
+                update_source: '{{ bgp_routerid }}'
+            peer_group:
+              - id: 'underlay-esl-external'
+                address_family:
+                  ipv4_unicast:
+                    enable: 'on'
+                    policy:
+                      outbound:
+                        route_map: 'OUTBOUND_ERA_PREFIXES'
+                remote_as: 'external'
+      - id: 'INBAND'
+        router:
+          bgp:
+            address_family:
+              ipv4_unicast:
+                route_import:
+                  from_vrf:
+                    enable: 'on'
+                    list:
+                      - id: 'COMMON'
+                    route_map: INBAND_FILTER
+            route_export:
+              to_evpn:
+            route_import:
+              from_evpn:
+      - id: 'OOB'
+        router:
+          bgp:
+            address_family:
+              ipv4_unicast:
+                route_import:
+                  from_vrf:
+                    enable: 'on'
+                    list:
+                      - id: 'COMMON'
+                    route_map: OOB_FILTER
+            route_export:
+      - id : 'default'  
+        router:
+          bgp:
+            address_family:
+              ipv4_unicast:
+                enable: 'on'
+                redistribute:
+                  connected:
+                    enable: 'on'
+              l2vpn_evpn:
+                enable: 'on'
+            enable: 'on'
+            peer_group:
+              - id: 'underlay'
+                address_family:
+                  l2vpn_evpn:
+                    enable: 'on'
+                remote_as: internal
+                bfd:
+                  enable: 'on'
+              - id: 'underlay-esl-external'
+                address_family:
+                  ipv4_unicast:
+                    enable: 'on'
+                    policy:
+                      outbound:
+                        route_map: 'OUTBOUND_ERA_PREFIXES'
+                remote_as: 'external'
+                bfd:
+                  enable: 'on'
+
+- name: Update VRF settings for edge interfaces
+  nvidia.nvue.vrf:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id: 'COMMON'
+        router:
+          bgp:
+            neighbor:
+              - id: '{{ item }}'
+                peer_group: 'underlay-esl-external'
+                type: 'unnumbered'
+                update_source: '{{ bgp_routerid }}'
+  loop: '{{ edge_interfaces }}'
+
+- name: Add interfaces to default vrf
+  nvidia.nvue.vrf:
+    state: merged
+    revid: '{{ revision.revid }}'
+    data:
+      - id : 'default'  
+        router:
+          bgp:
+            neighbor:
+              - id: '{{ item }}'
+                peer_group: 'underlay'
+                type: 'unnumbered'
+                update_source: '{{ bgp_routerid }}'
+                ttl_security:
+                  hops: 1
+  loop: '{{ isl_interfaces }}'
+      
+- name: Apply new revision
+  nvidia.nvue.config:
+    state: apply
+    revid: '{{ revision.revid }}'
+    force: true
+    wait: 10
+  register: revision
+
+- name: Dump previous output
+  ansible.builtin.debug:
+    msg: '{{ revision }}'
+
+- name: Get the current config
+  nvidia.nvue.api:
+    operation: get
+  register: output
+
+- name: Print current config
+  ansible.builtin.debug:
+    msg: "{{ output }}"
