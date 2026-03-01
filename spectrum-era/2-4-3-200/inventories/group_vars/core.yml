@@ -64,12 +64,11 @@ interfaces_down:
   - 'swp8'
 
 vlan_config:
-  - { id: '10', vni: '4010' }
-  - { id: '20', vni: '4020' }
-  - { id: '25', vni: '4025' }
-  - { id: '30', vni: '4030' }
-  - { id: '40', vni: '4040' }
-  - { id: '50', vni: '4050' }
+  - { id: '200', vni: '4200' }
+  - { id: '300', vni: '4300' }
+  - { id: '400', vni: '4400' }
+  - { id: '500', vni: '4500' }
+  - { id: '900', vni: '4900' }
 
 bond_config:
   - { id: 'bond1s0', segmentid: 10, member: 'swp1s0' }
@@ -181,9 +180,14 @@ breakout_config:
   - { id: 'swp61', breakout: '8x', lanes: 1 }
   - { id: 'swp63', breakout: '8x', lanes: 1 }
 
+interfaces_disabled: 
+  - 'swp60'
+  - 'swp62'
+  - 'swp64'
+
 mh_mac: '44:38:39:FF:00:AA'
 
-cpu_access: 20
+cpu_access: 300
 
 cpu_interfaces:
   - 'bond1s0'
@@ -219,9 +223,9 @@ cpu_interfaces:
   - 'bond8s2'
   - 'bond8s3'
 
-support_untagged: 20
+support_untagged: 300
 
-support_vlan: 30
+support_vlan: 400
 
 support_interfaces:
   - 'bond25s0'
@@ -230,21 +234,15 @@ support_interfaces:
   - 'bond25s3'
   - 'bond26s0'
 
-bcm_vlan: 25
+storage_untagged: 300
 
-bcm_interfaces:
-  - 'bond25s0'
-  - 'bond25s1'
-
-storage_untagged: 20
-
-storage_vlan: 40
+storage_vlan: 500
 
 storage_interfaces:
   - 'bond26s1'
   - 'bond26s2'
 
-oob_access: 10
+oob_access: 200
 
 oob_interfaces:
   - 'bond59s0'
@@ -253,7 +251,7 @@ oob_interfaces:
   - 'bond59s3'
   - 'bond59s4'
 
-gpu_access: 50
+gpu_access: 900
 
 gpu_interfaces:
   - 'swp9s0'
@@ -329,12 +327,12 @@ edge_interfaces:
   - 'swp63s0'
   - 'swp63s1'
 
-edge_vrf: 'COMMON'
+edge_vrf: 'EXIT'
 
 bgp_asn: 4260394788
 
 anycast_mac: '44:38:39:ff:00:ff'
 
 dhcp_relay:
-  - { id: 'COMMON', interface: ['swp61s0', 'swp61s1', 'swp63s0', 'swp63s1', 'vlan3004_l3'], server: ['192.168.200.2', '192.168.200.3'] }
-  - { id: 'OOB', interface: ['vlan10', 'vlan3001_l3'], server: ['192.168.200.2', '192.168.200.3'] }
+  - { id: 'EXIT', interface: ['swp61s0', 'swp61s1', 'swp63s0', 'swp63s1', 'vlan3004_l3'], server: ['192.168.200.2', '192.168.210.2'] }
+  - { id: 'OOB', interface: ['vlan200', 'vlan3001_l3'], server: ['192.168.200.2', '192.168.210.2'] }

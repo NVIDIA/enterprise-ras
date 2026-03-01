@@ -1,18 +1,18 @@
 {
     "format": "JSON",
-    "title": "ERA-PoC-243",
+    "title": "ERA-243-200",
     "ztp": null,
     "content": {
         "nodes": {
             "core-01": {
-                "cpu": 1,
+                "cpu": 2,
                 "memory": 2048,
                 "storage": 10,
                 "positioning": {
                     "x": 825,
                     "y": 275
                 },
-                "os": "cumulus-vx-5.12.1",
+                "os": "cumulus-vx-5.13.0",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -24,14 +24,14 @@
                 "network_pci": {}
             },
             "core-02": {
-                "cpu": 1,
+                "cpu": 2,
                 "memory": 2048,
                 "storage": 10,
                 "positioning": {
                     "x": 1925,
                     "y": 275
                 },
-                "os": "cumulus-vx-5.12.1",
+                "os": "cumulus-vx-5.13.0",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -43,14 +43,14 @@
                 "network_pci": {}
             },
             "cust-net-edge-01": {
-                "cpu": 1,
+                "cpu": 2,
                 "memory": 2048,
                 "storage": 10,
                 "positioning": {
                     "x": 550,
                     "y": -275
                 },
-                "os": "cumulus-vx-5.12.1",
+                "os": "cumulus-vx-5.13.0",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -62,14 +62,14 @@
                 "network_pci": {}
             },
             "cust-net-edge-02": {
-                "cpu": 1,
+                "cpu": 2,
                 "memory": 2048,
                 "storage": 10,
                 "positioning": {
                     "x": 825,
                     "y": -275
                 },
-                "os": "cumulus-vx-5.12.1",
+                "os": "cumulus-vx-5.13.0",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -145,7 +145,7 @@
                     "x": 550,
                     "y": 275
                 },
-                "os": "cumulus-vx-5.12.1",
+                "os": "cumulus-vx-5.13.0",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -164,7 +164,7 @@
                     "x": 550,
                     "y": 550
                 },
-                "os": "cumulus-vx-5.12.1",
+                "os": "cumulus-vx-5.13.0",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -1060,6 +1060,22 @@
             ],
             [
                 {
+                    "interface": "eth2",
+                    "node": "oob-server-01",
+                    "mac": "48:b0:2d:e4:c4:1a",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp1",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:ff:14:bb",
+                    "network_pci": null,
+                    "interface_role": null,
+                    "scalable_unit": null
+                }
+            ],
+            [
+                {
                     "interface": "swp61s0",
                     "node": "core-01",
                     "mac": "48:b0:2d:cf:38:51",
@@ -1150,8 +1166,8 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp4",
-                    "node": "oob-switch-01",
+                    "interface": "swp3",
+                    "node": "oob-switch-02",
                     "mac": "48:b0:2d:c4:0f:7c",
                     "network_pci": null
                 }

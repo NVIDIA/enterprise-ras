@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 ---
-ansible_host: "192.168.200.3"
+ansible_host: "192.168.210.2"
 hostname: "oob-switch-02"
 post_login_message: |
                 #####################################################################################
                 #               You are successfully logged in to: oob-switch-02                    #
                 #####################################################################################
 vlan_config:
-  - { id: 'vlan10', ip: '172.16.177.11/24', vlan: '10'}
+  - { id: 'vlan200', ip: '172.16.177.11/24', vlan: '200'}

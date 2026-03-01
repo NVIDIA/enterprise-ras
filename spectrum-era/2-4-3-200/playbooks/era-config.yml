@@ -15,7 +15,7 @@
     - { role: dns, tags: ["dns"] }
   become: true
 
-- name: Wait for DHCP IP assignments
+- name: Wait for DHCP IP assignments - Servers
   hosts: servers
   gather_facts: false
   tasks:
@@ -26,8 +26,27 @@
         timeout: 300  # exit after 5 minutes 
       delegate_to: localhost
 
-- name: Set hostnames
+- name: Wait for DHCP IP assignments - Core Switches
+  hosts: core
+  gather_facts: false
+  tasks:
+    - wait_for:
+        host: "{{ inventory_hostname }}"
+        port: 22
+        sleep: 60     # check every 1 minute
+        timeout: 300  # exit after 5 minutes 
+      delegate_to: localhost
+
+- name: Set hostnames - Servers
   hosts: servers
+  gather_facts: false
+  become: true
+  tasks:
+  - ansible.builtin.hostname:
+      name: '{{ inventory_hostname }}'
+
+- name: Set hostnames - Core Switches
+  hosts: core
   gather_facts: false
   become: true
   tasks:
@@ -42,6 +61,13 @@
   - ansible.builtin.hostname:
       name: 'oob-server-01'
 
+- name: Configure LDAP
+  hosts: dhcp-oob
+  gather_facts: false
+  roles:
+    - { role: ldap, tags: ["ldap"] }
+  become: true
+
 - name: Setup ERA configuration on switches
   hosts: core
   connection: ansible.netcommon.httpapi
@@ -53,6 +79,12 @@
     ansible_httpapi_port: 8765
     ansible_httpapi_use_ssl: true
     ansible_httpapi_validate_certs: false
+
+- name: Setup ERA telemetry and LDAP configuration on switches
+  hosts: core
+  gather_facts: false
+  roles:
+    - { role: core-misc, tags: ["core-misc"] }
 
 - name: Setup ERA configuration on nodes
   hosts: nodes
