@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+---
+- name: Enable telemetry at system level
+  nvidia.nvue.command:
+    commands:
+      - set system telemetry enable on
+      - set system telemetry histogram counter bin-min-boundary 3552
+      - set system telemetry histogram counter histogram-size 55008
+      - set system telemetry histogram counter sample-interval 1024
+      - set system telemetry histogram egress-buffer bin-min-boundary 960
+      - set system telemetry histogram egress-buffer histogram-size 9830400
+      - set system telemetry histogram egress-buffer sample-interval 1024
+      - set system telemetry histogram ingress-buffer bin-min-boundary 960
+      - set system telemetry histogram ingress-buffer histogram-size 2457600
+      - set system telemetry histogram ingress-buffer sample-interval 1024
+      - set system telemetry snapshot-file count 120
+      - set system telemetry snapshot-file name /var/run/cumulus/histogram_stats
+      - set system telemetry snapshot-interval 10
+    atomic: true
+    assume_yes: true
+
+- name: Enable telemetry on the interfaces
+  nvidia.nvue.command:
+    commands:
+      - set interface {{ item }} telemetry histogram egress-buffer traffic-class 0 
+      - set interface {{ item }} telemetry histogram ingress-buffer priority-group 0 
+      - set interface {{ item }} telemetry histogram ingress-buffer priority-group 1
+      - set interface {{ item }} telemetry histogram counter counter-type rx-packet
+      - set interface {{ item }} telemetry histogram counter counter-type tx-packet
+    atomic: true
+    assume_yes: true
+  loop: "{{ gpu_interfaces + isl_interfaces + edge_interfaces }}"
+
+- name: Enable telemetry on the interfaces
+  nvidia.nvue.command:
+    commands:
+      - set interface {{ item.member }} telemetry histogram egress-buffer traffic-class 0 
+      - set interface {{ item.member }} telemetry histogram ingress-buffer priority-group 0 
+      - set interface {{ item.member }} telemetry histogram ingress-buffer priority-group 1
+      - set interface {{ item.member }} telemetry histogram counter counter-type rx-packet
+      - set interface {{ item.member }} telemetry histogram counter counter-type tx-packet
+    atomic: true
+    assume_yes: true
+  loop: "{{ bond_config }}"
+
+- name: LDAP configuration
+  nvidia.nvue.command:
+    commands:
+      - set system aaa ldap server {{ devices['dhcp-oob'].eth0_ip }}
+      - set system aaa ldap server {{ devices['dhcp-oob'].eth1_ip }} priority 2
+      - set system aaa ldap bind-dn {{ ldap.root_dn }}
+      - set system aaa ldap base-dn {{ ldap.base_dn }}
+      - set system aaa ldap secret {{ ldap.admin_password }}
+      - set system aaa authentication-order 2 ldap
+      - set system aaa authentication-order 1 local
+    atomic: true
+    assume_yes: true

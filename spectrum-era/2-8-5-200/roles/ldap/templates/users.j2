@@ -1,0 +1,29 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: MIT #}
+
+{% for user in ldap_users_hashed %}
+dn: uid={{ user.username }},ou=Users,dc={{ ldap.domain.split('.')[0] }},dc={{ ldap.domain.split('.')[1] }}
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: top
+uid: {{ user.username }}
+uidNumber: 100{{ loop.index }}
+gidNumber: 1000
+sn: {{ user.lastname }}
+givenName: {{ user.firstname }}
+cn: {{ user.firstname }} {{ user.lastname }}
+displayName: {{ user.firstname }} {{ user.lastname }}
+homeDirectory: /home/{{ user.username }}
+loginShell: /bin/bash
+mail: {{ user.username }}@{{ ldap.domain }}
+userPassword: {{ user.ssha_password }}
+
+{% endfor %}
+
+dn: cn=net-admin,ou=Groups,dc={{ ldap.domain.split('.')[0] }},dc={{ ldap.domain.split('.')[1] }}
+objectClass: top
+objectClass: posixGroup
+cn: net-admin
+gidNumber: 1000
+memberUid: jdoe
+memberUid: asmith
