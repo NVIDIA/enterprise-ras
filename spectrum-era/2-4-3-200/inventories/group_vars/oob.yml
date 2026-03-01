@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+---
+pre_login_message: |
+                #####################################################################################
+                #  Welcome to NVIDIA Cumulus VX (TM)                                                #
+                #  NVIDIA Cumulus VX (TM) is a community supported virtual appliance designed       #
+                #  for experiencing, testing and prototyping NVIDIA Cumulus'"'"' latest technology. #
+                #  For any questions or technical support, visit our community site at:             #
+                #  https://www.nvidia.com/en-us/support                                             #
+                #####################################################################################
+timezone: 'Etc/Zulu'
+
+interfaces_up:
+  - 'swp1'
+  - 'swp2'
+  - 'swp3'
+  - 'swp4'
+  - 'swp5'
+  - 'swp6'
+  - 'swp7'
+  - 'swp8'
+  - 'swp9'
+  - 'swp10'
+  - 'swp11'
+  - 'swp12'
+  - 'swp13'
+  - 'swp14'
+  - 'swp15'
+  - 'swp16'
+  - 'swp17'
+  - 'swp18'
+  - 'swp19'
+  - 'swp20'
+  - 'swp21'
+  - 'swp22'
+  - 'swp23'
+  - 'swp24'
+  - 'swp25'
+  - 'swp26'
+  - 'swp27'
+  - 'swp28'
+  - 'swp29'
+  - 'swp30'
+  - 'swp31'
+  - 'swp32'
+  - 'swp33'
+  - 'swp34'
+  - 'swp35'
+  - 'swp36'
+  - 'swp37'
+  - 'swp38'
+  - 'swp39'
+  - 'swp40'
+  - 'swp41'
+  - 'swp42'
+  - 'swp43'
+  - 'swp44'
+  - 'swp45'
+  - 'swp46'
+  - 'swp47'
+  - 'swp48'
+  - 'swp49'
+  - 'swp51'
+
+bond_interfaces:
+  - 'swp49'
+  - 'swp51'
+
+oob_access: 10
+
+static_route: '172.16.177.1'

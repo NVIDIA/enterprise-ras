@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+---
+- name: Configure DHCP
+  hosts: dhcp-oob
+  gather_facts: false
+  roles:
+    - { role: dhcp, tags: ["dhcp"] }
+  become: true
+
+- name: Create DNS entries
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - { role: dns, tags: ["dns"] }
+  become: true
+
+- name: Wait for DHCP IP assignments
+  hosts: servers
+  gather_facts: false
+  tasks:
+    - wait_for:
+        host: "{{ inventory_hostname }}"
+        port: 22
+        sleep: 60     # check every 1 minute
+        timeout: 300  # exit after 5 minutes 
+      delegate_to: localhost
+
+- name: Set hostnames
+  hosts: servers
+  gather_facts: false
+  become: true
+  tasks:
+  - ansible.builtin.hostname:
+      name: '{{ inventory_hostname }}'
+
+- name: Set hostname on localhost
+  hosts: localhost
+  gather_facts: false
+  become: true
+  tasks:
+  - ansible.builtin.hostname:
+      name: 'oob-server-01'
+
+- name: Setup ERA configuration on switches
+  hosts: core
+  connection: ansible.netcommon.httpapi
+  gather_facts: false
+  roles:
+    - { role: core, tags: ["core"] }
+  vars:
+    ansible_network_os: nvidia.nvue.httpapi
+    ansible_httpapi_port: 8765
+    ansible_httpapi_use_ssl: true
+    ansible_httpapi_validate_certs: false
+
+- name: Setup ERA configuration on nodes
+  hosts: nodes
+  gather_facts: false
+  roles:
+    - { role: nodes, tags: ["nodes"] }
+    - { role: lldp, tags: ["lldp"] }
+  become: true
+
+- name: Setup ERA configuration on storage
+  hosts: storage
+  gather_facts: false
+  roles:
+    - { role: storage, tags: ["storage"] }
+    - { role: lldp, tags: ["lldp"] }
+  become: true
+
+- name: Setup ERA configuration on support
+  hosts: support
+  gather_facts: false
+  roles:
+    - { role: support, tags: ["support"] }
+    - { role: lldp, tags: ["lldp"] }
+  become: true

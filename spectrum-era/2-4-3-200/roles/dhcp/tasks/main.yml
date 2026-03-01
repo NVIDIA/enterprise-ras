@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+---
+- name: Package installs
+  apt:
+    pkg:
+      - isc-dhcp-server
+      - apache2
+    state: present
+
+- name: Generate SSH key
+  command: ssh-keygen -t rsa -b 4096 -C "ztp-user@era-simulation" -N "" -f ~/.ssh/id_rsa
+  args:
+    creates: ~/.ssh/id_rsa
+  become: false
+
+- name: Copy SSH key to ZTP endpoint
+  copy:
+    remote_src: true
+    src: /home/ubuntu/.ssh/id_rsa.pub
+    dest: /var/www/html/authorized_keys
+
+- name: Configure ZTP script
+  copy:
+    src: ztp.sh
+    dest: /var/www/html/ztp.sh
+    mode: 0644
+
+
+- name: Configure DHCP hosts
+  ansible.builtin.template:
+    src: hosts.j2
+    dest: /etc/dhcp/dhcpd.hosts
+  notify: restart dhcp
+
+- name: Configure DHCP
+  ansible.builtin.blockinfile:
+    block: |
+      option www-server code 72 = ip-address;
+      option cumulus-provision-url code 239 = text;
+      # OOB Management subnet
+      shared-network LOCAL-NET{
+      subnet 192.168.200.0 netmask 255.255.255.0 {
+      range 192.168.200.110 192.168.200.150;
+      option domain-name-servers 192.168.200.1;
+      option domain-name "era-simulation";
+      option ntp-servers 192.168.200.1;
+      option cumulus-provision-url "http://192.168.200.252/ztp.sh";
+      }
+      }
+
+      include "/etc/dhcp/dhcpd.hosts"; 
+    path: /etc/dhcp/dhcpd.conf
+    backup: yes
+  notify: restart dhcp

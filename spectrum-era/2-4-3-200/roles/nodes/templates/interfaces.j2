@@ -1,0 +1,40 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: MIT #}
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ens9:
+      dhcp4: no
+    ens11:
+      dhcp4: no
+    ens10:
+      dhcp4: no
+      addresses: 
+        - {{ devices[inventory_hostname].gpu_ip1 }}
+      routes:
+        - to: {{ common.gpu_network }}
+          via: {{ common.gpu_gateway }}
+    ens12:
+      dhcp4: no
+      addresses: 
+        - {{ devices[inventory_hostname].gpu_ip2 }}
+      routes:
+        - to: {{ common.gpu_network }}
+          via: {{ common.gpu_gateway }}
+  bonds:
+    bond0:
+      interfaces:
+        - ens9
+        - ens11
+      addresses:
+        - {{ devices[inventory_hostname].bond_ip }}
+      routes:
+        - to: {{ common.cpu_network }}
+          via: {{ common.cpu_gateway }}
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+      parameters:
+        mode: 802.3ad
+        lacp-rate: fast
+        mii-monitor-interval: 100

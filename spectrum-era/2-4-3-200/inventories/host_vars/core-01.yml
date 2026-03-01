@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+---
+ansible_host: "192.168.200.5"
+hostname: "core-01"
+post_login_message: |
+                #####################################################################################
+                #                     You are successfully logged in to: core-01                    #
+                #####################################################################################
+lo_ip: "172.16.176.11/32"
+router_id: "172.16.176.11"
+vlan_interfaces:
+  - { id: 'vlan10', ip: '172.16.177.2/24', vrr: '172.16.177.1/24', vlan: '10', vrf: 'OOB' }
+  - { id: 'vlan20', ip: '172.16.178.2/24', vrr: '172.16.178.1/24', vlan: '20', vrf: 'CONSOL' }
+  - { id: 'vlan25', ip: '192.168.120.2/24', vrr: '192.168.120.1/24', vlan: '25', vrf: 'CONSOL' }
+  - { id: 'vlan30', ip: '172.16.179.2/24', vrr: '172.16.179.1/24', vlan: '30', vrf: 'CONSOL' }
+  - { id: 'vlan40', ip: '172.16.180.2/24', vrr: '172.16.180.1/24', vlan: '40', vrf: 'CONSOL' }
+  - { id: 'vlan50', ip: '192.168.110.2/24', vrr: '192.168.110.1/24', vlan: '50', vrf: 'GPU' }
+nve_vxlan: { her: '172.16.176.12', source: '172.16.176.11' }
+bgp_routerid: '172.16.176.11'
+prefix_list:
+  - { id: 'ALL_PREFIXES', rule: [{ id: '10', match: '0.0.0.0/0', max_len: '32' }] }
+  - { id: 'COMMON_LOCAL_IF', rule: [{ id: '10', match: '172.16.176.5/32', max_len: '32' }] }
+  - { id: 'CONSOL_LOCAL_IF', rule: [{ id: '10', match: '172.16.176.3/32', max_len: '32' },{ id: '20', match: '172.16.178.2/32', max_len: '32' },{ id: '30', match: '172.16.179.2/32', max_len: '32' },{ id: '40', match: '172.16.180.2/32', max_len: '32' }] }
+  - { id: 'CONSOL_PREFIXES', rule: [{ id: '10', match: '172.16.178.0/24', max_len: '32' },{ id: '20', match: '172.16.179.0/24', max_len: '32' },{ id: '30', match: '172.16.180.0/24', max_len: '32' },{ id: '40', match: '172.16.176.3/32', max_len: '32' }] }
+  - { id: 'ERA_PREFIXES', rule: [{ id: '10', match: '172.16.176.0/21', max_len: '24' },{ id: '20', match: '172.16.176.0/24', max_len: '32' }] }
+  - { id: 'LOCAL_OOB_LOOPBACK', rule: [{ id: '10', match: '172.16.176.1/32', max_len: '32' }] }
+  - { id: 'OOB_LOCAL_IF', rule: [{ id: '10', match: '172.16.176.1/32', max_len: '32' },{ id: '20', match: '172.16.177.2/32', max_len: '32' }] }
+  - { id: 'OOB_PREFIXES', rule: [{ id: '10', match: '172.16.177.0/24', max_len: '32' },{ id: '20', match: '172.16.176.1/32', max_len: '32' }] }
+  - { id: 'VTEP_PREFIXES', rule: [{ id: '5', match: '172.16.176.8/29', max_len: '32' }] }
+vrf_config:
+  - { id: 'COMMON', lo: '172.16.176.5/32', vlan: 3004, vni: '5004', rd: '172.16.176.11:5004' }
+  - { id: 'CONSOL', lo: '172.16.176.3/32', vlan: 3002, vni: '5002', rd: '172.16.176.11:5002' }
+  - { id: 'GPU', lo: '192.168.111.5/32', vlan: 3003, vni: '5003', rd: '172.16.176.11:5003' }
+  - { id: 'OOB', lo: '172.16.176.1/32', vlan: 3001, vni: '5001', rd: '172.16.176.11:5001' }
