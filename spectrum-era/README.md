@@ -14,3 +14,11 @@ Release tags for the Spectrum ERA releases follow the pattern:
 sp-<architecture>-v<version-number>
 example: sp-2-8-9-400-v3.0.0
 
+## Latest Release table
+
+| Version | Architecture | Release tag |
+|---------|--------------|-------------|
+| 3.0.0   | 2-4-3-200    | `sp-2-4-3-200-v3.0.0` |
+| 3.0.0   | 2-8-5-200    | `sp-2-8-5-200-v3.0.0` |
+| 3.0.0   | 2-8-9-400    | `sp-2-8-9-400-v3.0.0` |
+
