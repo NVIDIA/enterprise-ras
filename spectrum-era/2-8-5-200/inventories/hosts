@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
-
 [core]
 core-[01:02]
 
@@ -23,10 +22,6 @@ support-[01:08]
 dhcp-oob
 dhcp-edge
 
-[servers:vars]
-ansible_user=ubuntu
-ansible_password=nvidia
-
 [switches:children]
 core
 edge
@@ -42,6 +37,10 @@ nodes
 storage
 support
 dhcp
+
+[servers:vars]
+ansible_user=ubuntu
+ansible_password=nvidia
 
 [dhcp_config]
 dhcp-edge

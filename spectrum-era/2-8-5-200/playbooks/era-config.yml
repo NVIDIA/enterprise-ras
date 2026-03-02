@@ -42,6 +42,13 @@
   - ansible.builtin.hostname:
       name: 'oob-server-01'
 
+- name: Configure LDAP
+  hosts: dhcp-oob
+  gather_facts: false
+  roles:
+    - { role: ldap, tags: ["ldap"] }
+  become: true
+
 - name: Setup ERA configuration on switches
   hosts: core
   connection: ansible.netcommon.httpapi
@@ -53,6 +60,12 @@
     ansible_httpapi_port: 8765
     ansible_httpapi_use_ssl: true
     ansible_httpapi_validate_certs: false
+
+- name: Setup ERA telemetry and LDAP configuration on switches
+  hosts: core
+  gather_facts: false
+  roles:
+    - { role: core-misc, tags: ["core-misc"] }
 
 - name: Setup ERA configuration on nodes
   hosts: nodes

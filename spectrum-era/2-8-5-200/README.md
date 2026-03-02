@@ -2,12 +2,12 @@
 <!-- SPDX-License-Identifier: MIT -->
 
 # ERA switch automation using NVIDIA NVUE Collection
-![release](https://img.shields.io/badge/release-v1.0.0-blue)
+![release](https://img.shields.io/badge/release-v2.0.0-blue)
 ![architecture](https://img.shields.io/badge/architecture-2--8--5--200-green)
 
 This repository contains the files to setup ERA configuration on the core switches. You can change the values in the inventory files to customize the variables.
 
-2-8-5-200 Release v1.0.0
+2-8-5-200 Release v2.0.0
 
 ## Deploying the setup on Air
 
@@ -164,7 +164,7 @@ Pull this git repo to use it for configuring the setup:
 
 ```
 ubuntu@ubuntu:~$ git clone https://github.com/NVIDIA/enterprise-ras.git
-ubuntu@ubuntu:~$ git checkout sp-2-8-5-200-v1.0.0
+ubuntu@ubuntu:~$ git checkout sp-2-8-5-200-v3.0.0
 ubuntu@ubuntu:~$ cd spectrum-era/2-8-5-200
 ```
 
@@ -182,3 +182,11 @@ You can use `nv config replace` to setup the switch configuration on each of the
 core-01:$ nv config replace core-01.yaml
 core-01:$ nv config apply -y
 ```
+
+## LDAP configuration
+
+LDAP is setup on the `dhcp-oob` server with the following users on it:
+  - Username: jdoe
+    Password: Cumu1usLinux!
+  - Username: asmith
+    Password: Cumu1usLinux!

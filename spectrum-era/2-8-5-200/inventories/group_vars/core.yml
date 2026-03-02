@@ -79,6 +79,13 @@ interfaces_down:
   - 'swp60'
   - 'swp62'
 
+interfaces_disabled: 
+  - 'swp50'
+  - 'swp52'
+  - 'swp60'
+  - 'swp62'
+  - 'swp64'
+
 vlan_config:
   - { id: '200', vni: '4200' }
   - { id: '300', vni: '4300' }
@@ -103,10 +110,10 @@ bond_config:
   - { id: 'bond4s1', segmentid: 41, member: 'swp4s1' }
   - { id: 'bond4s2', segmentid: 42, member: 'swp4s2' }
   - { id: 'bond4s3', segmentid: 43, member: 'swp4s3' }
-  - { id: 'bond5s0', segmentid: 10, member: 'swp5s0' }
-  - { id: 'bond5s1', segmentid: 11, member: 'swp5s1' }
-  - { id: 'bond5s2', segmentid: 12, member: 'swp5s2' }
-  - { id: 'bond5s3', segmentid: 13, member: 'swp5s3' }
+  - { id: 'bond5s0', segmentid: 50, member: 'swp5s0' }
+  - { id: 'bond5s1', segmentid: 51, member: 'swp5s1' }
+  - { id: 'bond5s2', segmentid: 52, member: 'swp5s2' }
+  - { id: 'bond5s3', segmentid: 53, member: 'swp5s3' }
   - { id: 'bond26s0', segmentid: 260, member: 'swp26s0' }
   - { id: 'bond26s1', segmentid: 261, member: 'swp26s1' }
   - { id: 'bond26s2', segmentid: 262, member: 'swp26s2' }
@@ -342,12 +349,12 @@ edge_interfaces:
   - 'swp63s4'
   - 'swp63s5'
 
-edge_vrf: 'COMMON'
+edge_vrf: 'EXIT'
 
 bgp_asn: 4260394788
 
 anycast_mac: '44:38:39:ff:00:ff'
 
 dhcp_relay:
-  - { id: 'COMMON', interface: ['swp59s0', 'swp59s1', 'swp59s2', 'swp59s3', 'swp59s4', 'swp59s5','swp61s0', 'swp61s1', 'swp61s2', 'swp61s3', 'swp61s4', 'swp61s5','swp63s0', 'swp63s1', 'swp63s2', 'swp63s3', 'swp63s4', 'swp63s5', 'vlan3004_l3'], server: ['192.168.210.41', '192.168.220.42'] }
+  - { id: 'EXIT', interface: ['swp59s0', 'swp59s1', 'swp59s2', 'swp59s3', 'swp59s4', 'swp59s5','swp61s0', 'swp61s1', 'swp61s2', 'swp61s3', 'swp61s4', 'swp61s5','swp63s0', 'swp63s1', 'swp63s2', 'swp63s3', 'swp63s4', 'swp63s5', 'vlan3004_l3'], server: ['192.168.210.41', '192.168.220.42'] }
   - { id: 'OOB', interface: ['vlan200', 'vlan3001_l3'], server: ['192.168.200.2', '192.168.210.2','192.168.220.2'] }

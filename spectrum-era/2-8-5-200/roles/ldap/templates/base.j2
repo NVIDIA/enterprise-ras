@@ -1,0 +1,30 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: MIT #}
+dn: dc={{ ldap.domain.split('.')[0] }},dc={{ ldap.domain.split('.')[1] }}
+changetype: add
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: {{ ldap.organization }}
+dc: {{ ldap.domain.split('.')[0] }}
+
+dn: ou=Users,dc={{ ldap.domain.split('.')[0] }},dc={{ ldap.domain.split('.')[1] }}
+changetype: add
+objectClass: top
+objectClass: organizationalUnit
+ou: Users
+
+dn: ou=Groups,dc={{ ldap.domain.split('.')[0] }},dc={{ ldap.domain.split('.')[1] }}
+changetype: add
+objectClass: top
+objectClass: organizationalUnit
+ou: Groups
+
+dn: cn=admin,ou=Users,dc=example,dc=com
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: top
+cn: admin
+sn: Administrator
+uid: admin
+userPassword: {{ ldap.admin_password }}

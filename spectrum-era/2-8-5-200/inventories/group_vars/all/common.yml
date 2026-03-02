@@ -1,6 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 ---
+ldap:
+  domain: "example.com"
+  organization: "Example Inc"
+  base_dn: "dc=example,dc=com"
+  root_dn: "cn=admin,ou=Users,dc=example,dc=com"
+  admin_password: "Ldap@123"
+  users:
+  - {firstname: "John", lastname: "Doe", username: "jdoe", password: "Cumu1usLinux!"}
+  - {firstname: "Alice", lastname: "Smith", username: "asmith", password: "Cumu1usLinux!"}
 common:
   gpu_network: 192.168.110.0/24
   gpu_gateway: 192.168.110.1
@@ -106,6 +115,7 @@ devices:
     mac: 44:38:39:22:AA:19
   dhcp-oob:
     eth0_ip: 192.168.200.252
+    eth1_ip: 192.168.210.252
   oob-switch-01:
     eth0_ip: 192.168.200.2
   oob-switch-02:

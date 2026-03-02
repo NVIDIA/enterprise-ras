@@ -1,0 +1,194 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+---
+- name: Install debconf-utils package
+  apt:
+    name: debconf-utils
+    state: present
+    update_cache: yes
+
+- name: Purge existing slapd
+  apt:
+    name: slapd
+    state: absent
+    purge: yes
+
+- name: Install OpenLDAP server and utils
+  apt:
+    name:
+      - slapd
+      - ldap-utils
+    state: present
+    update_cache: yes
+
+- name: Preseed debconf with slapd configuration
+  debconf:
+    name: slapd
+    question: "{{ item.question }}"
+    value: "{{ item.value }}"
+    vtype: "{{ item.vtype }}"
+  loop:
+    - { question: "slapd/password1", value: "{{ ldap.admin_password }}", vtype: "password" }
+    - { question: "slapd/password2", value: "{{ ldap.admin_password }}", vtype: "password" }
+    - { question: "slapd/domain", value: "{{ ldap.domain }}", vtype: "string" }
+    - { question: "slapd/backend", value: "MDB", vtype: "select" }
+
+- name: Configure slapd package
+  apt:
+    name: slapd
+    state: latest
+    force: yes
+
+- name: Ensure the slapd service is running
+  service:
+    name: slapd
+    state: started
+    enabled: yes
+
+- name: Ensure passlib is installed on control node
+  delegate_to: localhost
+  become: false
+  pip:
+    name: passlib
+    state: present
+
+- name: Generate SSHA hash for LDAP admin password
+  command: slappasswd -s "{{ ldap.admin_password }}"
+  register: ldap_admin_hash
+  changed_when: false
+
+- name: Show hashed password (debug)
+  debug:
+    msg: "Generated hash: {{ ldap_admin_hash.stdout }}"
+      
+- name: Create database configuration LDIF
+  copy:
+    dest: /tmp/db.ldif
+    content: |
+      dn: olcDatabase={1}mdb,cn=config
+      objectClass: olcDatabaseConfig
+      objectClass: olcMdbConfig
+      olcDatabase: {1}mdb
+      olcSuffix: {{ ldap.base_dn }}
+      olcRootDN: {{ ldap.root_dn }}
+      olcRootPW: {{ ldap_admin_hash.stdout }}
+      olcDbDirectory: /var/lib/ldap
+      olcDbIndex: objectClass eq
+    mode: '0644'
+
+- name: Add database backend to LDAP
+  command: ldapadd -Y EXTERNAL -H ldapi:/// -f /tmp/db.ldif
+  ignore_errors: yes 
+
+- name: Ensure olcRootPW is set in cn=config
+  copy:
+    dest: /tmp/update_rootpw.ldif
+    content: |
+      dn: olcDatabase={1}mdb,cn=config
+      changetype: modify
+      replace: olcRootPW
+      olcRootPW: {{ ldap_admin_hash.stdout }}
+    mode: '0644'
+
+- name: Update olcRootPW
+  command: ldapmodify -Y EXTERNAL -H ldapi:/// -f /tmp/update_rootpw.ldif
+
+- name: Save base LDAP structure LDIF
+  ansible.builtin.template:
+    src: base.j2
+    dest: /tmp/base.ldif
+
+- name: Add base structure to LDAP
+  command: ldapadd -Y EXTERNAL -H ldapi:/// -f /tmp/base.ldif
+
+- name: Generate SSHA passwords for users
+  command: "slappasswd -s {{ item.password }}"
+  loop: "{{ ldap.users }}"
+  register: ldap_passwords
+
+- name: Combine users with hashed passwords
+  set_fact:
+    ldap_users_hashed: []
+
+- name: Build hashed user list
+  set_fact:
+    ldap_users_hashed: "{{ ldap_users_hashed + [ item.0 | combine({'ssha_password': item.1.stdout }) ] }}"
+  loop: "{{ ldap.users | zip(ldap_passwords.results) | list }}"
+
+
+- name: Save LDIF file to create users
+  ansible.builtin.template:
+    src: users.j2
+    dest: /tmp/add_users.ldif
+
+- name: Add users to LDAP directory
+  command: ldapadd -x -D "{{ ldap.root_dn }}" -w "{{ ldap.admin_password }}" -f /tmp/add_users.ldif
+  register: ldapadd_users
+  failed_when: "'Entry Already Exists' not in ldapadd_users.stderr and ldapadd_users.rc != 0"
+  changed_when: "'adding new entry' in ldapadd_users.stdout"
+
+- name: Load ppolicy module
+  copy:
+    dest: /tmp/ppolicy_module.ldif
+    content: |
+      dn: cn=module{0},cn=config
+      changetype: modify
+      add: olcModuleLoad
+      olcModuleLoad: ppolicy.la
+  register: ppolicy_module_ldif
+
+- name: Apply ppolicy module LDIF
+  command: ldapmodify -Y EXTERNAL -H ldapi:/// -f /tmp/ppolicy_module.ldif
+  ignore_errors: yes
+
+- name: Add ppolicy overlay to the database
+  copy:
+    dest: /tmp/ppolicy_overlay.ldif
+    content: |
+      dn: olcOverlay=ppolicy,olcDatabase={1}mdb,cn=config
+      objectClass: olcOverlayConfig
+      objectClass: olcPPolicyConfig
+      olcOverlay: ppolicy
+      olcPPolicyDefault: cn=default,ou=Policies,{{ ldap.base_dn }}
+      olcPPolicyHashCleartext: TRUE
+  register: ppolicy_overlay_ldif
+
+- name: Apply ppolicy overlay LDIF
+  command: ldapadd -Y EXTERNAL -H ldapi:/// -f /tmp/ppolicy_overlay.ldif
+  ignore_errors: yes
+
+- name: Create Policies organizational unit
+  copy:
+    dest: /tmp/policies_ou.ldif
+    content: |
+      dn: ou=Policies,{{ ldap.base_dn }}
+      objectClass: organizationalUnit
+      ou: Policies
+
+- name: Add Policies OU
+  command: ldapadd -x -D "{{ ldap.root_dn }}" -w "{{ ldap.admin_password }}" -f /tmp/policies_ou.ldif
+  ignore_errors: yes
+
+- name: Create default password policy
+  copy:
+    dest: /tmp/default_policy.ldif
+    content: |
+      dn: cn=default,ou=Policies,{{ ldap.base_dn }}
+      objectClass: top
+      objectClass: device
+      objectClass: pwdPolicy
+      cn: default
+      pwdAttribute: userPassword
+      pwdMaxAge: 7776000
+      pwdInHistory: 5
+      pwdCheckQuality: 1
+      pwdMinLength: 8
+      pwdExpireWarning: 604800
+      pwdGraceAuthNLimit: 5
+      pwdLockout: TRUE
+      pwdLockoutDuration: 900
+      pwdMaxFailure: 5
+
+- name: Add default password policy
+  command: ldapadd -x -D "{{ ldap.root_dn }}" -w "{{ ldap.admin_password }}" -f /tmp/default_policy.ldif
+  ignore_errors: yes
