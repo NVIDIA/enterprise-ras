@@ -180,3 +180,11 @@ You can use `nv config replace` to setup the switch configuration on each of the
 core-01:$ nv config replace core-01.yaml
 core-01:$ nv config apply -y
 ```
+
+## LDAP configuration
+
+LDAP is setup on the `dhcp-oob` server with the following users on it:
+  - Username: jdoe
+    Password: Cumu1usLinux!
+  - Username: asmith
+    Password: Cumu1usLinux!
