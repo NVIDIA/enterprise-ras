@@ -1,0 +1,330 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: MIT #}
+#!/bin/bash
+#CUMULUS-AUTOPROVISIONING
+
+set -x
+
+function error() {
+  echo -e "\e[0;33mERROR: The ZTP script failed while running the command $BASH_COMMAND at line $BASH_LINENO.\e[0m" >&2
+  exit 1
+}
+
+# Log all output from this script
+exec > /var/log/autoprovision 2>&1
+date "+%FT%T ztp starting script $0"
+
+trap error ERR
+
+function log() {
+    echo "$(date '+%FT%T') $1"
+    # Send log to remote syslog server if configured
+    if [ -n "$PROVISION_URL" ]; then
+        logger -n "$PROVISION_URL" -P 514 -t "ztp" "$1"
+    fi
+}
+
+function install_ldap_packages() {
+    log "Checking if LDAP packages are needed..."
+    
+    # Check if LDAP is configured in the downloaded config
+    if grep -q "nv set system aaa ldap" /tmp/${hostname}-config.sh; then
+        log "LDAP configuration detected - installing LDAP packages"
+        
+        # Update apt cache
+        log "Updating package lists..."
+        apt-get update -qq
+        
+        if [ $? -ne 0 ]; then
+            log "WARNING: Failed to update package lists - attempting to continue"
+        fi
+        
+        # Install LDAP packages
+        log "Installing LDAP client packages..."
+        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            libnss-ldapd \
+            libpam-ldapd \
+            ldap-utils \
+            nslcd
+        
+        if [ $? -eq 0 ]; then
+            log "LDAP packages installed successfully"
+            
+            # Enable and start nslcd service
+            systemctl enable nslcd
+            systemctl restart nslcd
+            
+            log "LDAP services enabled and started"
+        else
+            log "WARNING: Failed to install LDAP packages - config may fail to apply"
+            log "This can happen if the switch has no internet access"
+            log "You may need to manually install: libnss-ldapd libpam-ldapd ldap-utils nslcd"
+        fi
+    else
+        log "No LDAP configuration found - skipping LDAP package installation"
+    fi
+}
+
+function load_configuration() {
+    log "Loading configuration for ${hostname}"
+    
+    cli_config_file="http://${PROVISION_URL}/configs/${hostname}-config.sh"
+    
+    # Download CLI configuration
+    wget -qO /tmp/${hostname}-config.sh "$cli_config_file"
+    
+    if [ $? -ne 0 ]; then
+        log "ERROR: Failed to download CLI config file from $cli_config_file"
+        exit 1
+    fi
+    
+    chmod +x /tmp/${hostname}-config.sh
+    log "CLI configuration downloaded successfully"
+    
+    # Install LDAP packages if needed (before applying config)
+    install_ldap_packages
+    
+    # Source the CLI commands to load into pending config
+    log "Loading CLI configuration..."
+    if source /tmp/${hostname}-config.sh 2>&1 | tee /tmp/config-load.log; then
+        log "✅ CLI configuration loaded successfully"
+        
+        # Apply the configuration
+        log "Applying configuration..."
+        if nv config apply -y 2>&1 | tee /tmp/config-apply.log; then
+            nv config save
+            log "Configuration applied and saved successfully"
+        else
+            log "❌ ERROR: Configuration apply failed!"
+            log "Apply errors:"
+            cat /tmp/config-apply.log
+            exit 1
+        fi
+    else
+        log "ERROR: Failed to load CLI configuration"
+        cat /tmp/config-load.log
+        exit 1
+    fi
+}
+
+function configure_monitoring() {
+    log "Configuring monitoring and telemetry"
+    
+    cat > /etc/cumulus/datapath/monitor.conf << 'EOL'
+{{ ztp_monitoring_config | default('# Monitoring config disabled') }}
+EOL
+    
+    mkdir -p /var/lib/cumulus/telemetry
+    systemctl restart asic-monitor.service
+    
+    log "Monitoring configured and service restarted"
+}
+
+function add_topo(){
+    log "Downloading topology file"
+    
+    if [ -n "$TOPO_URL" ]; then
+        wget -O /etc/ptm.d/topology.dot "$TOPO_URL"
+        if [ $? -eq 0 ]; then
+            log "Topology file downloaded successfully"
+        else
+            log "WARNING: Failed to download topology file from $TOPO_URL"
+        fi
+    else
+        log "No topology URL configured, skipping"
+    fi
+}
+
+function add_ssh_keys(){
+    log "Adding SSH keys"
+    
+    mkdir -p /home/cumulus/.ssh
+    chmod 700 /home/cumulus/.ssh
+    
+    if [ -n "$SSH_URL" ]; then
+        wget -O /home/cumulus/.ssh/authorized_keys "$SSH_URL"
+        if [ $? -eq 0 ]; then
+            chmod 600 /home/cumulus/.ssh/authorized_keys
+            chown -R cumulus:cumulus /home/cumulus/.ssh
+            log "SSH keys added successfully"
+        else
+            log "WARNING: Failed to download SSH keys from $SSH_URL"
+        fi
+    else
+        log "No SSH URL configured, skipping"
+    fi
+}
+
+function passwordless_sudo(){
+    log "Configuring passwordless sudo for cumulus user"
+    echo "cumulus ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/10_cumulus
+    chmod 440 /etc/sudoers.d/10_cumulus
+}
+
+function set_password(){
+    log "Setting cumulus user password"
+    
+    # Use NVUE to set the password (works after NVUE config is applied)
+    log "Setting password via NVUE"
+    nv set system aaa user {{ switch_user | default("cumulus") }} password {{ (switch_password | default("Cumu1usLinux!")) | quote }}
+    nv config apply -y 2>&1 | while read line; do log "  $line"; done
+    
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log "✅ Password set successfully via NVUE"
+        return 0
+    else
+        log "⚠️  WARNING: Failed to set password via NVUE, trying fallback method"
+        
+        # Fallback to chpasswd if NVUE fails
+        if [ -f /etc/pam.d/common-password ]; then
+            cp /etc/pam.d/common-password /etc/pam.d/common-password.ztp-backup
+            sed -i 's/pam_pwhistory.so/# pam_pwhistory.so (disabled during ZTP)/' /etc/pam.d/common-password
+        fi
+        
+        echo {{ ((switch_user | default("cumulus")) ~ ":" ~ (switch_password | default("Cumu1usLinux!"))) | quote }} | chpasswd 2>&1 | while read line; do log "  $line"; done
+        passwd -x 99999 {{ switch_user | default("cumulus") }} 2>&1 | while read line; do log "  $line"; done
+        
+        # Restore PAM config if backup exists
+        if [ -f /etc/pam.d/common-password.ztp-backup ]; then
+            mv /etc/pam.d/common-password.ztp-backup /etc/pam.d/common-password
+        fi
+        
+        log "✅ Password set via fallback method"
+        return 0
+    fi
+}
+
+function ping_until_reachable(){
+    last_code=1
+    max_tries=30
+    tries=0
+    while [ "0" != "$last_code" ] && [ "$tries" -lt "$max_tries" ]; do
+        tries=$((tries+1))
+        log "( Attempt $tries of $max_tries ) Pinging $1 Target Until Reachable."
+        ping $1 -c2 &> /dev/null
+        last_code=$?
+        sleep 1
+    done
+    if [ "$tries" -eq "$max_tries" ] && [ "$last_code" -ne "0" ]; then
+        log "ERROR: Reached maximum number of attempts to ping the target $1"
+        exit 1
+    fi
+}
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# MAIN ZTP WORKFLOW
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+log "=================================================="
+log "Starting ZTP provisioning"
+log "=================================================="
+
+# Extract variables from DHCP leases (check all interfaces for inband ZTP support)
+# Try eth0 first (traditional OOB), then fall back to any other interface
+DHCP_LEASE_FILE=""
+
+# Check for interface-specific lease files (dhclient.eth0.leases, dhclient.swp61.leases, etc.)
+if [ -f /var/lib/dhcp/dhclient.eth0.leases ] && [ -s /var/lib/dhcp/dhclient.eth0.leases ]; then
+    DHCP_LEASE_FILE="/var/lib/dhcp/dhclient.eth0.leases"
+else
+    # Find any non-empty interface-specific dhclient lease file (for inband ZTP)
+    DHCP_LEASE_FILE=$(find /var/lib/dhcp/ -name 'dhclient.*.leases' -type f ! -size 0 | head -1)
+fi
+
+# If no interface-specific file found, check for generic dhclient.leases
+if [ -z "$DHCP_LEASE_FILE" ] || [ ! -f "$DHCP_LEASE_FILE" ]; then
+    if [ -f /var/lib/dhcp/dhclient.leases ] && [ -s /var/lib/dhcp/dhclient.leases ]; then
+        DHCP_LEASE_FILE="/var/lib/dhcp/dhclient.leases"
+    fi
+fi
+
+log "Using DHCP lease file: ${DHCP_LEASE_FILE}"
+
+if [ -z "$DHCP_LEASE_FILE" ] || [ ! -f "$DHCP_LEASE_FILE" ]; then
+    log "ERROR: No DHCP lease file found!"
+    log "Checked: /var/lib/dhcp/dhclient*.leases"
+    log "Available files:"
+    ls -lh /var/lib/dhcp/ 2>&1 | while read line; do log "  $line"; done
+    exit 1
+fi
+
+hostname=$(awk '/option host-name/ {name = $3} END {print name}' "$DHCP_LEASE_FILE" | tr -d '";')
+PROVISION_URL=$(cat "$DHCP_LEASE_FILE" | grep 'cumulus-provision-url' | tail -1 | awk -F "/" '{print $3}')
+DEFAULT_URL=$(cat "$DHCP_LEASE_FILE" | grep 'option default-url' | tail -1 | awk -F '"' '{print $2}')
+
+log "Hostname: ${hostname}"
+log "Provision URL: ${PROVISION_URL}"
+log "Default URL (image): ${DEFAULT_URL}"
+
+# Set URLs for various resources
+IMAGE_SERVER="${DEFAULT_URL}"
+ZTP_URL="http://${PROVISION_URL}/scripts/ztp.sh"
+SSH_URL="http://${PROVISION_URL}/authorized_keys"
+TOPO_URL="http://${PROVISION_URL}/topology/${hostname}.dot"
+
+# Target and current Cumulus Linux versions
+CUMULUS_TARGET_RELEASE="{{ cumulus_target_release | default('') }}"
+CUMULUS_CURRENT_RELEASE=$(cat /etc/lsb-release | grep RELEASE | cut -d "=" -f2)
+
+log "Current Cumulus version: ${CUMULUS_CURRENT_RELEASE}"
+log "Target Cumulus version: ${CUMULUS_TARGET_RELEASE}"
+
+# Check if OS upgrade is needed
+if [ -n "$CUMULUS_TARGET_RELEASE" ] && [ "$CUMULUS_TARGET_RELEASE" != "$CUMULUS_CURRENT_RELEASE" ]; then
+    log "Version mismatch detected - triggering OS upgrade"
+    log "Installing Cumulus Linux ${CUMULUS_TARGET_RELEASE} from ${IMAGE_SERVER}"
+    
+    /usr/cumulus/bin/onie-install -fa -i "$IMAGE_SERVER" -z "$ZTP_URL" && reboot
+    
+    # Should not reach here if reboot is successful
+    log "ERROR: ONIE install command failed"
+    exit 1
+else
+    log "Cumulus version matches target or no target specified - proceeding with configuration"
+    
+    # Run provisioning steps
+    log "Step 1: Adding SSH keys"
+    add_ssh_keys
+    
+    log "Step 2: Configuring passwordless sudo"
+    passwordless_sudo
+    
+{% if ztp_enable_topology | default(false) %}
+    log "Step 3: Adding topology file"
+    add_topo
+{% else %}
+    log "Step 3: Topology verification disabled, skipping"
+{% endif %}
+    
+    log "Step 4: Loading and applying switch configuration"
+    load_configuration
+    
+    log "Step 5: Setting password for cumulus user (AFTER config apply)"
+    set_password
+    
+{% if ztp_enable_monitoring | default(false) %}
+    log "Step 6: Configuring monitoring and telemetry"
+    configure_monitoring
+{% else %}
+    log "Step 6: Monitoring disabled, skipping"
+{% endif %}
+    
+    log "=================================================="
+    log "ZTP provisioning completed successfully"
+    log "=================================================="
+    log "Switch: ${hostname}"
+    log "Configuration applied from: http://${PROVISION_URL}/configs/${hostname}-config.sh"
+    
+    # Final action: reboot or just finish
+{% if ztp_final_reboot | default(true) %}
+    log "Rebooting to complete provisioning..."
+    sleep 2
+    reboot
+{% else %}
+    log "ZTP complete - no reboot configured"
+{% endif %}
+fi
+
+# CUMULUS-AUTOPROVISIONING
+exit 0
+

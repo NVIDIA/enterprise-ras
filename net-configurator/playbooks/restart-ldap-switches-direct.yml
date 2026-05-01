@@ -1,0 +1,115 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Restart LDAP Service on Switches (Direct Connection)
+# This playbook restarts the nslcd@mgmt service on switches via direct SSH connection
+#
+# Usage:
+#   ansible-playbook playbooks/restart-ldap-switches-direct.yml -i inventories/hosts --ask-become-pass
+
+- name: Restart LDAP Service on Core Switches (Direct)
+  hosts: core
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Display restart banner
+      debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║           Restarting LDAP Service on {{ inventory_hostname }}
+          ╚══════════════════════════════════════════════════════════════════════╝
+          
+          Service: nslcd@mgmt
+          Purpose: Apply new LDAP configuration
+          Connection: Direct
+
+    - name: Check if nslcd@mgmt service exists and restart it
+      shell: |
+        if systemctl list-unit-files nslcd@mgmt.service >/dev/null 2>&1; then
+          sudo systemctl restart nslcd@mgmt
+          echo "RESTARTED"
+        else
+          echo "NOT_FOUND"
+        fi
+      register: service_action
+      changed_when: service_action.stdout == "RESTARTED"
+      become: true
+
+    - name: Get service status (if restarted)
+      command: systemctl is-active nslcd@mgmt
+      register: service_status
+      changed_when: false
+      failed_when: false
+      become: true
+      when: service_action.stdout == "RESTARTED"
+
+    - name: Display success message (if service was restarted)
+      debug:
+        msg: |
+          ✅ nslcd@mgmt service restarted successfully on {{ inventory_hostname }}
+          
+          Status: {{ service_status.stdout | default('unknown') }}
+      when: service_action.stdout == "RESTARTED"
+
+    - name: Service not found warning (if service was not found)
+      debug:
+        msg: |
+          ⚠️  nslcd@mgmt service not found on {{ inventory_hostname }}
+          
+          This is normal if:
+            • LDAP packages not installed yet
+            • Switch hasn't applied LDAP config
+          
+          Install LDAP packages by applying switch config with LDAP enabled.
+      when: service_action.stdout == "NOT_FOUND"
+
+    - name: Test LDAP user lookup (if service was restarted)
+      command: getent passwd jdoe
+      register: ldap_test
+      changed_when: false
+      failed_when: false
+      become: true
+      when: service_action.stdout == "RESTARTED"
+
+    - name: Display LDAP test results
+      debug:
+        msg: |
+          {% if ldap_test.rc == 0 %}
+          ✅ LDAP authentication is working on {{ inventory_hostname }}!
+          
+          User found: {{ ldap_test.stdout }}
+          {% else %}
+          ⚠️  LDAP user lookup failed on {{ inventory_hostname }}
+          
+          Possible issues:
+            • nslcd service not running
+            • LDAP config incorrect
+            • LDAP server unreachable
+            
+          Check: sudo systemctl status nslcd@mgmt
+          Check: nv show system aaa ldap
+          {% endif %}
+      when: service_action.stdout == "RESTARTED"
+
+- name: Summary
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Display completion message
+      debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║              LDAP Service Restart Process Completed                  ║
+          ╚══════════════════════════════════════════════════════════════════════╝
+
+          Please review the output above for individual switch statuses.
+
+          If issues persist:
+            • Ensure switch configurations (with LDAP enabled) have been applied.
+            • Check LDAP config on switches: nv show system aaa ldap
+            • Check nslcd service status: sudo systemctl status nslcd@mgmt
+            • Verify LDAP server connectivity: ldapsearch -x -H ldap://192.168.200.252
+

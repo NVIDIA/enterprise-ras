@@ -1,0 +1,54 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: MIT #}
+{# Storage ports are access VLAN 500 on the switch — server sends untagged. #}
+{# IP goes directly on bond0 (no VLAN sub-interface). #}
+{% set dev = devices[inventory_hostname] %}
+{% set ifaces = dev.interfaces | default({}) %}
+{# Exclude eth0 — it is the OOB management interface and must not be bonded #}
+{% set data_ifaces = ifaces.storage | default(ifaces.cpu | default([])) | reject('equalto', 'eth0') | list %}
+{% if data_ifaces | length > 0 %}
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+{% for iface in data_ifaces %}
+    {{ iface }}:
+      dhcp4: no
+{% endfor %}
+  bonds:
+{% if data_ifaces | length >= 2 %}
+    bond0:
+      interfaces:
+        - {{ data_ifaces[0] }}
+        - {{ data_ifaces[1] }}
+      addresses:
+        - {{ dev.bond_ip1 }}
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+      routing-policy:
+        - from: {{ dev.bond_ip1.split('/')[0] }}/32
+          table: {{ common.storage_vlan }}
+      routes:
+        - to: 0.0.0.0/0
+          via: {{ common.storage_gateway }}
+          table: {{ common.storage_vlan }}
+      parameters:
+        mode: active-backup
+        primary: {{ data_ifaces[0] }}
+        mii-monitor-interval: 100
+{% endif %}
+{% if data_ifaces | length >= 4 %}
+    bond1:
+      interfaces:
+        - {{ data_ifaces[2] }}
+        - {{ data_ifaces[3] }}
+      addresses:
+        - {{ dev.bond_ip2 }}
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+      parameters:
+        mode: active-backup
+        primary: {{ data_ifaces[2] }}
+        mii-monitor-interval: 100
+{% endif %}
+{% endif %}

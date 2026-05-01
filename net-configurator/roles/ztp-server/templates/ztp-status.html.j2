@@ -1,0 +1,292 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: MIT #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ERA ZTP Server</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #76b900;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 30px;
+        }
+        .status {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .success {
+            color: #76b900;
+            font-weight: bold;
+        }
+        .info {
+            background-color: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        .warning {
+            background-color: #fff4e5;
+            border-left: 4px solid #ff9800;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            background: white;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #76b900;
+            color: white;
+        }
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+        a {
+            color: #2196F3;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .footer {
+            margin-top: 40px;
+            text-align: center;
+            color: #777;
+            font-size: 0.9em;
+        }
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            word-break: break-all;
+        }
+        .info ul, .info ol {
+            margin: 10px 0;
+        }
+        .info li {
+            margin: 5px 0;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+        .badge-success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .badge-warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+    </style>
+</head>
+{# Use the local interface IP that switches actually reach (same as dnsmasq option 239) #}
+{% set ztp_local_ip = ztp_interfaces[0].ip if ztp_interfaces is defined and ztp_interfaces | length > 0 else ztp_server_ip | default(ansible_default_ipv4.address) %}
+<body>
+    <h1>🚀 ERA Network - ZTP Server</h1>
+
+    <div class="status">
+        <p class="success">✅ ZTP Server is running and ready!</p>
+        <p><strong>Server:</strong> http://{{ ztp_local_ip }}</p>
+        <p><strong>Generated:</strong> {{ ansible_date_time.iso8601 }}</p>
+    </div>
+
+    <div class="info">
+        <h3>📋 How ZTP Works (Unified Script Model)</h3>
+        <ol>
+            <li><strong>Boot:</strong> Switch boots and sends DHCP request with MAC address</li>
+            <li><strong>DHCP Response:</strong> dnsmasq responds with:
+                <ul style="margin-top: 5px;">
+                    <li>IP address (based on MAC → hostname mapping)</li>
+                    <li>Hostname (via DHCP option)</li>
+                    <li>ZTP script URL: <code>http://{{ ztp_local_ip }}/scripts/ztp.sh</code> (DHCP option 239)</li>
+                </ul>
+            </li>
+            <li><strong>ZTP Execution:</strong> Switch downloads and runs <code>ztp.sh</code></li>
+            <li><strong>Auto-Detection:</strong> ZTP script:
+                <ul style="margin-top: 5px;">
+                    <li>Reads hostname from DHCP lease file</li>
+                    <li>Downloads config: <code>/configs/&lt;hostname&gt;-config.sh</code></li>
+                    <li>Applies configuration using NVUE CLI</li>
+                    <li>Sets password, SSH keys, and completes setup</li>
+                </ul>
+            </li>
+            <li><strong>Ready:</strong> Switch is configured and ready for production! ✅</li>
+        </ol>
+    </div>
+
+    <h2>📁 Available Resources</h2>
+    
+    <table>
+        <tr>
+            <th>Resource</th>
+            <th>URL</th>
+            <th>Description</th>
+        </tr>
+        <tr>
+            <td>ZTP Script</td>
+            <td><a href="/scripts/ztp.sh">/scripts/ztp.sh</a></td>
+            <td>Unified ZTP provisioning script (used by all switches)</td>
+        </tr>
+        <tr>
+            <td>Configurations</td>
+            <td><a href="/configs/">/configs/</a></td>
+            <td>NVUE CLI configuration files (.sh)</td>
+        </tr>
+        <tr>
+            <td>SSH Keys</td>
+            <td><a href="/authorized_keys">/authorized_keys</a></td>
+            <td>Authorized SSH public keys</td>
+        </tr>
+        <tr>
+            <td>Validation Reports</td>
+            <td><a href="/reports/">/reports/</a></td>
+            <td>ZTP and config validation reports</td>
+        </tr>
+        <tr>
+            <td>ZTP Server Key</td>
+            <td><a href="/ztp_server_key.pub">/ztp_server_key.pub</a></td>
+            <td>ZTP server's SSH public key (for validation)</td>
+        </tr>
+    </table>
+
+    <h2>🔧 Testing ZTP Manually</h2>
+    
+    <div class="info">
+        <p><strong>Method 1:</strong> Use the unified ZTP script (automatic hostname detection):</p>
+        <code>sudo /usr/lib/cumulus/ztp -v -r http://{{ ztp_local_ip }}/scripts/ztp.sh</code>
+        
+        <p style="margin-top: 15px;"><strong>Method 2:</strong> Apply configuration directly (if ZTP already ran):</p>
+        <code>bash /var/www/ztp/configs/&lt;switch-name&gt;-config.sh</code>
+        
+        {% set example_switch = (groups['core'] | default([]))[0] | default('core-01') %}
+        {% set example_hostname = hostvars[example_switch].hostname | default(example_switch) if example_switch in hostvars else 'core-01' %}
+        <p style="margin-top: 10px;">Example for {{ example_hostname }}:</p>
+        <code>curl http://{{ ztp_local_ip }}/configs/{{ example_hostname }}-config.sh | bash</code>
+    </div>
+
+    <h2>📊 Configured Switches</h2>
+    
+    {% set all_switches = groups['core'] | default([]) + groups['oob'] | default([]) %}
+    {% if all_switches | length > 0 %}
+    <table>
+        <tr>
+            <th>Switch Name</th>
+            <th>Configuration File</th>
+            <th>Direct Apply Command</th>
+            <th>Group</th>
+        </tr>
+        {% for switch in all_switches %}
+        {% set sw_hostname = hostvars[switch].hostname | default(switch) %}
+        <tr>
+            <td><strong>{{ switch }}</strong></td>
+            <td><a href="/configs/{{ sw_hostname }}-config.sh">{{ sw_hostname }}-config.sh</a></td>
+            <td><code style="font-size: 0.85em;">curl http://{{ ztp_local_ip }}/configs/{{ sw_hostname }}-config.sh | bash</code></td>
+            <td>
+            {% if switch in groups.get('core', []) %}
+                🔷 Core
+            {% elif switch in groups.get('edge', []) %}
+                🔶 Edge
+            {% elif switch in groups.get('oob', []) %}
+                🟢 OOB
+            {% else %}
+                ⚪ Other
+            {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <div class="warning">
+        <p><strong>⚠️ No switches configured</strong></p>
+        <p>Run the ZTP server setup playbook to generate switch configurations.</p>
+    </div>
+    {% endif %}
+
+    <h2>🌐 DHCP Assignments</h2>
+    
+    {% if all_switches | length > 0 %}
+    <table>
+        <tr>
+            <th>Switch Name</th>
+            <th>MAC Address</th>
+            <th>Expected IP</th>
+            <th>Status</th>
+        </tr>
+        {% for switch in all_switches %}
+        {% set switch_vars = hostvars[switch] %}
+        <tr>
+            <td>{{ switch }}</td>
+            <td><code>{{ switch_vars.mac_address | default('Not defined') }}</code></td>
+            <td><code>{{ switch_vars.ansible_host | default('Not defined') }}</code></td>
+            <td>
+            {% if switch_vars.mac_address is defined and switch_vars.ansible_host is defined %}
+                <span class="status-badge badge-success">✅ Ready</span>
+            {% else %}
+                <span class="status-badge badge-warning">⚠️ Missing Data</span>
+            {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% endif %}
+
+    <h2>📖 Useful Links</h2>
+    
+    <ul>
+        <li><a href="https://docs.nvidia.com/networking-ethernet-software/cumulus-linux/Installation-Management/Zero-Touch-Provisioning-ZTP/">NVIDIA Cumulus Linux ZTP Documentation</a></li>
+        <li><a href="/scripts/ztp.sh">View Unified ZTP Script</a></li>
+        <li><a href="/configs/">Browse All Configurations</a></li>
+        <li><a href="/authorized_keys">Download SSH Authorized Keys</a></li>
+    </ul>
+    
+    <h2>🛠️ Troubleshooting</h2>
+    
+    <div class="info">
+        <p><strong>Check DHCP Leases:</strong></p>
+        <code>sudo cat /var/lib/misc/dnsmasq.leases</code>
+        
+        <p style="margin-top: 15px;"><strong>Check DHCP Logs:</strong></p>
+        <code>sudo journalctl -u dnsmasq -f</code>
+        
+        <p style="margin-top: 15px;"><strong>Check Nginx Access Logs:</strong></p>
+        <code>sudo tail -f /var/log/nginx/ztp-access.log</code>
+        
+        <p style="margin-top: 15px;"><strong>Check Switch ZTP Logs (on switch):</strong></p>
+        <code>cat /var/log/autoprovision</code>
+    </div>
+
+    <div class="footer">
+        <p>ERA Network ZTP Server | Powered by Ansible & Cumulus Linux</p>
+    </div>
+</body>
+</html>
+

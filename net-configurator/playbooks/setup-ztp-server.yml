@@ -1,0 +1,104 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+- name: Setup ZTP Server for Switch Auto-Provisioning
+  hosts: "{{ ztp_server_host | default('dhcp-oob') }}"
+  become: yes
+  gather_facts: yes
+  
+  # Variables are loaded from inventories/group_vars/all/ztp.yml
+  # DO NOT override ztp_server_ip here - it needs to match the interface where switches connect!
+  vars:
+    # ztp_server_ip is defined in group_vars/all/ztp.yml
+    configure_dhcp: true
+    dhcp_domain_name: "era.local"
+    timezone: "Etc/UTC"
+    
+  pre_tasks:
+    - name: Display ZTP setup information
+      debug:
+        msg:
+          - "=================================================="
+          - "ZTP Server Setup"
+          - "=================================================="
+          - "Server: {{ inventory_hostname }}"
+          - "IP: {{ ztp_server_ip }}"
+          - "Switches to configure: {{ (groups['core'] | default([]) + groups['oob'] | default([])) | length }}"
+          - ""
+          - "This will:"
+          - "  1. Install nginx web server"
+          - "  2. Configure DHCP for ZTP (option 239)"
+          - "  3. Generate ZTP scripts for all switches"
+          - "  4. Copy switch configurations"
+          - "  5. Set up SSH key distribution"
+          - ""
+    
+    - name: Confirm setup
+      pause:
+        prompt: "Press Enter to continue with ZTP setup, or Ctrl+C to cancel"
+      when: prompt_before_setup | default(false)
+    
+  roles:
+    - role: ztp-server
+
+  post_tasks:
+    - name: Generate CLI configurations for all switches
+      delegate_to: localhost
+      become: no
+      command:
+        argv:
+          - ansible-playbook
+          - "{{ playbook_dir }}/generate-cli-configs.yml"
+          - "-i"
+          - "{{ inventory_file }}"
+          - "-e"
+          - "config_output_dir={{ config_output_dir | default('../exported-configurations-cli') }}"
+        chdir: "{{ playbook_dir }}"
+      run_once: true
+      when: generate_configs | default(true)
+      
+    - name: Display completion message
+      debug:
+        msg:
+          - ""
+          - "=================================================="
+          - "✅ ZTP Server setup complete!"
+          - "=================================================="
+          - ""
+          - "ZTP Server URL: http://{{ ztp_server_ip }}"
+          - "Status page: http://{{ ztp_server_ip }}/"
+          - "Scripts: http://{{ ztp_server_ip }}/scripts/"
+          - "Configs: http://{{ ztp_server_ip }}/configs/"
+          - ""
+          - "Next steps:"
+          - "  1. Verify ZTP server: curl http://{{ ztp_server_ip }}/"
+          - "  2. Check DHCP configuration on switches"
+          - "  3. Power on new switches - they will auto-configure!"
+          - ""
+          - "To manually test ZTP on a switch:"
+          - "  sudo /usr/lib/cumulus/ztp -v -r http://{{ ztp_server_ip }}/scripts/<switch-name>.sh"
+          - ""
+          - "To re-run ZTP on an existing switch:"
+          - "  1. SSH to switch"
+          - "  2. sudo rm /var/lib/cumulus/ztp"
+          - "  3. sudo reboot"
+          - ""
+
+- name: Update DHCP server configuration
+  hosts: "{{ dhcp_server_host | default('dhcp-oob') }}"
+  become: yes
+  gather_facts: yes
+  tasks:
+    - name: Display DHCP configuration note
+      debug:
+        msg:
+          - ""
+          - "📝 Note: DHCP configuration has been generated"
+          - "Location: /etc/dhcp/dhcpd.conf"
+          - ""
+          - "If you have a separate DHCP server, copy the"
+          - "ZTP configuration to it and restart DHCP service."
+          - ""
+      when: inventory_hostname != ztp_server_host | default('dhcp-oob')
+

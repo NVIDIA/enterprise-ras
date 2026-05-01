@@ -1,0 +1,510 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# ZTP Server Configuration
+# This role sets up a ZTP server to automatically provision switches on first boot
+#
+# Configuration is loaded from inventories/group_vars/all.yml:
+#   - ztp_interfaces: Network interfaces for ZTP server
+#   - configure_ztp_ips: Flag to auto-configure IPs on those interfaces
+
+- name: Display ZTP interface configuration
+  debug:
+    msg:
+      - "ZTP Interfaces configured: {{ ztp_interfaces | default([]) | length }}"
+      - "{% if ztp_interfaces is defined and ztp_interfaces | length > 0 %}{{ ztp_interfaces }}{% else %}Using legacy single-interface mode{% endif %}"
+  run_once: true
+
+- name: Check if interfaces exist on the system
+  command: ip addr show {{ item.name }}
+  register: interface_check
+  failed_when: false
+  changed_when: false
+  loop: "{{ ztp_interfaces | default([]) }}"
+  when: 
+    - configure_ztp_ips | default(false)
+    - ztp_interfaces is defined
+
+- name: Display missing interfaces warning
+  debug:
+    msg:
+      - "⚠️  WARNING: Interface {{ item.item.name }} does not exist!"
+      - "    Cannot configure IP {{ item.item.ip }}"
+      - "    Please create the interface first or disable configure_ztp_ips"
+  loop: "{{ interface_check.results | default([]) }}"
+  when: 
+    - configure_ztp_ips | default(false)
+    - item.rc is defined
+    - item.rc != 0
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Configure IP addresses on ZTP interfaces
+  command: ip addr add {{ item.ip }}/{{ item.network.split('/')[1] }} dev {{ item.name }}
+  register: ip_config
+  failed_when: false
+  changed_when: ip_config.rc == 0
+  loop: "{{ ztp_interfaces | default([]) }}"
+  when: 
+    - configure_ztp_ips | default(false)
+    - ztp_interfaces is defined
+    - interface_check.results is defined
+    - (interface_check.results | selectattr('item.name', 'equalto', item.name) | first).rc == 0
+
+- name: Bring ZTP interfaces up
+  command: ip link set {{ item.name }} up
+  register: link_up
+  changed_when: false
+  loop: "{{ ztp_interfaces | default([]) }}"
+  when: 
+    - configure_ztp_ips | default(false)
+    - ztp_interfaces is defined
+    - interface_check.results is defined
+    - (interface_check.results | selectattr('item.name', 'equalto', item.name) | first).rc == 0
+
+- name: Create netplan configuration for persistent IPs (Ubuntu)
+  template:
+    src: netplan-ztp.yaml.j2
+    dest: /etc/netplan/99-ztp-interfaces.yaml
+    mode: '0644'
+  when: 
+    - configure_ztp_ips | default(false)
+    - ztp_interfaces is defined
+    - ansible_distribution == "Ubuntu"
+  notify: apply netplan
+
+- name: Create network interfaces configuration for persistent IPs (Debian)
+  template:
+    src: interfaces-ztp.j2
+    dest: /etc/network/interfaces.d/ztp-interfaces
+    mode: '0644'
+  when: 
+    - configure_ztp_ips | default(false)
+    - ztp_interfaces is defined
+    - ansible_distribution == "Debian"
+  notify: restart networking
+
+- name: Display IP configuration status
+  debug:
+    msg: |
+      ✅ ZTP Interface IPs configured:
+      {% for iface in ztp_interfaces | default([]) %}
+        {{ iface.name }}: {{ iface.ip }} ({{ iface.network }})
+      {% endfor %}
+  when: 
+    - configure_ztp_ips | default(false)
+    - ztp_interfaces is defined
+
+- name: Configure OOB VLAN 200 interface (eth2) for server access
+  block:
+    - name: Bring up eth2
+      command: ip link set eth2 up
+      changed_when: false
+
+    - name: Flush existing eth2 addresses
+      command: ip addr flush dev eth2
+      changed_when: false
+
+    - name: Assign production OOB subnet IP to eth2
+      command: >-
+        ip addr add {{ ztp_server_oob_interface.ip }}/{{ ztp_server_oob_interface.prefix }}
+        dev {{ ztp_server_oob_interface.name }}
+      register: eth2_config
+      failed_when: false
+      changed_when: eth2_config.rc == 0
+
+    - name: Display eth2 configuration
+      debug:
+        msg: "✅ eth2 configured: {{ ztp_server_oob_interface.ip }}/{{ ztp_server_oob_interface.prefix }} (production OOB subnet for server access)"
+  when: ztp_server_oob_interface is defined
+  tags: [networking]
+
+- name: Install required packages
+  apt:
+    name:
+      - nginx
+      - dnsmasq
+      - python3
+      - python3-pip
+    state: present
+    update_cache: yes
+  retries: 5
+  delay: 15
+  register: apt_result
+  until: apt_result is succeeded
+
+- name: Stop dnsmasq after package install (will reconfigure before starting)
+  systemd:
+    name: dnsmasq
+    state: stopped
+    enabled: no
+  failed_when: false
+  changed_when: false
+
+- name: Create ZTP directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+    owner: www-data
+    group: www-data
+  loop:
+    - /var/www/ztp
+    - /var/www/ztp/scripts
+    - /var/www/ztp/configs
+    - /var/www/ztp/topology
+    - /var/www/ztp/licenses
+    - /var/www/ztp/images
+
+- name: Generate SSH key for ZTP server user (netadmin)
+  user:
+    name: netadmin
+    generate_ssh_key: yes
+    ssh_key_type: rsa
+    ssh_key_bits: 2048
+    ssh_key_file: .ssh/id_rsa
+
+- name: Read ZTP server SSH public key
+  slurp:
+    src: /home/netadmin/.ssh/id_rsa.pub
+  register: ztp_server_pubkey
+
+- name: Copy ZTP server public key to web directory
+  copy:
+    content: "{{ ztp_server_pubkey.content | b64decode }}"
+    dest: /var/www/ztp/ztp_server_key.pub
+    mode: '0644'
+    owner: www-data
+    group: www-data
+
+- name: Configure nginx for ZTP
+  template:
+    src: nginx-ztp.conf.j2
+    dest: /etc/nginx/sites-available/ztp
+    mode: '0644'
+  notify: restart nginx
+
+- name: Enable nginx ZTP site
+  file:
+    src: /etc/nginx/sites-available/ztp
+    dest: /etc/nginx/sites-enabled/ztp
+    state: link
+  notify: restart nginx
+
+- name: Remove default nginx site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: restart nginx
+
+- name: Stop and disable systemd-resolved (conflicts with dnsmasq on port 53)
+  systemd:
+    name: systemd-resolved
+    state: stopped
+    enabled: no
+  when: configure_dhcp | default(true)
+  ignore_errors: yes
+
+- name: Kill systemd-resolved if still running
+  command: pkill -f systemd-resolved
+  failed_when: false
+  changed_when: false
+  when: configure_dhcp | default(true)
+
+- name: Kill any stale dnsmasq process
+  command: pkill dnsmasq
+  failed_when: false
+  changed_when: false
+  when: configure_dhcp | default(true)
+
+- name: Wait for port 53 to free up
+  pause:
+    seconds: 2
+  when: configure_dhcp | default(true)
+
+- name: Check port 53 status
+  command: ss -tulpn
+  register: port_check
+  changed_when: false
+  when: configure_dhcp | default(true)
+
+- name: Display port 53 status
+  debug:
+    msg: "{{ port_check.stdout_lines | select('search', ':53 ') | list | default(['Port 53 is free'], true) }}"
+  when: configure_dhcp | default(true)
+
+- name: Configure dnsmasq for ZTP
+  template:
+    src: dnsmasq-ztp.conf.j2
+    dest: /etc/dnsmasq.d/ztp.conf
+    mode: '0644'
+    backup: yes
+  notify: restart dnsmasq
+  when: configure_dhcp | default(true)
+
+- name: Configure dnsmasq main config
+  template:
+    src: dnsmasq.conf.j2
+    dest: /etc/dnsmasq.conf
+    mode: '0644'
+    backup: yes
+  notify: restart dnsmasq
+  when: configure_dhcp | default(true)
+
+- name: Generate unified ZTP script (ONE script for all switches)
+  template:
+    src: ztp.sh.j2
+    dest: "/var/www/ztp/scripts/ztp.sh"
+    mode: '0755'
+    owner: www-data
+    group: www-data
+
+- name: Copy CLI switch configurations to ZTP server
+  copy:
+    src: "{{ playbook_dir }}/{{ config_output_dir | default('../exported-configurations-cli') }}/{{ hostvars[item].hostname | default(item) }}-config.sh"
+    dest: "/var/www/ztp/configs/{{ hostvars[item].hostname | default(item) }}-config.sh"
+    mode: '0755'
+    owner: www-data
+    group: www-data
+  loop: "{{ groups['core'] | default([]) + groups['oob'] | default([]) }}"
+  when: (groups['core'] is defined and groups['core'] | length > 0) or (groups['oob'] is defined and groups['oob'] | length > 0)
+  ignore_errors: yes
+
+- name: Create reports directory
+  file:
+    path: /var/www/ztp/reports
+    state: directory
+    mode: '0755'
+    owner: www-data
+    group: www-data
+
+- name: Create htpasswd file for status page (using Python - no apt needed)
+  shell: |
+    python3 -c "
+    import crypt, os
+    salt = crypt.mksalt(crypt.METHOD_SHA256)
+    hashed = crypt.crypt(os.environ['HTPASSWD_PASS'], salt)
+    print(os.environ['HTPASSWD_USER'] + ':' + hashed)
+    " > /etc/nginx/.htpasswd
+    chmod 640 /etc/nginx/.htpasswd
+    chown root:www-data /etc/nginx/.htpasswd
+  environment:
+    HTPASSWD_PASS: "{{ status_page_password | default(switch_password | default('nvidia')) }}"
+    HTPASSWD_USER: "{{ status_page_username | default('era') }}"
+  when: status_page_enabled | default(false) | bool
+  changed_when: true
+  no_log: true
+
+- name: Create ZTP status page
+  template:
+    src: ztp-status.html.j2
+    dest: /var/www/ztp/index.html
+    mode: '0644'
+    owner: www-data
+    group: www-data
+
+- name: Create manual ZTP helper script directory
+  file:
+    path: /opt/ztp
+    state: directory
+    mode: '0755'
+
+- name: Deploy manual ZTP helper script
+  copy:
+    src: manual-ztp.sh
+    dest: /opt/ztp/manual-ztp.sh
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Check if SSH public key exists
+  stat:
+    path: "{{ ssh_public_key_path | default('~/.ssh/id_rsa.pub') }}"
+  delegate_to: localhost
+  register: ssh_key_stat
+  become: no
+
+- name: Create ZTP authorized_keys file (with user's SSH key if available)
+  copy:
+    content: |
+      # SSH key from workstation (for manual access)
+      {{ lookup('file', ssh_public_key_path | default('~/.ssh/id_rsa.pub')) }}
+      # SSH key from ZTP server (for validation script)
+      {{ ztp_server_pubkey.content | b64decode }}
+    dest: /var/www/ztp/authorized_keys
+    mode: '0644'
+    owner: www-data
+    group: www-data
+  when: ssh_key_stat.stat.exists
+
+- name: Create ZTP authorized_keys file (ZTP server key only)
+  copy:
+    content: |
+      # SSH key from ZTP server (for validation script)
+      {{ ztp_server_pubkey.content | b64decode }}
+    dest: /var/www/ztp/authorized_keys
+    mode: '0644'
+    owner: www-data
+    group: www-data
+  when: not ssh_key_stat.stat.exists
+
+- name: Display SSH key warning if missing
+  debug:
+    msg:
+      - "⚠️  WARNING: SSH public key not found!"
+      - "    Expected: {{ ssh_public_key_path | default('~/.ssh/id_rsa.pub') }}"
+      - ""
+      - "    Switches will need password authentication."
+      - ""
+      - "    To fix:"
+      - "      1. Generate SSH key: ssh-keygen -t ed25519"
+      - "      2. Re-run: make ztp-setup"
+  when: not ssh_key_stat.stat.exists
+
+- name: Verify ZTP interfaces have IP addresses
+  shell: ip addr show {{ item.name }} | grep -q 'inet '
+  register: iface_ip_check
+  failed_when: false
+  changed_when: false
+  loop: "{{ ztp_interfaces | default([]) }}"
+  when:
+    - configure_dhcp | default(true)
+    - ztp_interfaces is defined
+
+- name: Display interface IP status
+  debug:
+    msg: >-
+      Interface {{ item.item.name }}:
+      {{ '✅ has IP' if item.rc == 0 else '❌ NO IP - dnsmasq may fail to bind' }}
+  loop: "{{ iface_ip_check.results | default([]) }}"
+  when:
+    - configure_dhcp | default(true)
+    - item.rc is defined
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Validate dnsmasq configuration
+  command: dnsmasq --test
+  register: dnsmasq_test
+  failed_when: false
+  changed_when: false
+  when: configure_dhcp | default(true)
+
+- name: Display dnsmasq config test result
+  debug:
+    msg: "{{ '✅ dnsmasq config OK' if dnsmasq_test.rc == 0 else '❌ dnsmasq config error: ' ~ dnsmasq_test.stderr }}"
+  when:
+    - configure_dhcp | default(true)
+    - dnsmasq_test.rc is defined
+
+- name: Enable and start dnsmasq
+  systemd:
+    name: dnsmasq
+    state: started
+    enabled: yes
+  when: configure_dhcp | default(true)
+  register: dnsmasq_start
+  retries: 3
+  delay: 5
+  until: dnsmasq_start is succeeded
+
+- name: Remove immutable attribute from resolv.conf (if exists)
+  command: chattr -i /etc/resolv.conf
+  failed_when: false
+  changed_when: false
+  when: configure_dhcp | default(true)
+
+- name: Check if resolv.conf is a symlink
+  stat:
+    path: /etc/resolv.conf
+  register: resolv_conf_stat
+  when: configure_dhcp | default(true)
+
+- name: Remove resolv.conf symlink if it exists
+  file:
+    path: /etc/resolv.conf
+    state: absent
+  when: 
+    - configure_dhcp | default(true)
+    - resolv_conf_stat.stat.islnk is defined
+    - resolv_conf_stat.stat.islnk
+
+- name: Configure server to use dnsmasq for DNS
+  copy:
+    content: |
+      # DNS configuration for ZTP server
+      # Using local dnsmasq for resolution
+      nameserver 127.0.0.1
+      # Fallback to Google DNS
+      nameserver 8.8.8.8
+      nameserver 8.8.4.4
+    dest: /etc/resolv.conf
+    mode: '0644'
+    force: yes
+  when: configure_dhcp | default(true)
+
+- name: Test DNS resolution
+  command: ping -c 1 www.google.com
+  register: dns_test
+  failed_when: false
+  changed_when: false
+  when: configure_dhcp | default(true)
+
+- name: Display DNS test result
+  debug:
+    msg: "{{ 'DNS resolution working ✅' if dns_test.rc == 0 else 'DNS resolution failed ❌ - check logs' }}"
+  when: configure_dhcp | default(true)
+
+- name: Display ZTP server information
+  debug:
+    msg:
+      - "✅ ZTP Server configured successfully!"
+      - ""
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "📡 ZTP SERVER URLS"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "  Dashboard:   http://{{ ansible_host | default(ansible_default_ipv4.address) }}"
+      - "  ZTP Script:  http://{{ ansible_host | default(ansible_default_ipv4.address) }}/scripts/ztp.sh"
+      - "  Configs:     http://{{ ansible_host | default(ansible_default_ipv4.address) }}/configs/"
+      - "  SSH Keys:    http://{{ ansible_host | default(ansible_default_ipv4.address) }}/authorized_keys"
+      - "  Topology:    http://{{ ansible_host | default(ansible_default_ipv4.address) }}/topology/"
+      - ""
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "🔧 DHCP/DNS CONFIGURATION"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "  Server:      dnsmasq (listening on {{ dnsmasq_interface | default('eth0') }})"
+      - "  DHCP Range:  {{ dhcp_range_start | default('192.168.200.100') }} - {{ dhcp_range_end | default('192.168.200.200') }}"
+      - "  Gateway:     {{ dhcp_gateway | default('192.168.200.1') }}"
+      - ""
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "✨ KEY FEATURES"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "  ✓ ONE ZTP script for ALL switches (not one per switch)"
+      - "  ✓ Script extracts hostname from DHCP"
+      - "  ✓ Downloads switch-specific config dynamically"
+      - "  ✓ Fleet-wide changes by updating single script"
+      - "  ✓ Streamlined OS upgrades via ONIE"
+      - "  ✓ ZTP can be re-run any time for config updates"
+      - ""
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "🚀 MANUAL ZTP (for static IP switches)"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "  On switch:"
+      - "    curl http://{{ ansible_host | default(ansible_default_ipv4.address) }}/scripts/ztp.sh | sudo bash"
+      - ""
+      - "  Or with Cumulus ZTP command:"
+      - "    sudo /usr/lib/cumulus/ztp -v -r http://{{ ansible_host | default(ansible_default_ipv4.address) }}/scripts/ztp.sh"
+      - ""
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "✅ VALIDATION"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "  From workstation:"
+      - "    make validate-ztp      # universal (runs on dhcp-oob)"
+      - "    make validate-ztp-direct    # direct SSH from workstation to each switch"
+      - ""
+      - "  This will check SSH connectivity, config applied, hostname match,"
+      - "  Cumulus version, BGP status, and EVPN VNIs for all switches."
+      - ""
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+

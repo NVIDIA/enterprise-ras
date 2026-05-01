@@ -1,0 +1,14 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+# OOB Server Handlers
+
+- name: reload sysctl
+  command: sysctl -p
+  listen: reload sysctl
+
+- name: apply netplan
+  command: netplan apply
+  listen: apply netplan
+

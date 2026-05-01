@@ -1,0 +1,42 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: MIT #}
+# /etc/netplan/01-config.yaml - OOB Server Network Configuration
+# Managed by Ansible - DO NOT EDIT MANUALLY
+#
+# This configures the OOB server interfaces to act as gateways
+# for the out-of-band management networks.
+
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+{% if oob_server_interfaces is defined %}
+{% for interface in oob_server_interfaces %}
+    {{ interface.name }}:
+      dhcp4: no
+      addresses:
+        - {{ interface.ip }}/{{ interface.netmask | default('24') }}
+{% if interface.routes is defined %}
+      routes:
+{% for route in interface.routes %}
+        - to: {{ route.to }}
+          via: {{ route.via }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% else %}
+    # Default configuration - customize in group_vars or host_vars
+    eth1:
+      dhcp4: no
+      addresses:
+        - 192.168.200.1/24
+    eth2:
+      dhcp4: no
+      addresses:
+        - 192.168.210.1/24
+    eth3:
+      dhcp4: no
+      addresses:
+        - 192.168.220.1/24
+{% endif %}
+

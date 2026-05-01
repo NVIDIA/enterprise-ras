@@ -1,0 +1,19 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+# ============================================================================
+# OOB-SWITCH-01 - 2-4-3-200 Deployment
+# ============================================================================
+ansible_host: 192.168.200.2
+hostname: oob-switch-01
+svi_ip: 192.168.200.2/24
+default_gateway: 192.168.200.1
+access_ports: swp1-48
+uplink_ports: swp1-49,51
+spine_bond_members:
+- swp49
+- swp51
+mac_address: 48:b0:2d:09:d2:7f
+ip_assignment_mode: dhcp
+

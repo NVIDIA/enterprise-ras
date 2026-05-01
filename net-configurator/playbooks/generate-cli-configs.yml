@@ -1,0 +1,47 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+- name: Generate NVUE CLI Format Configurations
+  hosts: core:oob
+  gather_facts: false
+  connection: local
+  vars:
+    config_output_dir: "../exported-configurations-cli"
+  
+  tasks:
+    - name: Set timestamp fact
+      set_fact:
+        ansible_date_time:
+          iso8601: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+
+    - name: Create output directory
+      file:
+        path: "{{ config_output_dir }}"
+        state: directory
+        mode: '0755'
+      run_once: true
+
+    - name: Generate Core Switch CLI Configuration
+      template:
+        src: "../roles/core/templates/core_nvue_cli.j2"
+        dest: "{{ config_output_dir }}/{{ hostname }}-config.sh"
+        mode: '0755'
+      when: inventory_hostname in groups['core']
+
+    - name: Generate OOB Switch CLI Configuration
+      template:
+        src: "../roles/oob-switch/templates/oob_nvue_cli.j2"
+        dest: "{{ config_output_dir }}/{{ hostname }}-config.sh"
+        mode: '0755'
+      when: inventory_hostname in groups['oob']
+
+    - name: Collapse excessive blank lines in generated configs
+      replace:
+        path: "{{ config_output_dir }}/{{ hostname }}-config.sh"
+        regexp: '\n{3,}'
+        replace: '\n\n'
+
+    - name: Display success message
+      debug:
+        msg: "✅ CLI configuration generated: {{ config_output_dir }}/{{ hostname }}-config.sh"

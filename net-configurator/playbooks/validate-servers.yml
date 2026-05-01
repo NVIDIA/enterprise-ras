@@ -1,0 +1,282 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Server Architecture Validation Playbook
+# Validates server network configuration, connectivity, and services
+# Runs from dhcp-oob bastion host, SSHing to each server node
+#
+# Usage:
+#   make validate-servers ARCH=2-8-5-200
+#   ansible-playbook playbooks/validate-servers.yml -i <inventory>/hosts
+
+- name: Validate server architecture
+  hosts: dhcp-oob
+  gather_facts: false
+  vars:
+    server_groups: "{{ groups.get('nodes', []) + groups.get('storage', []) + groups.get('support', []) }}"
+    report_file: "/tmp/era-server-validation-report.txt"
+  tasks:
+
+    - name: Ensure sshpass is available
+      command: which sshpass
+      changed_when: false
+      failed_when: false
+      register: sshpass_check
+
+    - name: Install sshpass if missing
+      apt:
+        name: sshpass
+        state: present
+      when: sshpass_check.rc != 0
+      become: true
+
+    - name: Validate each server
+      shell: |
+        export SSHPASS='{{ server_ansible_password }}'
+        HOST='{{ hostvars[item].ansible_host }}'
+        NAME='{{ item }}'
+        SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ubuntu@$HOST"
+
+        # ── Connectivity check ──
+        if ! timeout 15 $SSH_CMD 'hostname' >/dev/null 2>&1; then
+          echo "RESULT|$NAME|UNREACHABLE|$HOST||||||||"
+          exit 0
+        fi
+
+        # ── Gather data ──
+        HOSTNAME=$($SSH_CMD 'hostname' 2>/dev/null)
+        ETH0_IP=$($SSH_CMD "ip -4 addr show eth0 2>/dev/null | grep -oP 'inet \K[0-9./]+'" 2>/dev/null)
+        ALL_IPS=$($SSH_CMD "ip -4 -br addr show 2>/dev/null | grep -v '127.0.0' | awk '{printf \"%s=%s \", \$1, \$3}'" 2>/dev/null)
+        BOND_EXISTS=$($SSH_CMD 'test -d /proc/net/bonding && ls /proc/net/bonding/ 2>/dev/null || echo none' 2>/dev/null)
+        BOND_MODE=$($SSH_CMD 'cat /proc/net/bonding/bond0 2>/dev/null | grep "Bonding Mode" | sed "s/.*: //"' 2>/dev/null)
+        BOND_ACTIVE=$($SSH_CMD 'cat /proc/net/bonding/bond0 2>/dev/null | grep "Currently Active" | sed "s/.*: //"' 2>/dev/null)
+        VLAN_IFACES=$($SSH_CMD "ip -br link show type vlan 2>/dev/null | awk '{print \$1}' | tr '\n' ',' | sed 's/,$//'" 2>/dev/null)
+        LLDPD=$($SSH_CMD 'systemctl is-active lldpd 2>/dev/null' 2>/dev/null)
+
+        # ── Determine expected VLAN gateway and source IP based on node role ──
+        {% set src_dev = devices.get(item, {}) %}
+        {% set src_is_compute = item.startswith('su-') or item.startswith('node-') %}
+        {% set src_inband_ip = (src_dev.get('bond_ip', '') if src_is_compute else src_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
+        EXPECTED_GW=""
+        SRC_IP="{{ src_inband_ip }}"
+        ROLE="unknown"
+        case "$NAME" in
+          su-*|node-*)  EXPECTED_GW="{{ common.cpu_gateway }}" ; ROLE="compute" ;;
+          storage-*)    EXPECTED_GW="{{ common.storage_gateway }}" ; ROLE="storage" ;;
+          support-*)    EXPECTED_GW="{{ common.support_gateway }}" ; ROLE="support" ;;
+        esac
+
+        # ── Gateway ping test (use source IP for PBR compatibility) ──
+        GW_PING="SKIP"
+        if [ -n "$EXPECTED_GW" ] && [ -n "$SRC_IP" ]; then
+          PING_RESULT=$($SSH_CMD "ping -c 2 -W 5 $EXPECTED_GW -I $SRC_IP 2>&1" 2>/dev/null)
+          if echo "$PING_RESULT" | grep -q "bytes from"; then
+            GW_PING="PASS"
+          else
+            GW_PING="FAIL"
+          fi
+        fi
+
+        # ── OOB gateway ping (192.168.200.1 via eth0) ──
+        OOB_PING="SKIP"
+        if [ -n "$ETH0_IP" ]; then
+          OOB_RESULT=$($SSH_CMD 'ping -c 2 -W 5 192.168.200.1 -I eth0 2>&1' 2>/dev/null)
+          if echo "$OOB_RESULT" | grep -q "bytes from"; then
+            OOB_PING="PASS"
+          else
+            OOB_PING="FAIL"
+          fi
+        fi
+
+        # ── Internet ping (8.8.8.8 via eth0) ──
+        INET_PING="SKIP"
+        if [ "$OOB_PING" = "PASS" ]; then
+          INET_RESULT=$($SSH_CMD 'ping -c 2 -W 5 8.8.8.8 -I eth0 2>&1' 2>/dev/null)
+          if echo "$INET_RESULT" | grep -q "bytes from"; then
+            INET_PING="PASS"
+          else
+            INET_PING="FAIL"
+          fi
+        fi
+
+        echo "RESULT|$NAME|OK|$HOST|$HOSTNAME|$ETH0_IP|$BOND_MODE|$BOND_ACTIVE|$VLAN_IFACES|$LLDPD|$GW_PING|$OOB_PING|$INET_PING|$ROLE|$ALL_IPS"
+      loop: "{{ server_groups }}"
+      register: validation_results
+      changed_when: false
+      no_log: true
+
+    - name: Parse and display results
+      set_fact:
+        server_results: >-
+          {{ server_results | default([]) + [{
+            'name': item.stdout.split('|')[1],
+            'status': item.stdout.split('|')[2],
+            'ip': item.stdout.split('|')[3],
+            'hostname': item.stdout.split('|')[4] | default(''),
+            'eth0_ip': item.stdout.split('|')[5] | default(''),
+            'bond_mode': item.stdout.split('|')[6] | default(''),
+            'bond_active': item.stdout.split('|')[7] | default(''),
+            'vlan_ifaces': item.stdout.split('|')[8] | default(''),
+            'lldpd': item.stdout.split('|')[9] | default(''),
+            'gw_ping': item.stdout.split('|')[10] | default(''),
+            'oob_ping': item.stdout.split('|')[11] | default(''),
+            'inet_ping': item.stdout.split('|')[12] | default(''),
+            'role': item.stdout.split('|')[13] | default(''),
+            'all_ips': item.stdout.split('|')[14] | default(''),
+          }] }}
+      loop: "{{ validation_results.results }}"
+      when: item.stdout is defined and 'RESULT|' in item.stdout
+      no_log: true
+
+    # ── Cross-ping matrix: one pair per VLAN + one cross-VLAN ──
+    - name: Build cross-ping test list
+      set_fact:
+        cross_pings: |
+          {% set tests = [] %}
+          {% set nodes_list = groups.get('nodes', []) %}
+          {% set storage_list = groups.get('storage', []) %}
+          {% set support_list = groups.get('support', []) %}
+          {% if nodes_list | length >= 2 %}
+          {%   set _ = tests.append({'from': nodes_list[0], 'to': nodes_list[1], 'label': 'Compute ↔ Compute (VLAN ' ~ common.cpu_vlan ~ ')', 'src_ip': devices[nodes_list[0]].bond_ip | default('') | regex_replace('/.*', ''), 'to_ip': devices[nodes_list[1]].bond_ip | default('') | regex_replace('/.*', '')}) %}
+          {% endif %}
+          {% if storage_list | length >= 2 %}
+          {%   set _ = tests.append({'from': storage_list[0], 'to': storage_list[1], 'label': 'Storage ↔ Storage (VLAN ' ~ common.storage_vlan ~ ')', 'src_ip': devices[storage_list[0]].bond_ip1 | default('') | regex_replace('/.*', ''), 'to_ip': devices[storage_list[1]].bond_ip1 | default('') | regex_replace('/.*', '')}) %}
+          {% endif %}
+          {% if support_list | length >= 2 %}
+          {%   set _ = tests.append({'from': support_list[0], 'to': support_list[1], 'label': 'Support ↔ Support (VLAN ' ~ common.support_vlan ~ ')', 'src_ip': devices[support_list[0]].bond_ip1 | default('') | regex_replace('/.*', ''), 'to_ip': devices[support_list[1]].bond_ip1 | default('') | regex_replace('/.*', '')}) %}
+          {% endif %}
+          {% if support_list | length >= 1 and nodes_list | length >= 1 %}
+          {%   set _ = tests.append({'from': support_list[0], 'to': nodes_list[0], 'label': 'Cross-VLAN: Support → Compute (VLAN ' ~ common.support_vlan ~ ' → ' ~ common.cpu_vlan ~ ')', 'src_ip': devices[support_list[0]].bond_ip1 | default('') | regex_replace('/.*', ''), 'to_ip': devices[nodes_list[0]].bond_ip | default('') | regex_replace('/.*', '')}) %}
+          {% endif %}
+          {{ tests | to_json }}
+
+    - name: Run cross-ping tests
+      shell: |
+        export SSHPASS='{{ server_ansible_password }}'
+        FROM_HOST='{{ hostvars[item.from].ansible_host }}'
+        SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ubuntu@$FROM_HOST"
+        TO_IP='{{ item.to_ip }}'
+        SRC_IP='{{ item.src_ip }}'
+        LABEL='{{ item.label }}'
+
+        if [ -z "$TO_IP" ] || [ -z "$SRC_IP" ]; then
+          echo "XPING|$LABEL|SKIP|{{ item.from }}|{{ item.to }}|no IP"
+          exit 0
+        fi
+
+        RESULT=$($SSH_CMD "ping -c 2 -W 5 $TO_IP -I $SRC_IP 2>&1" 2>/dev/null)
+        if echo "$RESULT" | grep -q "bytes from"; then
+          echo "XPING|$LABEL|PASS|{{ item.from }}|{{ item.to }}|$TO_IP"
+        else
+          echo "XPING|$LABEL|FAIL|{{ item.from }}|{{ item.to }}|$TO_IP"
+        fi
+      loop: "{{ cross_pings | from_json }}"
+      register: xping_results
+      changed_when: false
+      no_log: true
+
+    - name: Parse cross-ping results
+      set_fact:
+        xping_parsed: >-
+          {{ xping_parsed | default([]) + [{
+            'label': item.stdout.split('|')[1],
+            'status': item.stdout.split('|')[2],
+            'from': item.stdout.split('|')[3],
+            'to': item.stdout.split('|')[4],
+            'to_ip': item.stdout.split('|')[5] | default(''),
+          }] }}
+      loop: "{{ xping_results.results }}"
+      when: item.stdout is defined and 'XPING|' in item.stdout
+      no_log: true
+
+    - name: Generate validation report
+      copy:
+        dest: "/tmp/era-server-validation-report.txt"
+        content: |
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║               ERA Server Architecture Validation Report              ║
+          ╚══════════════════════════════════════════════════════════════════════╝
+
+          Timestamp: {{ ansible_date_time.iso8601 | default('N/A') }}
+          Servers checked: {{ server_results | length }}
+
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+          {% set ns = namespace(pass=0, fail=0, unreachable=0) %}
+          {% for s in server_results %}
+          {% if s.status == 'UNREACHABLE' %}
+          {% set ns.unreachable = ns.unreachable + 1 %}
+          ❌ {{ "%-20s" | format(s.name) }} UNREACHABLE ({{ s.ip }})
+          {% else %}
+          {% set all_pass = (s.gw_ping == 'PASS' or s.gw_ping == 'SKIP') and s.eth0_ip != '' and s.lldpd == 'active' %}
+          {% if all_pass %}{% set ns.pass = ns.pass + 1 %}{% else %}{% set ns.fail = ns.fail + 1 %}{% endif %}
+          {{ "✅" if all_pass else "⚠️ " }} {{ "%-20s" | format(s.name) }} [{{ s.role }}]
+             Hostname:    {{ s.hostname }}
+             Interfaces:  {{ s.all_ips | default('none') }}
+             Bond:        {{ s.bond_mode | default('none') }}{{ " (active: " + s.bond_active + ")" if s.bond_active else "" }}
+             VLANs:       {{ s.vlan_ifaces | default('none') }}
+             LLDP:        {{ s.lldpd }}{{ " ✅" if s.lldpd == 'active' else " ❌" }}
+             Gateway:     {{ s.gw_ping }}{{ " ✅" if s.gw_ping == 'PASS' else (" ❌" if s.gw_ping == 'FAIL' else " ⏭️  (no data interfaces)") }}
+             OOB (eth0):  {{ s.oob_ping }}{{ " ✅" if s.oob_ping == 'PASS' else (" ❌" if s.oob_ping == 'FAIL' else "") }}
+             Internet:    {{ s.inet_ping }}{{ " ✅" if s.inet_ping == 'PASS' else (" ❌" if s.inet_ping == 'FAIL' else "") }}
+
+          {% endif %}
+          {% endfor %}
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+          CROSS-PING TESTS (server ↔ server connectivity)
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          {% for x in xping_parsed | default([]) %}
+          {{ "✅" if x.status == 'PASS' else ("❌" if x.status == 'FAIL' else "⏭️ ") }} {{ x.label }}
+             {{ x.from }} → {{ x.to }} ({{ x.to_ip }}){{ "  ✅" if x.status == 'PASS' else ("  ❌" if x.status == 'FAIL' else "  SKIPPED") }}
+          {% endfor %}
+          {% if xping_parsed | default([]) | length == 0 %}
+          (no cross-ping tests — need at least 2 servers per role)
+          {% endif %}
+
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+          SUMMARY:  {{ ns.pass }} passed  |  {{ ns.fail }} issues  |  {{ ns.unreachable }} unreachable
+                    out of {{ server_results | length }} servers
+          {% set xping_pass = xping_parsed | default([]) | selectattr('status', 'equalto', 'PASS') | list | length %}
+          {% set xping_fail = xping_parsed | default([]) | selectattr('status', 'equalto', 'FAIL') | list | length %}
+          {% if xping_parsed | default([]) | length > 0 %}
+          Cross-ping: {{ xping_pass }}/{{ xping_parsed | length }} passed
+          {% endif %}
+
+          {% if ns.fail == 0 and ns.unreachable == 0 %}
+          ✅ All server validations passed!
+          {% elif ns.unreachable > 0 %}
+          ⚠️  Some servers were unreachable — they may still be booting.
+             Retry with: make validate-servers ARCH=<arch>
+          {% else %}
+          ❌ Some checks failed — review the details above.
+          {% endif %}
+
+          NOTE: Gateway pings may fail on the first run due to EVPN-MH bond
+          convergence (first-ARP takes a few seconds). If only gateway pings
+          failed while OOB and internet pass, re-run the validation:
+
+            make validate-servers ARCH=<arch>
+        mode: '0644'
+
+    - name: Fetch report to local machine
+      fetch:
+        src: /tmp/era-server-validation-report.txt
+        dest: "{{ report_file | default('/tmp/server-validation.txt') }}"
+        flat: yes
+
+    - name: Fail if any server unreachable, failing checks, or cross-ping failures
+      vars:
+        reachable: "{{ server_results | rejectattr('status', 'equalto', 'UNREACHABLE') | list }}"
+        unreachable: "{{ server_results | selectattr('status', 'equalto', 'UNREACHABLE') | list }}"
+        bad_gw: "{{ reachable | rejectattr('gw_ping', 'in', ['PASS', 'SKIP']) | map(attribute='name') | list }}"
+        bad_eth0: "{{ reachable | selectattr('eth0_ip', 'equalto', '') | map(attribute='name') | list }}"
+        bad_lldp: "{{ reachable | rejectattr('lldpd', 'equalto', 'active') | map(attribute='name') | list }}"
+        with_issues: "{{ (bad_gw + bad_eth0 + bad_lldp) | unique | list }}"
+        xping_fail: "{{ xping_parsed | default([]) | selectattr('status', 'equalto', 'FAIL') | list }}"
+      fail:
+        msg: "Server validation failed: {{ unreachable | length }} unreachable, {{ with_issues | length }} with issues, {{ xping_fail | length }} cross-ping failures"
+      when: (unreachable | length > 0) or (with_issues | length > 0) or (xping_fail | length > 0)
+      run_once: true

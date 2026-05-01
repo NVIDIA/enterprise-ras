@@ -1,0 +1,15 @@
+---
+# Host variables for oob-switch-03 (Generated from Excel)
+ansible_host: 172.20.0.205
+hostname: oob-switch-03
+mac_address: 48:b0:2d:2d:45:7e
+ip_assignment_mode: dhcp
+svi_ip: 192.168.200.4/24
+default_gateway: 192.168.200.1
+access_ports: swp1-16,swp25,swp27-33,swp40-41
+uplink_ports: swp1-16,swp25,swp27-33,swp40-41,swp49-52
+spine_bond_members:
+- swp49
+- swp50
+- swp51
+- swp52

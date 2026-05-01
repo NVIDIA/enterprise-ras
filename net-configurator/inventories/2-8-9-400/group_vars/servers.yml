@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+# ============================================================================
+# Servers Group Variables
+# ============================================================================
+# Connection settings for all servers
+
+ansible_password: "{{ server_ansible_password }}"
+
