@@ -1,0 +1,163 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Restart LDAP Service on Switches
+# This playbook restarts the nslcd@mgmt service on switches to apply LDAP configuration changes
+#
+# Two modes:
+#   1. Via OOB Server (dhcp-oob) - for Air/jump box environments
+#   2. Direct connection - for direct access environments
+#
+# Usage:
+#   Via OOB Server:  make restart-ldap (or ansible-playbook playbooks/restart-ldap-switches.yml -i inventories/hosts)
+#   Direct:          ansible-playbook playbooks/restart-ldap-switches-direct.yml -i inventories/hosts --ask-become-pass
+
+- name: Restart LDAP Service via OOB Server
+  hosts: dhcp-oob
+  gather_facts: false
+  
+  tasks:
+    - name: Display banner
+      debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║           Restarting LDAP Service on Switches                       ║
+          ╚══════════════════════════════════════════════════════════════════════╝
+          
+          Mode: Via OOB Server ({{ inventory_hostname }})
+          Switches: core-01, core-02
+          Service: nslcd@mgmt
+          
+    - name: Ensure sshpass is installed
+      package:
+        name: sshpass
+        state: present
+      become: true
+      
+    - name: Get list of core switches from inventory
+      set_fact:
+        core_switches: "{{ groups['core'] }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Restart LDAP service on each switch
+      shell: |
+        # Set SSH password for sshpass
+        export SSHPASS='{{ switch_password }}'
+        
+        echo "=== Processing {{ item }} ({{ hostvars[item].ansible_host }}) ==="
+        
+        # Check if nslcd@mgmt service exists (check loaded units, not just unit files)
+        if timeout 10 sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR cumulus@{{ hostvars[item].ansible_host }} 'systemctl list-units --all nslcd@mgmt.service | grep -q nslcd@mgmt.service' 2>/dev/null; then
+          echo "✓ Service found"
+          
+          # Get current service status before restart
+          before_status=$(sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR cumulus@{{ hostvars[item].ansible_host }} 'systemctl is-active nslcd@mgmt' 2>/dev/null)
+          echo "  Current status: $before_status"
+          
+          # Restart the service
+          if sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR cumulus@{{ hostvars[item].ansible_host }} 'sudo systemctl restart nslcd@mgmt' 2>/dev/null; then
+            echo "✓ Service restarted"
+            
+            # Wait a moment for service to stabilize
+            sleep 2
+            
+            # Check service status after restart
+            status=$(sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR cumulus@{{ hostvars[item].ansible_host }} 'systemctl is-active nslcd@mgmt' 2>/dev/null)
+            echo "✓ Service status: $status"
+            
+            # Test LDAP lookup
+            if sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR cumulus@{{ hostvars[item].ansible_host }} 'getent passwd jdoe >/dev/null 2>&1' 2>/dev/null; then
+              ldap_user=$(sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR cumulus@{{ hostvars[item].ansible_host }} 'getent passwd jdoe' 2>/dev/null)
+              echo "✓ LDAP working: $ldap_user"
+              echo "SUCCESS|RESTARTED|ACTIVE|LDAP_OK"
+            else
+              echo "⚠ LDAP lookup failed"
+              echo "SUCCESS|RESTARTED|ACTIVE|LDAP_FAIL"
+            fi
+          else
+            echo "✗ Failed to restart service"
+            echo "ERROR|RESTART_FAILED"
+          fi
+        else
+          echo "⚠ Service not found - LDAP not installed yet"
+          echo "NOT_FOUND"
+        fi
+      loop: "{{ core_switches }}"
+      register: restart_results
+      changed_when: false
+      failed_when: false
+
+    - name: Display results for each switch
+      debug:
+        msg: |
+          
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║  Switch: {{ item.item }} ({{ hostvars[item.item].ansible_host }})
+          ╚══════════════════════════════════════════════════════════════════════╝
+          
+          {% if 'SUCCESS|RESTARTED|ACTIVE|LDAP_OK' in item.stdout %}
+          ✅ Service restarted successfully
+          ✅ Service is active
+          ✅ LDAP authentication working
+          {% elif 'SUCCESS|RESTARTED|ACTIVE|LDAP_FAIL' in item.stdout %}
+          ✅ Service restarted successfully
+          ✅ Service is active
+          ⚠️  LDAP authentication failed (check config)
+          {% elif 'ERROR|RESTART_FAILED' in item.stdout %}
+          ✅ Service found
+          ❌ Failed to restart service
+          {% elif 'NOT_FOUND' in item.stdout %}
+          ⚠️  nslcd@mgmt service not found
+          
+          This is normal if LDAP packages aren't installed yet.
+          Apply switch configuration first:
+            ssh cumulus@{{ item.item }}
+            curl http://{{ hostvars['dhcp-oob'].ansible_host }}/scripts/{{ item.item }}-config.sh | sudo bash
+          {% else %}
+          ❌ Unable to connect to switch
+          {% endif %}
+          
+          Raw output:
+          {{ item.stdout }}
+      loop: "{{ restart_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Calculate summary
+      set_fact:
+        total_switches: "{{ restart_results.results | length }}"
+        restarted_switches: "{{ restart_results.results | selectattr('stdout', 'search', 'RESTARTED') | list | length }}"
+        not_found_switches: "{{ restart_results.results | selectattr('stdout', 'search', 'NOT_FOUND') | list | length }}"
+        ldap_working: "{{ restart_results.results | selectattr('stdout', 'search', 'LDAP_OK') | list | length }}"
+      run_once: true
+
+    - name: Display summary
+      debug:
+        msg: |
+          
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║                    LDAP Restart Summary                              ║
+          ╚══════════════════════════════════════════════════════════════════════╝
+          
+          Total Switches:           {{ total_switches }}
+          Service Restarted:        {{ restarted_switches }}
+          Service Not Found:        {{ not_found_switches }}
+          LDAP Working:             {{ ldap_working }}
+          
+          {% if restarted_switches | int == total_switches | int and ldap_working | int == total_switches | int %}
+          🎉 All switches restarted successfully and LDAP is working!
+          {% elif not_found_switches | int == total_switches | int %}
+          ⚠️  LDAP service not installed on any switches.
+          Apply switch configurations first, then re-run this playbook.
+          {% elif restarted_switches | int > 0 %}
+          ✅ {{ restarted_switches }} switch(es) restarted successfully.
+          {% if ldap_working | int < restarted_switches | int %}
+          ⚠️  LDAP authentication failed on {{ restarted_switches | int - ldap_working | int }} switch(es).
+          Check LDAP configuration: nv show system aaa ldap
+          {% endif %}
+          {% else %}
+          ⚠️  Could not restart LDAP on any switches.
+          {% endif %}
+      run_once: true

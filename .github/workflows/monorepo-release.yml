@@ -5,6 +5,7 @@ on:
     tags:
       - 'sp-*-v*'   # spectrum-era subfolder: sp-2-4-3-v3.0.0 → spectrum-era/2-4-3-200
       - 'obs-v*'    # entire Observability RA: obs-v1.0.0 → Observability RA/
+      - 'nc-v*'     # entire net-configurator: nc-v4.0.0 → net-configurator/
 
 jobs:
   release:
@@ -24,6 +25,14 @@ jobs:
           if [[ "$TAG" == obs-v* ]]; then
             # obs-v1.0.0 → entire Observability RA folder
             RELEASE_PATH="Observability RA"
+            echo "path=$RELEASE_PATH" >> $GITHUB_OUTPUT
+            echo "Release path: $RELEASE_PATH"
+            exit 0
+          fi
+
+          if [[ "$TAG" == nc-v* ]]; then
+            # nc-v4.0.0 → entire net-configurator folder
+            RELEASE_PATH="net-configurator"
             echo "path=$RELEASE_PATH" >> $GITHUB_OUTPUT
             echo "Release path: $RELEASE_PATH"
             exit 0
@@ -50,7 +59,7 @@ jobs:
             exit 0
           fi
 
-          echo "::error::Tag does not match sp-*-v* or obs-v*: $TAG"
+          echo "::error::Tag does not match sp-*-v*, obs-v*, or nc-v*: $TAG"
           exit 1
 
       - name: Zip Folder

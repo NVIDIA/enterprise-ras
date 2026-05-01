@@ -1,0 +1,17 @@
+---
+ansible_host: CHANGE_ME
+ansible_port: 22
+ansible_user: ubuntu
+ansible_password: '{{ server_ansible_password }}'
+oob_server_interfaces:
+- name: eth1
+  ip: 172.20.0.1
+  netmask: 24
+  network: 172.20.0.0/24
+  purpose: Air Management Gateway
+- name: eth2
+  ip: 192.168.200.1
+  netmask: 24
+  network: 192.168.200.0/24
+  purpose: OOB Mgmt Subnet 1 Gateway
+hostname: oob-server-01

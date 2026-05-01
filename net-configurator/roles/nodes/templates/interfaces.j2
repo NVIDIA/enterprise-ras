@@ -1,0 +1,58 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: MIT #}
+{% set dev = devices[inventory_hostname] %}
+{% set ifaces = dev.interfaces | default({}) %}
+{# Exclude eth0 — it is the OOB management interface and must not be bonded #}
+{% set cpu_ifaces = ifaces.cpu | default([]) | reject('equalto', 'eth0') | list %}
+{% set gpu_ifaces = ifaces.gpu | default([]) | reject('equalto', 'eth0') | list %}
+{% set gpu_ips = dev.gpu_ips | default([]) %}
+{% if cpu_ifaces | length > 0 or gpu_ifaces | length > 0 %}
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+{% for iface in cpu_ifaces %}
+    {{ iface }}:
+      dhcp4: no
+{% endfor %}
+{% for iface in gpu_ifaces %}
+{% if loop.index0 < gpu_ips | length %}
+    {{ iface }}:
+      dhcp4: no
+      addresses:
+        - {{ gpu_ips[loop.index0] }}
+{% if loop.index0 == 0 %}
+      routing-policy:
+        - from: {{ gpu_ips[0].split('/')[0] }}/32
+          table: {{ common.gpu_vlan }}
+      routes:
+        - to: 0.0.0.0/0
+          via: {{ common.gpu_gateway }}
+          table: {{ common.gpu_vlan }}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% if cpu_ifaces | length > 0 %}
+  bonds:
+    bond0:
+      interfaces:
+{% for iface in cpu_ifaces %}
+        - {{ iface }}
+{% endfor %}
+      addresses:
+        - {{ dev.bond_ip }}
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+      routing-policy:
+        - from: {{ common.cpu_network }}
+          table: {{ common.cpu_vlan }}
+      routes:
+        - to: 0.0.0.0/0
+          via: {{ common.cpu_gateway }}
+          table: {{ common.cpu_vlan }}
+      parameters:
+        mode: active-backup
+        primary: {{ cpu_ifaces[0] }}
+        mii-monitor-interval: 100
+{% endif %}
+{% endif %}

@@ -1,0 +1,27 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+- name: Upload validation reports to ZTP server
+  hosts: "{{ ztp_server_host | default('dhcp-oob') }}"
+  become: yes
+  gather_facts: no
+
+  tasks:
+    - name: Ensure reports directory exists
+      file:
+        path: /var/www/ztp/reports
+        state: directory
+        mode: '0755'
+        owner: www-data
+        group: www-data
+
+    - name: Upload report files
+      copy:
+        src: "{{ item }}"
+        dest: /var/www/ztp/reports/
+        mode: '0644'
+        owner: www-data
+        group: www-data
+      with_fileglob:
+        - "{{ reports_dir }}/*"

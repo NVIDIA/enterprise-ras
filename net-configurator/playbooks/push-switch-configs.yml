@@ -1,0 +1,58 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Push and apply generated NVUE CLI configs to core and OOB switches.
+#
+# Flow:
+#   Play 1 — Copy config script to switch, run it (stages nv set commands),
+#             then: nv config apply --assume-yes --confirm
+#             SSH session ends (log out).
+#   Play 2 — Fresh SSH session per switch: nv config apply
+#             Confirms the apply and reports result.
+#
+# Usage:
+#   ansible-playbook playbooks/push-switch-configs.yml \
+#     -i output/<arch>/<site>/inventory/hosts \
+#     -e "config_output_dir=../output/<arch>/<site>/configs"
+
+- name: Push config and apply (with confirm)
+  hosts: core:oob
+  gather_facts: false
+  vars:
+    config_output_dir: "../exported-configurations-cli"
+    remote_config_path: "/tmp/{{ inventory_hostname }}-config.sh"
+
+  tasks:
+    - name: Copy config script to switch
+      copy:
+        src: "{{ config_output_dir }}/{{ inventory_hostname }}-config.sh"
+        dest: "{{ remote_config_path }}"
+        mode: '0755'
+
+    - name: Run config script (stage NVUE changes)
+      shell: bash {{ remote_config_path }}
+      changed_when: true
+
+    - name: Apply staged config
+      shell: nv config apply --assume-yes --confirm
+      register: apply_result
+      changed_when: true
+
+    - name: Show apply output
+      debug:
+        msg: "{{ inventory_hostname }}: {{ apply_result.stdout_lines | default([apply_result.stdout | default('ok')]) }}"
+
+- name: Confirm apply (new SSH session)
+  hosts: core:oob
+  gather_facts: false
+
+  tasks:
+    - name: Apply to confirm
+      shell: nv config apply
+      register: confirm_result
+      changed_when: true
+
+    - name: Show confirm output
+      debug:
+        msg: "{{ inventory_hostname }}: confirmed — {{ confirm_result.stdout | default('ok') }}"

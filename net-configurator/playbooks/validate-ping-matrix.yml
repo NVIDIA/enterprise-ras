@@ -1,0 +1,259 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Server Ping Matrix Validation
+# Pushes a ping script to all servers, runs them concurrently, collects results.
+# Tests L2 (same VLAN) and L3 (cross-VLAN) connectivity between all server nodes.
+# VRF-aware: distinguishes expected cross-VRF failures from real issues.
+#
+# Usage:
+#   make validate-ping-matrix ARCH=2-8-5-200
+
+- name: Server ping matrix
+  hosts: dhcp-oob
+  gather_facts: false
+  vars:
+    server_groups: "{{ groups.get('nodes', []) + groups.get('storage', []) + groups.get('support', []) }}"
+    local_report: "/tmp/ping-matrix-report.txt"
+  tasks:
+
+    - name: Show test plan
+      debug:
+        msg: "Ping matrix: {{ server_groups | length }} servers"
+
+    # ── Phase 1: Push + fire on all servers (parallel) ──
+    # All SSH connections run concurrently via backgrounded subshells.
+    # Each server gets a script that pings all other servers.
+    - name: Push and fire ping scripts (parallel)
+      shell: |
+        export SSHPASS='{{ server_ansible_password }}'
+        {% for item in server_groups %}
+        (
+          HOST='{{ hostvars[item].ansible_host }}'
+          NAME='{{ item }}'
+          SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ubuntu@$HOST"
+
+          echo "CONNECT|$NAME|$HOST" >&2
+
+          if ! timeout 15 $SSH_CMD 'rm -f /tmp/ping-matrix-results.txt' 2>/dev/null; then
+            echo "FIRE|$NAME|UNREACHABLE"
+            exit 0
+          fi
+
+          {% set src_dev = devices.get(item, {}) %}
+          {% set src_ifaces = src_dev.get('interfaces', {}) %}
+          {% set src_is_compute = item.startswith('su-') or item.startswith('node-') %}
+          {% set src_is_support = item.startswith('support') %}
+          {% set src_is_storage = item.startswith('storage') %}
+          {% set src_inband_iface = 'bond0' if src_is_compute else ('bond0.' ~ common.support_vlan if src_is_support else ('bond0.' ~ common.storage_vlan if src_is_storage else '')) %}
+          {% set src_inband_ip = (src_dev.get('bond_ip', '') if src_is_compute else src_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
+          {% set src_gpu_iface = src_ifaces.get('gpu', [''])[0] if src_ifaces.get('gpu', []) | length > 0 else '' %}
+          {% set src_gpu_ip = (src_dev.get('gpu_ips', [])[0] | regex_replace('/.*', '')) if src_dev.get('gpu_ips', []) | length > 0 else '' %}
+
+          SCRIPT='#!/bin/bash
+          R=/tmp/ping-matrix-results.txt
+          echo "HOST=$(hostname)" > $R
+          echo "TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $R
+          {% for dst in server_groups %}
+          {% if dst != item %}
+          {% set dst_dev = devices.get(dst, {}) %}
+          {% set dst_is_compute = dst.startswith('su-') or dst.startswith('node-') %}
+          {% set dst_inband_ip = (dst_dev.get('bond_ip', '') if dst_is_compute else dst_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
+          {% if dst_inband_ip and src_inband_iface and src_inband_ip %}
+          ping -c 2 -W 5 {{ dst_inband_ip }} -I {{ src_inband_ip }} >/dev/null 2>&1 && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}|{{ dst_inband_ip }}|INBAND" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}|{{ dst_inband_ip }}|INBAND" >> $R
+          {% endif %}
+          {% if dst_is_compute and src_is_compute and src_gpu_iface and src_gpu_ip %}
+          {% set first_dst_gpu = (dst_dev.get('gpu_ips', [])[0] | regex_replace('/.*', '')) if dst_dev.get('gpu_ips', []) | length > 0 else '' %}
+          {% if first_dst_gpu %}
+          ping -c 2 -W 5 {{ first_dst_gpu }} -I {{ src_gpu_ip }} >/dev/null 2>&1 && echo "PASS|{{ src_gpu_iface }}({{ src_gpu_ip }})|{{ dst }}-gpu|{{ first_dst_gpu }}|GPU" >> $R || echo "FAIL|{{ src_gpu_iface }}({{ src_gpu_ip }})|{{ dst }}-gpu|{{ first_dst_gpu }}|GPU" >> $R
+          {% endif %}
+          {% elif dst_is_compute and not src_is_compute and src_inband_iface and src_inband_ip %}
+          {% set first_gpu = (dst_dev.get('gpu_ips', [])[0] | regex_replace('/.*', '')) if dst_dev.get('gpu_ips', []) | length > 0 else '' %}
+          {% if first_gpu %}
+          ping -c 2 -W 5 {{ first_gpu }} -I {{ src_inband_ip }} >/dev/null 2>&1 && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}-gpu|{{ first_gpu }}|CROSS-VRF" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}-gpu|{{ first_gpu }}|CROSS-VRF" >> $R
+          {% endif %}
+          {% endif %}
+          {% endif %}
+          {% endfor %}
+          {% if src_inband_iface and src_inband_ip %}
+          {% if common.cpu_gateway is defined %}
+          ping -c 2 -W 5 {{ common.cpu_gateway }} -I {{ src_inband_ip }} >/dev/null 2>&1 && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|cpu-gw|{{ common.cpu_gateway }}|INBAND-gw" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|cpu-gw|{{ common.cpu_gateway }}|INBAND-gw" >> $R
+          {% endif %}
+          {% if common.support_gateway is defined %}
+          ping -c 2 -W 5 {{ common.support_gateway }} -I {{ src_inband_ip }} >/dev/null 2>&1 && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|support-gw|{{ common.support_gateway }}|INBAND-gw" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|support-gw|{{ common.support_gateway }}|INBAND-gw" >> $R
+          {% endif %}
+          {% if common.storage_gateway is defined %}
+          ping -c 2 -W 5 {{ common.storage_gateway }} -I {{ src_inband_ip }} >/dev/null 2>&1 && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|storage-gw|{{ common.storage_gateway }}|INBAND-gw" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|storage-gw|{{ common.storage_gateway }}|INBAND-gw" >> $R
+          {% endif %}
+          {% endif %}
+          {% if src_is_compute and src_gpu_iface and src_gpu_ip and common.gpu_gateway is defined %}
+          ping -c 2 -W 5 {{ common.gpu_gateway }} -I {{ src_gpu_ip }} >/dev/null 2>&1 && echo "PASS|{{ src_gpu_iface }}({{ src_gpu_ip }})|gpu-gw|{{ common.gpu_gateway }}|GPU-gw" >> $R || echo "FAIL|{{ src_gpu_iface }}({{ src_gpu_ip }})|gpu-gw|{{ common.gpu_gateway }}|GPU-gw" >> $R
+          {% endif %}
+          echo "DONE" >> $R
+          '
+
+          SCRIPT_B64=$(echo "$SCRIPT" | base64 -w0)
+          timeout 20 $SSH_CMD "echo '$SCRIPT_B64' | base64 -d > /tmp/ping-matrix.sh && nohup bash /tmp/ping-matrix.sh > /dev/null 2>&1 &" 2>/dev/null
+          echo "FIRE|$NAME|OK"
+        ) &
+        {% endfor %}
+        wait
+      register: fire_results
+      changed_when: false
+
+    - name: Show fire status
+      debug:
+        msg: "{{ fire_results.stdout }}"
+
+    # ── Phase 2: Wait ──
+    - name: Wait for all servers to finish pinging
+      pause:
+        seconds: 120
+        prompt: "Waiting 120s for all servers to complete ping tests..."
+
+    # ── Phase 3: Collect (parallel) ──
+    # All SSH connections run concurrently, same pattern as fire phase.
+    - name: Collect results from all servers (parallel)
+      shell: |
+        export SSHPASS='{{ server_ansible_password }}'
+        {% for item in server_groups %}
+        (
+          HOST='{{ hostvars[item].ansible_host }}'
+          NAME='{{ item }}'
+          SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ubuntu@$HOST"
+
+          CONTENT=$(timeout 15 $SSH_CMD 'cat /tmp/ping-matrix-results.txt 2>/dev/null' 2>/dev/null)
+          if [ -z "$CONTENT" ] || ! echo "$CONTENT" | grep -q "DONE"; then
+            echo "COLLECT|$NAME|NODATA"
+          else
+            echo "$CONTENT" | while IFS= read -r line; do
+              case "$line" in
+                PASS\|*|FAIL\|*) echo "FROM:$NAME|$line" ;;
+              esac
+            done
+          fi
+        ) &
+        {% endfor %}
+        wait
+      register: collect_results
+      changed_when: false
+      no_log: true
+
+    # ── Report ──
+    - name: Generate ping matrix report
+      copy:
+        dest: "/tmp/ping-matrix-report.txt"
+        content: |
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║               ERA Server Ping Matrix Report                          ║
+          ╚══════════════════════════════════════════════════════════════════════╝
+
+          Timestamp: {{ '%Y-%m-%d %H:%M:%S' | strftime }}
+          Servers tested: {{ server_groups | length }}
+
+          VRF ROUTING DOMAINS:
+            INBAND: Compute (VLAN {{ common.cpu_vlan }}), Support (VLAN {{ common.support_vlan }}), Storage (VLAN {{ common.storage_vlan }}) — all can cross-ping
+            GPU:    Compute GPU interfaces (VLAN {{ common.gpu_vlan }}) — isolated, only GPU ↔ GPU
+            CROSS-VRF pings (INBAND → GPU) are expected to FAIL
+            If a cross-VRF ping PASSES, that indicates a VRF leak (isolation broken)
+
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+          {% set all_lines = collect_results.stdout_lines | default([]) %}
+          {% set ns = namespace(total=0, pass_count=0, fail_count=0, expected_fail=0, nodata=0) %}
+          {% set failed_list = [] %}
+          {% for server in server_groups %}
+          {%   set nodata_line = all_lines | select('match', 'COLLECT\\|' ~ server ~ '\\|NODATA') | list %}
+          {%   set result_lines = all_lines | select('match', '^FROM:' ~ server ~ '\\|') | list %}
+          {%   if nodata_line | length > 0 %}
+          {%     set ns.nodata = ns.nodata + 1 %}
+          ⚠️  {{ server }}  — no results (unreachable or script didn't complete)
+          {%   elif result_lines | length > 0 %}
+          {%     set server_pass = namespace(n=0) %}
+          {%     set server_fail = namespace(n=0) %}
+          {%     set server_expected = namespace(n=0) %}
+          {%     set server_details = [] %}
+          {%     for line in result_lines %}
+          {%       set parts = line.split('|') %}
+          {%       set status = parts[1] | default('') %}
+          {%       set src_iface = parts[2] | default('') %}
+          {%       set to_name = parts[3] | default('') %}
+          {%       set to_ip = parts[4] | default('') %}
+          {%       set vrf = parts[5] | default('') %}
+          {%       set is_cross_vrf = vrf == 'CROSS-VRF' %}
+          {%       set ns.total = ns.total + 1 %}
+          {%       if is_cross_vrf and status == 'PASS' %}
+          {%         set ns.fail_count = ns.fail_count + 1 %}
+          {%         set server_fail.n = server_fail.n + 1 %}
+          {%         set _ = server_details.append('   🚨 ' ~ src_iface ~ ' → ' ~ to_name ~ ' (' ~ to_ip ~ ') [' ~ vrf ~ '] VRF LEAK — should be isolated!') %}
+          {%         set _ = failed_list.append(server ~ ': ' ~ src_iface ~ ' → ' ~ to_name ~ ' (' ~ to_ip ~ ') [' ~ vrf ~ '] VRF LEAK') %}
+          {%       elif is_cross_vrf and status == 'FAIL' %}
+          {%         set ns.expected_fail = ns.expected_fail + 1 %}
+          {%         set server_expected.n = server_expected.n + 1 %}
+          {%         set _ = server_details.append('   ⏭️  ' ~ src_iface ~ ' → ' ~ to_name ~ ' (' ~ to_ip ~ ') [' ~ vrf ~ '] isolated (expected)') %}
+          {%       elif status == 'PASS' %}
+          {%         set ns.pass_count = ns.pass_count + 1 %}
+          {%         set server_pass.n = server_pass.n + 1 %}
+          {%         set _ = server_details.append('   ✅ ' ~ src_iface ~ ' → ' ~ to_name ~ ' (' ~ to_ip ~ ') [' ~ vrf ~ ']') %}
+          {%       else %}
+          {%         set ns.fail_count = ns.fail_count + 1 %}
+          {%         set server_fail.n = server_fail.n + 1 %}
+          {%         set _ = server_details.append('   ❌ ' ~ src_iface ~ ' → ' ~ to_name ~ ' (' ~ to_ip ~ ') [' ~ vrf ~ ']') %}
+          {%         set _ = failed_list.append(server ~ ': ' ~ src_iface ~ ' → ' ~ to_name ~ ' (' ~ to_ip ~ ') [' ~ vrf ~ ']') %}
+          {%       endif %}
+          {%     endfor %}
+          {%     set tested = server_pass.n + server_fail.n + server_expected.n %}
+          {{ "✅" if server_fail.n == 0 else "❌" }} {{ server }}  ({{ server_pass.n }}/{{ tested }} passed{{ ", " ~ server_expected.n ~ " cross-VRF skipped" if server_expected.n > 0 else "" }}{{ ", " ~ server_fail.n ~ " FAILED" if server_fail.n > 0 else "" }})
+          {%     for d in server_details %}
+          {{ d }}
+          {%     endfor %}
+
+          {%   else %}
+          {%     set ns.nodata = ns.nodata + 1 %}
+          ⚠️  {{ server }}  — no data collected
+          {%   endif %}
+          {% endfor %}
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          {% if ns.fail_count > 0 %}
+
+          UNEXPECTED FAILURES (same VRF — should be reachable):
+          {% for f in failed_list %}
+            ❌ {{ f }}
+          {% endfor %}
+
+          {% endif %}
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+          SUMMARY:  {{ ns.pass_count }} passed  |  {{ ns.fail_count }} unexpected failures  |  {{ ns.expected_fail }} expected cross-VRF  |  {{ ns.nodata }} no data
+                    out of {{ ns.total }} total pings
+
+          {% if ns.fail_count == 0 and ns.nodata == 0 %}
+          ✅ Full mesh connectivity verified! ({{ ns.expected_fail }} cross-VRF failures are by design)
+          {% else %}
+          ❌ {{ ns.fail_count }} unexpected connectivity issues detected.
+          {% endif %}
+
+          NOTE: EVPN-MH bonds may take a few seconds for first-ARP resolution.
+          If only a few pings failed, re-run the test — transient failures on
+          the first run are common and usually pass on retry:
+
+            make validate-ping-matrix ARCH=<arch>
+
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          RAW DATA
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          Format: FROM_SERVER | STATUS | SOURCE_IFACE(SOURCE_IP) | TARGET | TARGET_IP | VRF
+
+          {% for line in all_lines %}
+          {%   if line.startswith('FROM:') or ('COLLECT' in line and 'NODATA' in line) %}
+          {{ line }}
+          {%   endif %}
+          {% endfor %}
+        mode: '0644'
+
+    - name: Fetch report to local machine
+      fetch:
+        src: /tmp/ping-matrix-report.txt
+        dest: "{{ local_report }}"
+        flat: yes

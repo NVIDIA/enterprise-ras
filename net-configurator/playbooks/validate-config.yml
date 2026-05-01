@@ -1,0 +1,214 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Config Validation via ZTP Server
+# Compares generated NVUE config against running config on each switch.
+# Runs from the ZTP server (dhcp-oob) as bastion.
+#
+# Required variable:
+#   config_output_dir  - path to generated config files (e.g., ../output/2-8-5-200/default/configs)
+
+- name: Validate Running Config vs Generated Config via ZTP Server
+  hosts: dhcp-oob
+  gather_facts: false
+
+  tasks:
+    - name: Check if sshpass is installed
+      command: which sshpass
+      register: sshpass_check
+      changed_when: false
+      failed_when: false
+
+    - name: Wait for dpkg lock to be released
+      shell: while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done
+      become: true
+      changed_when: false
+      timeout: 120
+      when: sshpass_check.rc != 0
+
+    - name: Install sshpass
+      package:
+        name: sshpass
+        state: present
+      become: true
+      when: sshpass_check.rc != 0
+
+    - name: Copy normalizer script to ZTP server
+      copy:
+        src: ../scripts/normalize_nvue.py
+        dest: /tmp/normalize_nvue.py
+        mode: '0755'
+
+    - name: Get list of switches from inventory
+      set_fact:
+        switch_list: "{{ groups['oob'] + groups['core'] }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Read generated config for each switch
+      set_fact:
+        generated_configs: >-
+          {{ generated_configs | default({}) | combine({
+               item: lookup('file', config_output_dir ~ '/' ~ (hostvars[item].hostname | default(item)) ~ '-config.sh')
+             })
+          }}
+      loop: "{{ switch_list }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Pull running config from each switch via ZTP server
+      shell: |
+        export SSHPASS='{{ switch_password }}'
+        SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+
+        # Test connectivity first
+        if ! timeout 15 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[item].ansible_host }} 'echo ok' >/dev/null 2>&1; then
+          echo "CONNECTION_FAILED"
+          exit 0
+        fi
+
+        # Pull running config as nv set commands
+        # Try -o commands first (5.16+), fall back to plain nv config show
+        timeout 30 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[item].ansible_host }} \
+          'nv config show -o commands 2>/dev/null || nv config show --output commands 2>/dev/null || nv config show 2>/dev/null' \
+          || echo "CONFIG_FETCH_FAILED"
+      loop: "{{ switch_list }}"
+      register: running_configs
+      changed_when: false
+      no_log: true
+
+    - name: Compare and format results for each switch
+      shell: |
+        SWITCH="{{ item.item }}"
+        HOST="{{ hostvars[item.item].ansible_host }}"
+        STATUS="{{ item.stdout_lines[0] | default('') }}"
+
+        echo "=========================================="
+        echo "Switch: ${SWITCH} (${HOST})"
+        echo "=========================================="
+
+        if [ "$STATUS" = "CONNECTION_FAILED" ]; then
+          echo "RESULT:FAILED"
+          echo "!! CONNECTION FAILED -- could not SSH to switch"
+          exit 0
+        fi
+
+        if [ "$STATUS" = "CONFIG_FETCH_FAILED" ]; then
+          echo "RESULT:FAILED"
+          echo "!! CONFIG FETCH FAILED -- SSH ok but nv config show failed"
+          exit 0
+        fi
+
+        # Write generated config
+        cat <<'GENERATED_EOF' > /tmp/gen_${SWITCH}.txt
+        {{ generated_configs[item.item] }}
+        GENERATED_EOF
+
+        # Write running config
+        cat <<'RUNNING_EOF' > /tmp/run_${SWITCH}.txt
+        {{ item.stdout }}
+        RUNNING_EOF
+
+        # Normalize both through the Python normalizer
+        # This expands interface ranges/groups into individual lines
+        python3 /tmp/normalize_nvue.py < /tmp/gen_${SWITCH}.txt > /tmp/gen_norm_${SWITCH}.txt
+        python3 /tmp/normalize_nvue.py < /tmp/run_${SWITCH}.txt > /tmp/run_norm_${SWITCH}.txt
+
+        gen_count=$(wc -l < /tmp/gen_norm_${SWITCH}.txt)
+        run_count=$(wc -l < /tmp/run_norm_${SWITCH}.txt)
+
+        # Lines in generated but not in running (MISSING from switch)
+        # Filter out lines where running config has a hashed/encrypted version (passwords, secrets)
+        comm -23 /tmp/gen_norm_${SWITCH}.txt /tmp/run_norm_${SWITCH}.txt > /tmp/missing_raw_${SWITCH}.txt
+        grep -v -E '(ldap secret|ldap bind-password|password)' \
+          /tmp/missing_raw_${SWITCH}.txt > /tmp/missing_${SWITCH}.txt || true
+        missing_count=$(wc -l < /tmp/missing_${SWITCH}.txt)
+
+        # Lines in running but not in generated (EXTRA on switch)
+        comm -13 /tmp/gen_norm_${SWITCH}.txt /tmp/run_norm_${SWITCH}.txt > /tmp/extra_raw_${SWITCH}.txt
+
+        # Filter out known NVUE defaults/system-managed lines and hashed secrets from extras
+        grep -v -E '(dhcp-client|hashed-password|system docker|association-type server|system ntp vrf|ldap secret|ldap bind-password)' \
+          /tmp/extra_raw_${SWITCH}.txt > /tmp/extra_${SWITCH}.txt || true
+        extra_count=$(wc -l < /tmp/extra_${SWITCH}.txt)
+        ignored_count=$(( $(wc -l < /tmp/extra_raw_${SWITCH}.txt) + $(wc -l < /tmp/missing_raw_${SWITCH}.txt) - extra_count - missing_count ))
+
+        echo "Generated commands:  ${gen_count}"
+        echo "Running commands:    ${run_count}"
+        echo "Missing on switch:   ${missing_count}"
+        echo "Extra on switch:     ${extra_count}"
+        if [ "$ignored_count" -gt 0 ]; then
+          echo "Ignored (defaults): ${ignored_count}"
+        fi
+
+        if [ "$missing_count" -eq 0 ] && [ "$extra_count" -eq 0 ]; then
+          echo "RESULT:MATCH"
+          echo "[OK] MATCH -- running config matches generated config"
+        else
+          echo "RESULT:MISMATCH"
+          if [ "$missing_count" -gt 0 ]; then
+            echo ""
+            echo "-- Missing from switch (in generated, not running) --"
+            sed 's/^/  - /' /tmp/missing_${SWITCH}.txt | head -50
+            if [ "$missing_count" -gt 50 ]; then
+              echo "  ... and $((missing_count - 50)) more"
+            fi
+          fi
+          if [ "$extra_count" -gt 0 ]; then
+            echo ""
+            echo "-- Extra on switch (in running, not generated) --"
+            sed 's/^/  + /' /tmp/extra_${SWITCH}.txt | head -50
+            if [ "$extra_count" -gt 50 ]; then
+              echo "  ... and $((extra_count - 50)) more"
+            fi
+          fi
+        fi
+
+        # Cleanup
+        rm -f /tmp/gen_${SWITCH}.txt /tmp/run_${SWITCH}.txt \
+              /tmp/gen_norm_${SWITCH}.txt /tmp/run_norm_${SWITCH}.txt \
+              /tmp/missing_${SWITCH}.txt /tmp/extra_raw_${SWITCH}.txt /tmp/extra_${SWITCH}.txt
+      loop: "{{ running_configs.results }}"
+      register: diff_results
+      changed_when: false
+      no_log: true
+
+    - name: Display results for each switch
+      debug:
+        msg: "{{ item.stdout_lines }}"
+      loop: "{{ diff_results.results }}"
+      loop_control:
+        label: "{{ item.item.item }}"
+
+    - name: Calculate summary
+      set_fact:
+        total_switches: "{{ switch_list | length }}"
+        match_count: "{{ diff_results.results | selectattr('stdout', 'search', 'RESULT:MATCH') | list | length }}"
+        fail_count: "{{ diff_results.results | selectattr('stdout', 'search', 'RESULT:FAILED') | list | length }}"
+        mismatch_count: "{{ diff_results.results | selectattr('stdout', 'search', 'RESULT:MISMATCH') | list | length }}"
+      run_once: true
+
+    - name: Display summary
+      debug:
+        msg:
+          - "=========================================="
+          - "CONFIG VALIDATION SUMMARY"
+          - "=========================================="
+          - "Total Switches:        {{ total_switches }}"
+          - "Config Match:          {{ match_count }}"
+          - "Config Mismatch:       {{ mismatch_count }}"
+          - "Connection Failed:     {{ fail_count }}"
+          - "=========================================="
+      run_once: true
+
+    - name: Fail if any mismatch or failure
+      fail:
+        msg: "{{ mismatch_count }} mismatched, {{ fail_count }} unreachable"
+      when: (mismatch_count | int + fail_count | int) > 0
+      run_once: true
+
+    - name: Cleanup normalizer script
+      file:
+        path: /tmp/normalize_nvue.py
+        state: absent

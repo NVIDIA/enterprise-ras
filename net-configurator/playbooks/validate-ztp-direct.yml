@@ -1,0 +1,192 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# ZTP Validation Playbook
+# This playbook validates that ZTP configuration was successfully applied to switches
+# Can be run from the workstation or delegated to the ZTP server
+
+- name: Validate ZTP Configuration on Switches
+  hosts: oob:core
+  gather_facts: false
+
+  tasks:
+    - name: Check SSH connectivity and get hostname
+      command: hostname
+      register: hostname_result
+      ignore_errors: true
+      changed_when: false
+
+    - name: Get Cumulus Linux version
+      shell: cat /etc/lsb-release 2>/dev/null | grep DISTRIB_RELEASE | cut -d'=' -f2
+      register: version_result
+      ignore_errors: true
+      when: hostname_result is succeeded
+      changed_when: false
+
+    - name: Check if NVUE startup config exists
+      stat:
+        path: /etc/nvue.d/startup.yaml
+      register: startup_config
+      when: hostname_result is succeeded
+
+    - name: Verify NVUE configuration is applied
+      shell: nv config show -o json 2>/dev/null | jq -r '.system.hostname' 2>/dev/null
+      register: nvue_hostname
+      ignore_errors: true
+      when:
+        - hostname_result is succeeded
+        - startup_config.stat.exists | default(false)
+      changed_when: false
+
+    - name: Get BGP summary (core switches only)
+      shell: nv show vrf default router bgp 2>/dev/null
+      register: bgp_output
+      ignore_errors: true
+      when:
+        - hostname_result is succeeded
+        - "'core' in group_names"
+      changed_when: false
+
+    - name: Check EVPN configuration (core switches only)
+      shell: nv show evpn 2>/dev/null
+      register: evpn_output
+      ignore_errors: true
+      when:
+        - hostname_result is succeeded
+        - "'core' in group_names"
+      changed_when: false
+
+    - name: Get EVPN VNI counts (core switches only)
+      shell: nv show evpn --output json 2>/dev/null | jq -r '."l2vni-count" // 0, ."l3vni-count" // 0' 2>/dev/null
+      register: evpn_vni_counts
+      ignore_errors: true
+      when:
+        - hostname_result is succeeded
+        - "'core' in group_names"
+      changed_when: false
+
+    - name: Get bridge domain output
+      shell: nv show bridge domain 2>/dev/null
+      register: bridge_output
+      ignore_errors: true
+      when: hostname_result is succeeded
+      changed_when: false
+
+    - name: Get interface brief output
+      shell: nv show interface brief 2>/dev/null
+      register: iface_output
+      ignore_errors: true
+      when: hostname_result is succeeded
+      changed_when: false
+
+    - name: Set validation results
+      set_fact:
+        validation_result:
+          ssh_reachable: "{{ hostname_result is succeeded }}"
+          hostname_matches: "{{ (hostname_result.stdout | default('') == inventory_hostname) }}"
+          hostname_actual: "{{ hostname_result.stdout | default('N/A') }}"
+          cumulus_version: "{{ version_result.stdout | default('N/A') }}"
+          nvue_config_exists: "{{ startup_config.stat.exists | default(false) }}"
+          nvue_config_applied: "{{ (nvue_hostname.stdout | default('') == inventory_hostname) }}"
+          bgp_state: "{{ bgp_output.stdout_lines | select('match', '^state') | map('regex_replace', '^state\\s+', '') | first | default('N/A') if 'core' in group_names and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
+          bgp_configured: "{{ bgp_output.stdout_lines | select('match', '^configured-neighbors') | map('regex_replace', '^configured-neighbors\\s+', '') | first | default('0') if 'core' in group_names and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
+          bgp_established: "{{ bgp_output.stdout_lines | select('match', '^established-neighbors') | map('regex_replace', '^established-neighbors\\s+', '') | first | default('0') if 'core' in group_names and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
+          evpn_l2vni: "{{ evpn_vni_counts.stdout_lines[0] | default('0') if 'core' in group_names and evpn_vni_counts is defined and evpn_vni_counts.stdout_lines is defined else 'N/A' }}"
+          evpn_l3vni: "{{ evpn_vni_counts.stdout_lines[1] | default('0') if 'core' in group_names and evpn_vni_counts is defined and evpn_vni_counts.stdout_lines is defined else 'N/A' }}"
+          bridge_domains: "{{ bridge_output.stdout_lines | select('match', '^\\S') | reject('match', '^\\s*$') | list | length - 2 if bridge_output is defined and bridge_output.stdout is defined else 0 }}"
+          interfaces_up: "{{ iface_output.stdout_lines | select('search', '\\s+up\\s+') | list | length if iface_output is defined and iface_output.stdout is defined else 0 }}"
+        raw_output:
+          bridge: "{{ bridge_output.stdout | default('N/A') }}"
+          interfaces: "{{ iface_output.stdout | default('N/A') }}"
+          bgp: "{{ bgp_output.stdout | default('N/A') if 'core' in group_names else 'N/A (OOB switch)' }}"
+          evpn: "{{ evpn_output.stdout | default('N/A') if 'core' in group_names else 'N/A (OOB switch)' }}"
+
+- name: Display Validation Summary
+  hosts: oob:core
+  gather_facts: false
+
+  tasks:
+    - name: Collect statistics
+      set_fact:
+        total_checks: "{{ groups['oob'] | default([]) | length + groups['core'] | default([]) | length }}"
+        successful_checks: "{{ ansible_play_hosts | map('extract', hostvars, ['validation_result', 'ssh_reachable']) | select('equalto', true) | list | length }}"
+      run_once: true
+      delegate_to: localhost
+
+    - name: Write validation report
+      copy:
+        content: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║  ERA ZTP Validation Report (direct SSH)                     ║
+          ║  {{ '%Y-%m-%d %H:%M:%S' | strftime }}                                            ║
+          ╚══════════════════════════════════════════════════════════════╝
+
+          {% for host in ansible_play_hosts %}
+          {% set vr = hostvars[host].validation_result %}
+          ┌──────────────────────────────────────────────────────────────
+          │ {{ host }}  ({{ hostvars[host].ansible_host }})
+          └──────────────────────────────────────────────────────────────
+          {% if vr.ssh_reachable | bool %}
+            SSH Reachable:            ✓ Yes
+            Hostname:                 {{ '✓' if vr.hostname_matches | bool else '✗' }} {{ vr.hostname_actual }}
+            Cumulus Version:          {{ vr.cumulus_version }}
+            NVUE Config Exists:       {{ vr.nvue_config_exists }}
+            NVUE Config Applied:      {{ vr.nvue_config_applied }}
+            Bridge Domains:           {{ vr.bridge_domains }}
+            Interfaces Up:            {{ vr.interfaces_up }}
+          {% if 'core' in hostvars[host].group_names %}
+            BGP State:                {{ vr.bgp_state }}
+            BGP Configured Neighbors: {{ vr.bgp_configured }}
+            BGP Established Neighbors:{{ vr.bgp_established }}
+            EVPN L2 VNIs:             {{ vr.evpn_l2vni }}
+            EVPN L3 VNIs:             {{ vr.evpn_l3vni }}
+          {% endif %}
+          {% else %}
+            SSH Reachable:            ✗ No
+            Status:                   FAILED — switch unreachable
+          {% endif %}
+          {% endfor %}
+
+          ══════════════════════════════════════════════════════════════
+          SUMMARY:  {{ successful_checks }}/{{ total_checks }} switches passed
+          {% if successful_checks | int == total_checks | int %}
+          RESULT:   ✅ ALL SWITCHES VALIDATED SUCCESSFULLY
+          {% else %}
+          RESULT:   ❌ {{ total_checks | int - successful_checks | int }} SWITCH(ES) FAILED
+          {% endif %}
+          ══════════════════════════════════════════════════════════════
+
+
+          ╔══════════════════════════════════════════════════════════════╗
+          ║  RAW COMMAND OUTPUT                                        ║
+          ╚══════════════════════════════════════════════════════════════╝
+          {% for host in ansible_play_hosts %}
+          {% set ro = hostvars[host].raw_output %}
+
+          ┌──────────────────────────────────────────────────────────────
+          │ {{ host }}  ({{ hostvars[host].ansible_host }})
+          └──────────────────────────────────────────────────────────────
+
+          --- bridge domain ---
+          {{ ro.bridge }}
+
+          --- interface brief ---
+          {{ ro.interfaces }}
+
+          --- bgp ---
+          {{ ro.bgp }}
+
+          --- evpn ---
+          {{ ro.evpn }}
+          {% endfor %}
+        dest: "{{ report_file | default('/tmp/era-ztp-validation-report.txt') }}"
+      run_once: true
+      delegate_to: localhost
+
+    - name: Fail if any validation failed
+      fail:
+        msg: "⚠️  {{ total_checks | int - successful_checks | int }} switches failed validation"
+      when: successful_checks | int < total_checks | int
+      run_once: true
+      delegate_to: localhost

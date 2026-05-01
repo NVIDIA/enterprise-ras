@@ -1,0 +1,198 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# OOB Server Configuration Tasks
+# This role configures an Ubuntu server to act as an OOB (Out-of-Band) gateway
+# for Air simulations or physical lab environments.
+
+- name: Display OOB Server Setup Banner
+  debug:
+    msg: |
+      ╔══════════════════════════════════════════════════════════════════════╗
+      ║               OOB SERVER CONFIGURATION (Air/Lab Gateway)             ║
+      ╚══════════════════════════════════════════════════════════════════════╝
+      Host: {{ inventory_hostname }}
+      Purpose: Routing & gateway for OOB management networks
+      ══════════════════════════════════════════════════════════════════════
+
+- name: Install required packages
+  apt:
+    name:
+      - net-tools
+      - iptables
+      - iptables-persistent
+    state: present
+    update_cache: yes
+    lock_timeout: 300
+  retries: 5
+  delay: 15
+  register: apt_result
+  until: apt_result is succeeded
+  tags:
+    - packages
+
+- name: Configure sysctl for IP forwarding
+  template:
+    src: sysctl.conf.j2
+    dest: /etc/sysctl.conf
+    owner: root
+    group: root
+    mode: '0644'
+    backup: yes
+  notify: reload sysctl
+  tags:
+    - sysctl
+    - networking
+
+- name: Apply sysctl settings immediately
+  command: sysctl -p
+  changed_when: true
+  tags:
+    - sysctl
+
+- name: Backup existing netplan configuration
+  copy:
+    src: /etc/netplan/01-config.yaml
+    dest: /etc/netplan/01-config.yaml.backup
+    remote_src: yes
+    force: no
+  ignore_errors: yes
+  tags:
+    - netplan
+    - networking
+
+- name: Configure netplan for OOB interfaces
+  template:
+    src: netplan-config.yaml.j2
+    dest: /etc/netplan/01-config.yaml
+    owner: root
+    group: root
+    mode: '0644'
+    backup: yes
+  register: netplan_config
+  tags:
+    - netplan
+    - networking
+
+- name: Ensure netplan directory exists
+  file:
+    path: /etc/netplan
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  tags:
+    - netplan
+
+- name: Apply netplan configuration
+  command: netplan apply
+  when: netplan_config.changed
+  tags:
+    - netplan
+    - networking
+
+- name: Restart systemd-networkd to apply configuration
+  systemd:
+    name: systemd-networkd
+    state: restarted
+  when: netplan_config.changed
+  tags:
+    - netplan
+    - networking
+
+- name: Wait for networkd to configure interfaces
+  pause:
+    seconds: 3
+  when: netplan_config.changed
+  tags:
+    - networking
+
+- name: Bring up OOB interfaces (if needed)
+  command: ip link set {{ item.name }} up
+  loop: "{{ oob_server_interfaces }}"
+  when: oob_server_interfaces is defined
+  ignore_errors: yes
+  tags:
+    - networking
+    - interfaces
+
+- name: Wait for interfaces to stabilize
+  pause:
+    seconds: 2
+  when: oob_server_interfaces is defined
+  tags:
+    - networking
+
+- name: Check if interfaces have IP addresses
+  shell: ip addr show {{ item.name }} | grep -q "inet "
+  loop: "{{ oob_server_interfaces }}"
+  when: oob_server_interfaces is defined
+  register: interface_has_ip
+  changed_when: false
+  failed_when: false
+  tags:
+    - verification
+
+- name: Manually assign IP if networkd failed
+  command: ip addr add {{ item.item.ip }}/{{ item.item.netmask | default('24') }} dev {{ item.item.name }}
+  loop: "{{ interface_has_ip.results }}"
+  when: 
+    - oob_server_interfaces is defined
+    - item.rc != 0
+  ignore_errors: yes
+  tags:
+    - networking
+    - fallback
+
+- name: Verify interface configuration
+  command: ip -brief addr show {{ item.name }}
+  loop: "{{ oob_server_interfaces }}"
+  when: oob_server_interfaces is defined
+  register: interface_status
+  changed_when: false
+  ignore_errors: yes
+  tags:
+    - verification
+
+- name: Configure NAT masquerade for outbound traffic
+  shell: |
+    iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || \
+    iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+  tags:
+    - networking
+    - nat
+
+- name: Save iptables rules
+  shell: iptables-save > /etc/iptables/rules.v4
+  tags:
+    - networking
+    - nat
+
+- name: Display OOB Server Configuration Summary
+  debug:
+    msg: |
+      ╔══════════════════════════════════════════════════════════════════════╗
+      ║                   OOB SERVER CONFIGURATION SUMMARY                   ║
+      ╚══════════════════════════════════════════════════════════════════════╝
+      
+      ✅ IP Forwarding: Enabled
+      ✅ IPv6: Disabled
+      ✅ Network Interfaces: Configured
+      
+      {% if oob_server_interfaces is defined %}
+      Configured Interfaces:
+      {% for interface in oob_server_interfaces %}
+        • {{ interface.name }}: {{ interface.ip }}/{{ interface.netmask | default('24') }}
+          Network: {{ interface.network | default('N/A') }}
+          Purpose: {{ interface.purpose | default('OOB Gateway') }}
+      {% endfor %}
+      {% endif %}
+      
+      ✅ Interfaces brought up and configured
+      
+      Verify with: ip addr show
+      ══════════════════════════════════════════════════════════════════════
+  tags:
+    - summary
+

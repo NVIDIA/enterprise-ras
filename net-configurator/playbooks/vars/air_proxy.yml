@@ -1,0 +1,49 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# SSH ProxyJump configuration for NVIDIA Air deployments
+# When via_server=true, routes SSH through oob-server-01 to reach internal hosts.
+# Requires sshpass installed on the control node: sudo apt install sshpass
+#
+# Usage:
+#   make deploy-servers-via-jump
+#   ansible-playbook playbooks/era-servers.yml -i ... -e via_server=true
+
+# Force OpenSSH transport (paramiko doesn't support ProxyCommand properly).
+# Safe default for both modes: direct SSH from dhcp-oob also uses the ssh plugin.
+ansible_connection: ssh
+
+# Ensure python3 is found on Air virtual nodes (OpenSSH auto-discovery may miss it).
+# Ubuntu servers always have python3 at this path, so set unconditionally.
+ansible_python_interpreter: /usr/bin/python3
+
+# Build the ProxyCommand using sshpass for password auth to the jump host
+_jump_user: "{{ hostvars['oob-server-01']['ansible_user'] | default('ubuntu') }}"
+_jump_host: "{{ hostvars['oob-server-01']['ansible_host'] }}"
+_jump_port: "{{ hostvars['oob-server-01']['ansible_port'] | default(22) }}"
+_jump_pass: "{{ server_ansible_password }}"
+
+_air_proxy_command: >-
+  sshpass -p '{{ _jump_pass }}'
+  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+  -p {{ _jump_port }}
+  -W %h:%p
+  {{ _jump_user }}@{{ _jump_host }}
+
+# Reduce ControlPersist when tunneling through a jump host — the default 60s
+# keeps too many stale connections open on the small Air VM, causing later
+# batches to fail with "Data could not be sent to remote host".
+ansible_ssh_common_args: >-
+  {{ '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ControlPersist=5s -o ProxyCommand="' ~ _air_proxy_command ~ '"'
+     if (via_server | default(false) | bool)
+     else '' }}
+
+# NOTE: do NOT set `ansible_become_password` here.
+# Previous versions used `"{{ '' if via_server else omit }}"` to force empty for
+# Air's NOPASSWD sudo, but Ansible 2.19 broke `omit` inside templated strings.
+# Setting it unconditionally (e.g. to '') would silently override the real sudo
+# password from inventory secrets.yml for on-prem deployments, so we leave it
+# unset. Both deploy-servers and deploy-servers-via-jump use --ask-become-pass:
+# Air users press Enter (empty → NOPASSWD sudo works); on-prem users type their
+# real sudo password.

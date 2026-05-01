@@ -1,0 +1,166 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# ZTP Validation via Bastion (ZTP Server)
+# This playbook runs validation commands from the ZTP server to reach switches
+
+- name: Validate ZTP Configuration via ZTP Server
+  hosts: dhcp-oob
+  gather_facts: false
+
+  tasks:
+    - name: Check if sshpass is installed
+      command: which sshpass
+      register: sshpass_check
+      changed_when: false
+      failed_when: false
+
+    - name: Wait for dpkg lock to be released
+      shell: while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done
+      become: true
+      changed_when: false
+      timeout: 120
+      when: sshpass_check.rc != 0
+
+    - name: Install sshpass
+      package:
+        name: sshpass
+        state: present
+      become: true
+      when: sshpass_check.rc != 0
+
+    - name: Get list of switches from inventory
+      set_fact:
+        switch_list: "{{ groups['oob'] + groups['core'] }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Validate each switch via ZTP server
+      shell: |
+        export SSHPASS='{{ switch_password }}'
+        SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR cumulus@{{ hostvars[item].ansible_host }}"
+
+        if ! timeout 10 $SSH_CMD 'hostname' 2>/dev/null >/dev/null; then
+          echo "RESULT|FAILED||||0|0{% if 'core' in hostvars[item].group_names %}||||{% endif %}"
+          exit 0
+        fi
+
+        hostname=$($SSH_CMD 'hostname' 2>/dev/null)
+        version=$($SSH_CMD 'cat /etc/lsb-release 2>/dev/null | grep DISTRIB_RELEASE | cut -d= -f2' 2>/dev/null)
+        nvue_exists=$($SSH_CMD 'test -f /etc/nvue.d/startup.yaml && echo yes || echo no' 2>/dev/null)
+
+        # Capture full outputs for report
+        bridge_output=$($SSH_CMD 'nv show bridge domain 2>/dev/null' 2>/dev/null || echo "N/A")
+        bridges=$(echo "$bridge_output" | grep -v '^$' | tail -n +3 | wc -l)
+
+        iface_output=$($SSH_CMD 'nv show interface brief 2>/dev/null' 2>/dev/null || echo "N/A")
+        interfaces_up=$(echo "$iface_output" | awk 'NR>2 && $3=="up" {count++} END {print count+0}')
+
+        {% if 'core' in hostvars[item].group_names %}
+        bgp_output=$($SSH_CMD 'nv show vrf default router bgp 2>/dev/null' 2>/dev/null || echo "N/A")
+        bgp_enabled=$(echo "$bgp_output" | awk '/^state/ {print $2}')
+        bgp_configured=$(echo "$bgp_output" | awk '/^configured-neighbors/ {print $2}')
+        bgp_established=$(echo "$bgp_output" | awk '/^established-neighbors/ {print $2}')
+
+        evpn_output=$($SSH_CMD 'nv show evpn 2>/dev/null' 2>/dev/null || echo "N/A")
+        evpn_l2vni=$($SSH_CMD 'nv show evpn --output json 2>/dev/null | jq -r ".\"l2vni-count\" // 0" 2>/dev/null' 2>/dev/null || echo "0")
+        evpn_l3vni=$($SSH_CMD 'nv show evpn --output json 2>/dev/null | jq -r ".\"l3vni-count\" // 0" 2>/dev/null' 2>/dev/null || echo "0")
+        {% endif %}
+
+        echo "RESULT|SUCCESS|$hostname|$version|$nvue_exists|$bridges|$interfaces_up{% if 'core' in hostvars[item].group_names %}|$bgp_enabled|$bgp_configured|$bgp_established|$evpn_l2vni|$evpn_l3vni{% endif %}"
+        echo "---RAW:bridge_domain---"
+        echo "$bridge_output"
+        echo "---RAW:interface_brief---"
+        echo "$iface_output"
+        {% if 'core' in hostvars[item].group_names %}
+        echo "---RAW:bgp---"
+        echo "$bgp_output"
+        echo "---RAW:evpn---"
+        echo "$evpn_output"
+        {% endif %}
+      loop: "{{ switch_list }}"
+      register: validation_results
+      changed_when: false
+      no_log: true
+
+    - name: Calculate summary statistics
+      set_fact:
+        total_switches: "{{ validation_results.results | length }}"
+        successful_switches: "{{ validation_results.results | selectattr('stdout', 'search', 'RESULT\\|SUCCESS') | list | length }}"
+      run_once: true
+
+    - name: Write validation report
+      copy:
+        content: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║  ERA ZTP Validation Report (via ZTP server)                 ║
+          ║  {{ '%Y-%m-%d %H:%M:%S' | strftime }}                                            ║
+          ╚══════════════════════════════════════════════════════════════╝
+
+          {% for item in validation_results.results %}
+          {% set result_line = item.stdout_lines | select('match', '^RESULT\\|') | list | first %}
+          {% set r = result_line.split('|') %}
+          ┌──────────────────────────────────────────────────────────────
+          │ {{ item.item }}  ({{ hostvars[item.item].ansible_host }})
+          └──────────────────────────────────────────────────────────────
+          {% if r[1] == 'SUCCESS' %}
+            SSH Reachable:            ✓ Yes
+            Hostname:                 {{ '✓' if r[2] == (hostvars[item.item].hostname | default(item.item)) else '✗' }} {{ r[2] }}
+            Cumulus Version:          {{ r[3] }}
+            NVUE Config:              {{ r[4] }}
+            Bridge Domains:           {{ r[5] }}
+            Interfaces Up:            {{ r[6] }}
+          {% if 'core' in hostvars[item.item].group_names %}
+            BGP State:                {{ r[7] | default('N/A') }}
+            BGP Configured Neighbors: {{ r[8] | default('0') }}
+            BGP Established Neighbors:{{ r[9] | default('0') }}
+            EVPN L2 VNIs:             {{ r[10] | default('0') }}
+            EVPN L3 VNIs:             {{ r[11] | default('0') }}
+          {% endif %}
+          {% else %}
+            SSH Reachable:            ✗ No
+            Status:                   FAILED — switch unreachable
+          {% endif %}
+          {% endfor %}
+
+          ══════════════════════════════════════════════════════════════
+          SUMMARY:  {{ successful_switches }}/{{ total_switches }} switches passed
+          {% if successful_switches | int == total_switches | int %}
+          RESULT:   ✅ ALL SWITCHES VALIDATED SUCCESSFULLY
+          {% else %}
+          RESULT:   ❌ {{ total_switches | int - successful_switches | int }} SWITCH(ES) FAILED
+          {% endif %}
+          ══════════════════════════════════════════════════════════════
+
+
+          ╔══════════════════════════════════════════════════════════════╗
+          ║  RAW COMMAND OUTPUT                                        ║
+          ╚══════════════════════════════════════════════════════════════╝
+          {% for item in validation_results.results %}
+          {% set result_line = item.stdout_lines | select('match', '^RESULT\\|') | list | first %}
+          {% if 'SUCCESS' in result_line %}
+
+          ┌──────────────────────────────────────────────────────────────
+          │ {{ item.item }}  ({{ hostvars[item.item].ansible_host }})
+          └──────────────────────────────────────────────────────────────
+          {% set in_raw = {'active': false, 'section': ''} %}
+          {% for line in item.stdout_lines %}
+          {% if line.startswith('---RAW:') %}
+
+          --- {{ line | replace('---RAW:', '') | replace('---', '') }} ---
+          {% elif not line.startswith('RESULT|') %}
+          {{ line }}
+          {% endif %}
+          {% endfor %}
+          {% endif %}
+          {% endfor %}
+        dest: "{{ report_file | default('/tmp/era-ztp-validation-report.txt') }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Fail if any validation failed
+      fail:
+        msg: "⚠️  {{ total_switches | int - successful_switches | int }} switches failed validation"
+      when: successful_switches | int < total_switches | int
+      run_once: true

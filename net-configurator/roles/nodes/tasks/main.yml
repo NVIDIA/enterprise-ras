@@ -1,0 +1,28 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+- name: Fix ARP flux for multi-GPU interfaces on same subnet
+  ansible.builtin.sysctl:
+    name: "{{ item }}"
+    value: "{{ sysctl_arp[item] }}"
+    sysctl_set: true
+    state: present
+    reload: true
+  loop:
+    - net.ipv4.conf.all.arp_ignore
+    - net.ipv4.conf.all.arp_announce
+  vars:
+    sysctl_arp:
+      net.ipv4.conf.all.arp_ignore: "1"
+      net.ipv4.conf.all.arp_announce: "2"
+
+- name: Push interface configuration to the nodes
+  ansible.builtin.template:
+    src: interfaces.j2
+    dest: /etc/netplan/10-netcfg.yaml
+    mode: 0644
+  notify:
+    - netplan apply
+    - wait for network
+    - reset ssh connection

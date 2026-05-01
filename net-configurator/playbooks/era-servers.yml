@@ -1,0 +1,161 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# ERA Server Configuration Playbook
+# This playbook configures all servers (NOT switches)
+# For switches, use: generate-switch-configs.yml or setup-ztp-server.yml
+#
+# Modes:
+#   Direct:     make deploy-servers              (servers reachable directly)
+#   Via server: make deploy-servers-via-jump    (SSH through oob-server-01)
+
+- name: Configure LDAP on OOB server
+  hosts: dhcp-oob
+  gather_facts: false
+  tags: [ldap, never]
+  tasks:
+    - name: Include LDAP role
+      include_role:
+        name: ldap
+      when: ldap.enabled | default(true)
+  become: true
+
+- name: Check server reachability
+  hosts: nodes storage support
+  serial: "{{ 3 if (via_server | default(false) | bool) else '100%' }}"
+  gather_facts: false
+  ignore_unreachable: true
+  vars_files:
+    - vars/air_proxy.yml
+  tasks:
+    - wait_for_connection:
+        timeout: 120
+        sleep: 10
+      register: connection_check
+
+    - name: Mark host as reachable
+      set_fact:
+        host_reachable: true
+      when: connection_check is succeeded
+
+    - name: Mark host as unreachable
+      set_fact:
+        host_reachable: false
+      when: connection_check is not succeeded
+
+    - name: Show reachability summary
+      debug:
+        msg: |
+
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          {% set reachable = [] %}{% set unreachable = [] %}{% for h in ansible_play_hosts %}{% if hostvars[h].host_reachable | default(false) | bool %}{% set _ = reachable.append(h) %}{% else %}{% set _ = unreachable.append(h) %}{% endif %}{% endfor %}
+          Server Reachability: {{ reachable | length }}/{{ ansible_play_hosts | length }} reachable
+          {% if unreachable | length > 0 %}
+          Unreachable (will be skipped): {{ unreachable | join(', ') }}
+          {% endif %}
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      run_once: true
+      delegate_to: localhost
+
+- name: Configure all servers
+  hosts: nodes storage support
+  serial: "{{ 3 if (via_server | default(false) | bool) else '100%' }}"
+  gather_facts: false
+  ignore_unreachable: true
+  vars_files:
+    - vars/air_proxy.yml
+  become: true
+  handlers:
+    - name: netplan apply
+      shell: nohup netplan apply &>/dev/null &
+      async: 30
+      poll: 0
+      ignore_errors: true
+
+    - name: wait for network
+      wait_for_connection:
+        delay: 5
+        timeout: 60
+      ignore_errors: true
+
+    - name: reset ssh connection
+      meta: reset_connection
+
+    - name: restart lldpd
+      service:
+        name: lldpd
+        state: restarted
+        enabled: true
+
+  tasks:
+    - name: Apply server configuration
+      when: host_reachable | default(false) | bool
+      block:
+        # ── Phase 1: Pre-network tasks (before netplan disrupts SSH) ──
+        - name: Set hostname
+          ansible.builtin.hostname:
+            name: '{{ hostname | default(inventory_hostname) }}'
+
+        - name: Install lldpd
+          apt:
+            pkg: [lldpd]
+            state: present
+
+        # ── Phase 2: Push netplan config (triggers apply + reconnect) ──
+        - name: Push interface configuration
+          ansible.builtin.template:
+            src: "{{ _netplan_template }}"
+            dest: /etc/netplan/10-netcfg.yaml
+            mode: '0644'
+          vars:
+            _netplan_template: >-
+              {{ '../roles/nodes/templates/interfaces.j2' if 'nodes' in group_names
+                 else '../roles/storage/templates/interfaces.j2' if 'storage' in group_names
+                 else '../roles/support/templates/interfaces.j2' }}
+          notify:
+            - netplan apply
+            - wait for network
+            - reset ssh connection
+
+        # Flush handlers now so netplan apply + reconnect happens before LLDP config
+        - meta: flush_handlers
+
+        # ── Phase 3: Post-reconnect tasks ──
+        - name: Configure lldpd
+          copy:
+            content: "configure lldp portidsubtype ifname\n"
+            dest: /etc/lldpd.d/port_info.conf
+            mode: '0644'
+          notify: restart lldpd
+
+- name: Deployment Summary
+  hosts: nodes storage support
+  gather_facts: false
+  tasks:
+    - name: Display final summary
+      debug:
+        msg: |
+
+          ╔══════════════════════════════════════════════════════════════╗
+          ║  Server Deployment Summary                                  ║
+          ╚══════════════════════════════════════════════════════════════╝
+
+          {% set reachable = [] %}{% set failed = [] %}{% for h in ansible_play_hosts %}{% if hostvars[h].host_reachable | default(false) | bool %}{% set _ = reachable.append(h) %}{% else %}{% set _ = failed.append(h) %}{% endif %}{% endfor %}
+          Configured:   {{ reachable | length }} servers
+          Skipped:      {{ failed | length }} servers (unreachable)
+          {% if failed | length > 0 %}
+
+          Skipped hosts:
+          {% for h in failed %}
+            • {{ h }} ({{ hostvars[h].ansible_host }})
+          {% endfor %}
+
+          To retry failed hosts only:
+            ansible-playbook playbooks/era-servers.yml -i <inventory>/hosts --limit {{ failed | join(',') }}
+          {% else %}
+
+          ✅ All servers configured successfully!
+          {% endif %}
+      run_once: true
+      delegate_to: localhost

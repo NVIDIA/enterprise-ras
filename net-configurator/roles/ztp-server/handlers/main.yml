@@ -1,0 +1,28 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+- name: restart nginx
+  service:
+    name: nginx
+    state: restarted
+
+- name: restart dnsmasq
+  service:
+    name: dnsmasq
+    state: restarted
+  register: dnsmasq_handler_result
+  retries: 3
+  delay: 5
+  until: dnsmasq_handler_result is succeeded
+
+- name: apply netplan
+  command: netplan apply
+  failed_when: false
+
+- name: restart networking
+  service:
+    name: networking
+    state: restarted
+  failed_when: false
+

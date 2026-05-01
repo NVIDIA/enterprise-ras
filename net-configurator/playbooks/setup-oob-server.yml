@@ -1,0 +1,81 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# OOB Server Setup Playbook
+# This playbook configures the OOB (Out-of-Band) server for Air simulations
+# or physical lab environments.
+#
+# The OOB server acts as a gateway/router for management networks, providing
+# connectivity between isolated OOB networks and external networks.
+#
+# Usage:
+#   make oob-setup
+#   or
+#   ansible-playbook playbooks/setup-oob-server.yml -i inventories/hosts
+
+- name: Configure OOB Server for Air/Lab Environment
+  hosts: oob-server
+  become: yes
+  gather_facts: yes
+
+  pre_tasks:
+    - name: Display Configuration Info
+      debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║             CONFIGURING OOB SERVER FOR AIR/LAB ENVIRONMENT           ║
+          ╚══════════════════════════════════════════════════════════════════════╝
+          
+          Target Host: {{ inventory_hostname }}
+          
+          {% if ansible_host is defined %}
+          Connection: {{ ansible_host }}{% if ansible_port is defined and ansible_port != 22 %}:{{ ansible_port }}{% endif %}
+          {% endif %}
+          
+          This server will be configured to:
+            • Enable IP forwarding for routing
+            • Configure gateway IPs on OOB network interfaces
+            • Route traffic between management networks
+          
+          ══════════════════════════════════════════════════════════════════════
+
+    - name: Verify connectivity
+      ping:
+
+  roles:
+    - role: oob-server
+      tags:
+        - oob-server
+        - networking
+
+  post_tasks:
+    - name: Verify IP forwarding is enabled
+      command: sysctl net.ipv4.ip_forward
+      register: ip_forward_status
+      changed_when: false
+
+    - name: Display verification results
+      debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║                   OOB SERVER SETUP COMPLETE! ✅                      ║
+          ╚══════════════════════════════════════════════════════════════════════╝
+          
+          IP Forwarding Status: {{ ip_forward_status.stdout }}
+          
+          ✅ OOB server is now configured as a gateway
+          
+          Next steps:
+            1. Verify network connectivity: ping gateway IPs from switches
+            2. Check routing: ip route show
+            3. Test forwarding: ping external hosts from OOB networks
+          
+          Troubleshooting:
+            • View sysctl settings: sysctl -a | grep forward
+            • Check netplan config: cat /etc/netplan/01-config.yaml
+            • View applied IPs: ip addr show
+            • Test connectivity: ping <gateway_ip>
+          
+          ══════════════════════════════════════════════════════════════════════
+

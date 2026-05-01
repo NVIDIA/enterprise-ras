@@ -1,0 +1,89 @@
+# Windows Zone Identifier files (created when downloading files)
+*:Zone.Identifier
+
+# ERA deployment context (user-specific, not committed)
+.era-context
+
+# Air API credentials (vault-encrypted + optional password file)
+.era-secrets/
+
+# Local env override for testing Air API creds (legacy, user-specific)
+.envtest
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+.venv-*/
+venv/
+ENV/
+env/
+*.egg-info/
+.eggs/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Ansible
+*.retry
+
+# Logs
+*.log
+
+# Local testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Timestamped file backups
+archive/
+
+# Release tarballs built by `make release-tarball`
+/era-automation-v*.tar.gz
+
+# Regeneration scratch dirs — never commit (use output/<arch>/<site>/ instead)
+/test_output/
+/NEW_TESTS/
+/playbooks/test_configs/
+
+# Reference architecture PDFs (large binaries, not for version control)
+architectural_docs/
+
+# Excel files dropped directly into input/ as a staging area (not committed)
+# Run: make import EXCEL=input/<filename>.xlsx
+input/*.xlsx
+input/*.xlsm
+# Exception: sample files are committed for testers to use directly
+!input/sample-*.xlsx
+
+# Non-default input sites (user-specific, not committed)
+# input/<arch>/default/ is committed; all other site names are ignored
+input/*/*/
+!input/*/default/
+
+# Non-default output sites (user-specific, not committed)
+# output/<arch>/default/ is committed; all other site names are ignored
+output/*/*/
+!output/*/default/
+
+# Volatile output subdirs — regenerated every run, no value in tracking
+output/*/default/reports/report-archive/
+output/*/default/topology/node-instructions/
+
+# Local IDE/agent state
+.claude/
+.cursorrules
+.codex
+
