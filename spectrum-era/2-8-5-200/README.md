@@ -2,8 +2,11 @@
 <!-- SPDX-License-Identifier: MIT -->
 
 # ERA switch automation using NVIDIA NVUE Collection
+![status](https://img.shields.io/badge/status-deprecated-red)
 ![release](https://img.shields.io/badge/release-v3.0.0-blue)
 ![architecture](https://img.shields.io/badge/architecture-2--8--5--200-green)
+
+> **Deprecated:** This directory has been superseded by [`net-configurator`](../../net-configurator). New work should use `net-configurator`; `spectrum-era` is retained for reference only and is no longer actively maintained.
 
 This repository contains the files to setup ERA configuration on the core switches. You can change the values in the inventory files to customize the variables.
 
