@@ -35,7 +35,7 @@ def get_existing_rules(grafana_url, api_token):
     }
     # Suppress SSL warnings if verify=False
     try:
-        resp = requests.get(url, headers=headers, verify=False)
+        resp = requests.get(url, headers=headers, verify=True)
         items = resp.json()
         # API returns a dict with an "items" list
         if isinstance(items, dict) and "items" in items:
@@ -65,7 +65,7 @@ def upload_alert(grafana_url, api_token, json_path, disable_prov=True, folder_ui
         data = f.read()
     if folder_uid:
         data = inject_folder_uid(data, folder_uid)
-    r = requests.post(url, headers=headers, data=data, verify=False)
+    r = requests.post(url, headers=headers, data=data, verify=True)
     try:
         resp = r.json()
     except Exception:
