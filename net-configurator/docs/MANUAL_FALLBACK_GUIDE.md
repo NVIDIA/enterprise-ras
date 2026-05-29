@@ -231,7 +231,7 @@ You need to get the Excel file onto dhcp-oob. Options:
 
 ```bash
 # From your local machine:
-scp -P <port> /path/to/config.xlsx ubuntu@<hostname>:~/era-automation/
+scp -P <port> /path/to/config.xlsx ubuntu@<hostname>:~/net-configurator/
 ```
 
 **Option B: Download from a URL** (if hosted somewhere accessible)

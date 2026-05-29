@@ -9,7 +9,7 @@ Get started with testing in 3 minutes!
 
 ```bash
 # 1. Navigate to project root
-cd /path/to/era-automation
+cd /path/to/net-configurator
 
 # 2. Create test virtual environment and install deps
 make setup

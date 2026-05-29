@@ -531,7 +531,7 @@ make help-air                # Air deployment quick-reference
 ## Project Structure
 
 ```
-era-automation/
+net-configurator/
 ├── input/
 │   └── <arch>/
 │       └── <site>/          # 'default' site committed; others gitignored

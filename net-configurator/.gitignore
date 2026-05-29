@@ -50,8 +50,9 @@ htmlcov/
 # Timestamped file backups
 archive/
 
-# Release tarballs built by `make release-tarball`
-/era-automation-v*.tar.gz
+# Release archives built by `make release-tarball`
+/nc-v*.zip
+/nc-v*.tar.gz
 
 # Regeneration scratch dirs — never commit (use output/<arch>/<site>/ instead)
 /test_output/
