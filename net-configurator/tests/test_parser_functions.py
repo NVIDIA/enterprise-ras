@@ -22,11 +22,24 @@ from excel_parser import (
     classify_host_role,
     ports_to_range_string,
     ROLE_HOST_BASE,
+    _sanitize_scalar,
 )
-from compare_excel_inventory_and_configs import (
-    _expand_iface_token,
-    _natural_key,
-    normalize_nvue_line,
+# compare_excel_inventory_and_configs.py is an internal-only script (excluded
+# from the public distribution via .publicignore). Guard its import so the
+# public test tree still collects — the dependent classes skip when it's absent.
+try:
+    from compare_excel_inventory_and_configs import (
+        _expand_iface_token,
+        _natural_key,
+        normalize_nvue_line,
+    )
+    HAS_COMPARE = True
+except ImportError:
+    HAS_COMPARE = False
+
+requires_compare = pytest.mark.skipif(
+    not HAS_COMPARE,
+    reason="compare_excel_inventory_and_configs.py not present (internal-only script)",
 )
 
 
@@ -196,9 +209,36 @@ class TestPortsToRangeString:
 
 
 # ---------------------------------------------------------------------------
+# excel_parser._sanitize_scalar
+# ---------------------------------------------------------------------------
+
+class TestSanitizeScalar:
+    """Free-text cells (VLAN name/purpose/vrf) are rendered into generated
+    config files; embedded control chars must not survive to inject directives."""
+
+    def test_strips_embedded_newline(self):
+        # A VLAN name with a newline could break out of a dnsmasq comment line.
+        assert _sanitize_scalar("OOB\ndhcp-option=evil") == "OOB dhcp-option=evil"
+
+    def test_strips_carriage_return_and_tab(self):
+        assert _sanitize_scalar("a\r\nb\tc") == "a b c"
+
+    def test_leaves_normal_text_unchanged(self):
+        assert _sanitize_scalar("Storage Network") == "Storage Network"
+
+    def test_trims_ends(self):
+        assert _sanitize_scalar("  Compute  ") == "Compute"
+
+    def test_passes_through_none_and_non_strings(self):
+        assert _sanitize_scalar(None) is None
+        assert _sanitize_scalar(200) == 200
+
+
+# ---------------------------------------------------------------------------
 # compare_excel_inventory_and_configs._expand_iface_token
 # ---------------------------------------------------------------------------
 
+@requires_compare
 class TestExpandIfaceToken:
     """Tests for NVUE interface range expansion."""
 
@@ -245,6 +285,7 @@ class TestExpandIfaceToken:
 # compare_excel_inventory_and_configs.normalize_nvue_line
 # ---------------------------------------------------------------------------
 
+@requires_compare
 class TestNormalizeNvueLine:
     """Tests for NVUE line normalization."""
 
@@ -272,6 +313,7 @@ class TestNormalizeNvueLine:
 # compare_excel_inventory_and_configs._natural_key
 # ---------------------------------------------------------------------------
 
+@requires_compare
 class TestNaturalKey:
     """Tests for natural sort key."""
 

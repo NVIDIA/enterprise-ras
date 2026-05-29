@@ -8,8 +8,8 @@
 # Usage:
 #   ansible-playbook playbooks/restart-ldap-switches-direct.yml -i inventories/hosts --ask-become-pass
 
-- name: Restart LDAP Service on Core Switches (Direct)
-  hosts: core
+- name: Restart LDAP Service on Switches (Direct)
+  hosts: switches
   gather_facts: false
   become: true
 
@@ -20,7 +20,7 @@
           ╔══════════════════════════════════════════════════════════════════════╗
           ║           Restarting LDAP Service on {{ inventory_hostname }}
           ╚══════════════════════════════════════════════════════════════════════╝
-          
+
           Service: nslcd@mgmt
           Purpose: Apply new LDAP configuration
           Connection: Direct
@@ -49,7 +49,7 @@
       debug:
         msg: |
           ✅ nslcd@mgmt service restarted successfully on {{ inventory_hostname }}
-          
+
           Status: {{ service_status.stdout | default('unknown') }}
       when: service_action.stdout == "RESTARTED"
 
@@ -57,11 +57,11 @@
       debug:
         msg: |
           ⚠️  nslcd@mgmt service not found on {{ inventory_hostname }}
-          
+
           This is normal if:
             • LDAP packages not installed yet
             • Switch hasn't applied LDAP config
-          
+
           Install LDAP packages by applying switch config with LDAP enabled.
       when: service_action.stdout == "NOT_FOUND"
 
@@ -78,16 +78,16 @@
         msg: |
           {% if ldap_test.rc == 0 %}
           ✅ LDAP authentication is working on {{ inventory_hostname }}!
-          
+
           User found: {{ ldap_test.stdout }}
           {% else %}
           ⚠️  LDAP user lookup failed on {{ inventory_hostname }}
-          
+
           Possible issues:
             • nslcd service not running
             • LDAP config incorrect
             • LDAP server unreachable
-            
+
           Check: sudo systemctl status nslcd@mgmt
           Check: nv show system aaa ldap
           {% endif %}
@@ -112,4 +112,3 @@
             • Check LDAP config on switches: nv show system aaa ldap
             • Check nslcd service status: sudo systemctl status nslcd@mgmt
             • Verify LDAP server connectivity: ldapsearch -x -H ldap://192.168.200.252
-

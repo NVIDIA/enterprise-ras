@@ -7,7 +7,7 @@ Tests cover:
 - NVUE command format validation
 - IP, MAC, VLAN, BGP ASN, port range, and hostname validation (positive + negative)
 - Configuration consistency (VLAN-VNI mapping, interface naming, VRF naming)
-- Configuration completeness against real reference configs in exported-configurations-cli/
+- Configuration completeness against real reference configs in REFERENCES/&lt;arch&gt;/configs/
 """
 import sys
 import pytest
@@ -124,12 +124,13 @@ def _validate_port_range(port_range: str) -> bool:
 
 
 def _read_config(project_root: Path, arch: str, switch_name: str) -> str:
-    """Read a reference config file from exported-configurations-cli/."""
+    """Read a reference config file from REFERENCES/&lt;arch&gt;/configs/."""
     config_path = (
         project_root
-        / "exported-configurations-cli"
+        / "REFERENCES"
         / arch
-        / f"{switch_name}-config.sh"
+        / "configs"
+        / f"{switch_name}.sh"
     )
     if not config_path.exists():
         pytest.skip(f"Config file not found: {config_path}")
@@ -455,7 +456,7 @@ def _build_oob_params():
 class TestConfigurationCompleteness:
     """Test that reference configurations have all required sections.
 
-    Reads actual config files from exported-configurations-cli/<arch>/ and
+    Reads actual config files from REFERENCES/&lt;arch&gt;/configs/ and
     verifies that the expected NVUE top-level sections are present.
     """
 

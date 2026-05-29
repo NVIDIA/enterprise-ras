@@ -4,14 +4,13 @@ ansible_host: 172.20.0.202
 hostname: core-02
 mac_address: 48:b0:2d:c0:27:03
 ip_assignment_mode: dhcp
-router_id: 172.16.176.12
 lo_ip: 172.16.176.12/32
+router_id: 172.16.176.12
 vlan_interfaces:
 - id: vlan200
-  ip: 172.16.177.3/24
-  vrr: 172.16.177.1/24
   vlan: '200'
   vrf: OOB
+  no_svi_type: true
 - id: vlan300
   ip: 172.16.178.3/24
   vrr: 172.16.178.1/24
@@ -32,6 +31,11 @@ vlan_interfaces:
   vrr: 192.168.110.1/24
   vlan: '900'
   vrf: GPU
+vrf_loopbacks:
+  EXIT: 172.16.176.6/32
+  INBAND: 172.16.176.4/32
+  OOB: 172.16.176.2/32
+  GPU: 192.168.110.6/32
 prefix_list:
 - id: ALL_PREFIXES
   rule:
@@ -79,6 +83,9 @@ prefix_list:
   - id: '20'
     match: 172.16.176.0/24
     max_len: '32'
+  - id: '30'
+    match: 192.168.200.0/24
+    max_len: '32'
 - id: LOCAL_OOB_LOOPBACK
   rule:
   - id: '10'
@@ -105,14 +112,40 @@ prefix_list:
   - id: '5'
     match: 172.16.176.8/29
     max_len: '32'
-vrf_loopbacks:
-  EXIT: 172.16.176.6/32
-  INBAND: 172.16.176.4/32
-  OOB: 172.16.176.2/32
-  GPU: 192.168.110.6/32
 interfaces_disabled:
 - 50
 - 52
 - 60
 - 62
 - 64
+bond_descriptions:
+  bond49s6: storage-01
+  bond49s7: storage-02
+  bond51s0: storage-01
+  bond51s1: storage-02
+  bond51s2: storage-01
+  bond51s3: storage-02
+  bond51s4: storage-01
+  bond51s5: storage-02
+  bond51s6: storage-01
+  bond51s7: storage-02
+  bond1s0: su-01-node-01
+  bond6s0: su-01-node-01
+  bond6s1: su-01-node-01
+  bond1s1: su-01-node-02
+  bond7s0: su-01-node-02
+  bond7s1: su-01-node-02
+  bond1s2: su-01-node-03
+  bond8s0: su-01-node-03
+  bond8s1: su-01-node-03
+  bond1s3: su-01-node-04
+  bond9s0: su-01-node-04
+  bond9s1: su-01-node-04
+  bond26s2: support-01
+  bond26s3: support-02
+  bond27s0: support-03
+  bond27s1: support-04
+  bond27s2: support-05
+  bond27s3: support-06
+  bond26s0: support-07
+  bond26s1: support-08

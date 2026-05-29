@@ -283,23 +283,6 @@ def start_simulation(
     _checked_json(resp)
 
 
-def stop_simulation(
-    client: httpx.Client, base_url: str, token: str, sim_id: str,
-) -> None:
-    """PATCH /api/v3/simulations/{id}/shutdown/ to stop the simulation."""
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-    resp = client.patch(
-        f"{_api(base_url)}/api/v3/simulations/{sim_id}/shutdown/",
-        headers=headers,
-        json={},
-        timeout=60,
-    )
-    _checked_json(resp)
-
-
 def delete_simulation(
     client: httpx.Client, base_url: str, token: str, sim_id: str,
 ) -> None:
@@ -673,6 +656,7 @@ def create_node_instruction(
     *,
     name: str = "",
     wait_for_network: bool = False,
+    reachability_ip: str | None = None,
 ) -> dict:
     """Create a shell Node Instruction on a node (must be called before start).
 
@@ -683,6 +667,13 @@ def create_node_instruction(
         commands: List of shell command strings (joined with newlines).
         name: Human-readable instruction label.
         wait_for_network: Wait for network reachability before executing.
+            Requires `reachability_ip` for sims without auto-oob (our case —
+            we declare `"oob": false` in the topology JSON because we build
+            our own OOB network).
+        reachability_ip: IP address Air pings to verify the node is up
+            before executing the NI. Typically the node's static eth IP on
+            the air-mgmt bridge (cust-net-edge-01). Air's API rejects
+            wait_for_network=True without this when auto-oob is disabled.
     """
     api = _api(base_url)
     headers = {**_headers(token), "Content-Type": "application/json"}
@@ -698,6 +689,10 @@ def create_node_instruction(
         "data": script,
         "wait_for_network": wait_for_network,
     }
+    if wait_for_network and reachability_ip:
+        # Air's reachability_check shape (per v3 API validation error):
+        # required when wait_for_network=True on sims without auto-oob.
+        body["reachability_check"] = {"reachability_ip": reachability_ip}
     if name:
         body["name"] = name
 

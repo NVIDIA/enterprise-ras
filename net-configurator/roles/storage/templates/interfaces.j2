@@ -14,9 +14,10 @@ network:
 {% for iface in data_ifaces %}
     {{ iface }}:
       dhcp4: no
+      optional: true
 {% endfor %}
+{% if data_ifaces | length >= 2 and dev.bond_ip1 is defined and dev.bond_ip1 %}
   bonds:
-{% if data_ifaces | length >= 2 %}
     bond0:
       interfaces:
         - {{ data_ifaces[0] }}
@@ -36,8 +37,7 @@ network:
         mode: active-backup
         primary: {{ data_ifaces[0] }}
         mii-monitor-interval: 100
-{% endif %}
-{% if data_ifaces | length >= 4 %}
+{% if data_ifaces | length >= 4 and dev.bond_ip2 is defined and dev.bond_ip2 %}
     bond1:
       interfaces:
         - {{ data_ifaces[2] }}
@@ -50,5 +50,6 @@ network:
         mode: active-backup
         primary: {{ data_ifaces[2] }}
         mii-monitor-interval: 100
+{% endif %}
 {% endif %}
 {% endif %}

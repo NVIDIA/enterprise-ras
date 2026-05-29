@@ -27,7 +27,7 @@ pre_login_message: |
 # ============================================================================
 # EVPN Multi-Homing & BGP
 # ============================================================================
-mh_mac: '44:38:39:FF:00:AA'
+mh_mac: '44:38:39:ff:00:aa'
 anycast_mac: '44:38:39:ff:00:ff'
 bgp_asn: 4260394788
 
@@ -163,21 +163,16 @@ edge_interfaces:
 # Disabled Interfaces / Link State
 # ============================================================================
 interfaces_disabled: [56, 58, 62, 64]
-interfaces_up: "swp1,4-11,28-53,55,57,61,63"
-interfaces_down: "swp2-3,12-27"
+# PR6: removed hardcoded interfaces_up / interfaces_down. The static
+# port lists drifted out of sync with custom Wire Maps and silently
+# admin-shut ports that operators were actually using. NVUE defaults
+# every port to admin-up; un-cabled ports stay down naturally. If a
+# site needs explicit admin-shut, set interfaces_up / interfaces_down
+# in that site's host_vars rather than this shared inventory default.
 
-# ============================================================================
-# DHCP Relay (3 OOB switches)
-# ============================================================================
-dhcp_relay:
-  - vrf: 'EXIT'
-    interfaces: 'edge'
-    vrf_vlan: 3004
-    servers: ['192.168.210.41', '192.168.220.42']
-  - vrf: 'OOB'
-    interfaces: ['vlan200']
-    vrf_vlan: 3001
-    servers: ['192.168.200.2', '192.168.200.3', '192.168.200.4']
+# DHCP Relay is now Excel-driven via the DHCP Relay table on the
+# VLANs & Profiles sheet + per-VLAN 'DHCP Relay Client' column.
+# See docs/plans/2026-05-18-dhcp-relay-cleanup.md.
 
 # ============================================================================
 # Default VRF BGP (ISL Underlay Configuration)

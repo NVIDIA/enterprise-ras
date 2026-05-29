@@ -1,5 +1,0 @@
----
-ansible_host: CHANGE_ME
-hostname: dhcp-oob
-ansible_port: 22
-ansible_user: ubuntu

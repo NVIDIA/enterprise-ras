@@ -34,6 +34,9 @@ def _make_rendering_env(template_dir):
         return re.sub(pattern, replacement, str(value))
 
     env.filters["regex_replace"] = _regex_replace
+    # Ansible's `quote` filter (shlex.quote) — neutralises shell metacharacters
+    # in Settings scalars rendered into root-executed NVUE config scripts.
+    env.filters["quote"] = lambda s: shlex.quote(str(s))
 
     return env
 
@@ -49,6 +52,7 @@ class TestCoreCLITemplate:
         """Test that template is valid Jinja2."""
         template_dir = core_cli_template.parent
         env = Environment(loader=FileSystemLoader(str(template_dir)))
+        env.filters["quote"] = lambda s: shlex.quote(str(s))
 
         # Should load without syntax errors
         template = env.get_template(core_cli_template.name)
@@ -74,6 +78,7 @@ class TestOOBCLITemplate:
         """Test that template is valid Jinja2."""
         template_dir = oob_cli_template.parent
         env = Environment(loader=FileSystemLoader(str(template_dir)))
+        env.filters["quote"] = lambda s: shlex.quote(str(s))
 
         # Should load without syntax errors
         template = env.get_template(oob_cli_template.name)
@@ -148,6 +153,7 @@ class TestOOBTemplateRendering:
             "hostname": "oob-switch-01",
             "ansible_date_time": {"iso8601": "2026-01-01T00:00:00Z"},
             "spine_bond_members": ["swp49", "swp51"],
+            "access_ports": "swp1-46",
             "svi_ip": "192.168.200.2/24",
             "ntp_servers": ["0.pool.ntp.org", "1.pool.ntp.org"],
             "ldap": {"enabled": False},
@@ -218,13 +224,11 @@ class TestOOBTemplateRendering:
         )
         assert first_nonblank.strip() == "#!/bin/bash"
 
-    def test_post_login_message_contains_hostname(self, oob_cli_template, oob_vars):
-        """Post-login message banner includes the hostname."""
-        env = _make_rendering_env(oob_cli_template.parent)
-        template = env.get_template(oob_cli_template.name)
-        output = template.render(**oob_vars)
-
-        assert "logged in to: oob-switch-01" in output
+    # `test_post_login_message_contains_hostname` was removed when the
+    # hardcoded NVIDIA Cumulus VX banner moved to Excel-sourced content.
+    # Equivalent coverage lives in TestLoginBannerOOB further down
+    # (test_post_login_placeholders_substituted), which exercises the
+    # full {hostname} / {site} / {arch} substitution contract.
 
     def test_access_ports_configured(self, oob_cli_template, oob_vars):
         """Access ports have VLAN 200 and 1G speed."""
@@ -234,6 +238,143 @@ class TestOOBTemplateRendering:
 
         assert "nv set interface swp1-46 bridge domain br_default access 200" in output
         assert "nv set interface swp1-46 link speed 1G" in output
+
+
+class TestOOBTemplateRenderingL3:
+    """Render OOB switch template in L3 mode and verify EVPN/BGP/VRR output."""
+
+    @pytest.fixture
+    def oob_vars_l3(self):
+        """Variables needed to render oob_nvue_cli.j2 in L3 mode."""
+        return {
+            "hostname": "oob-switch-01",
+            "ansible_date_time": {"iso8601": "2026-01-01T00:00:00Z"},
+            "spine_bond_members": ["swp49", "swp51"],
+            "access_ports": "swp1-46",
+            "svi_ip": "192.168.200.2/24",
+            "ntp_servers": ["0.pool.ntp.org", "1.pool.ntp.org"],
+            "ldap": {"enabled": False},
+            "timezone": "Etc/UTC",
+            "default_gateway": "192.168.200.1",
+            "oob_uplink_mode": "l3",
+            "lo_ip": "172.16.176.21/32",
+            "router_id": "172.16.176.21",
+            "bgp_asn": 4260394789,
+            "vrr_ip": "192.168.200.1/24",
+            "oob_vni": 289200,
+            "oob_vrf_vni": 5001,
+            "oob_vrf_vlan": 3001,
+            "oob_vrf_loopback": "172.16.176.31/32",
+            "overlay_peers": ["172.16.176.11", "172.16.176.12"],
+        }
+
+    def _render(self, oob_cli_template, oob_vars_l3):
+        env = _make_rendering_env(oob_cli_template.parent)
+        template = env.get_template(oob_cli_template.name)
+        return template.render(**oob_vars_l3)
+
+    def test_evpn_enabled(self, oob_cli_template, oob_vars_l3):
+        """L3 mode enables EVPN and multihoming."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set evpn state enabled" in output
+        assert "nv set evpn multihoming state enabled" in output
+
+    def test_loopback_rendered(self, oob_cli_template, oob_vars_l3):
+        """L3 mode configures loopback with IP."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set interface lo ipv4 address 172.16.176.21/32" in output
+        assert "nv set interface lo type loopback" in output
+
+    def test_vlan200_vrr_and_vrf(self, oob_cli_template, oob_vars_l3):
+        """L3 mode adds VRR and VRF OOB to vlan200."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set interface vlan200 ipv4 vrr address 192.168.200.1/24" in output
+        assert "nv set interface vlan200 ipv4 vrr state enabled" in output
+        assert "nv set interface vlan200 vrf OOB" in output
+
+    def test_bridge_vlan200_has_vni(self, oob_cli_template, oob_vars_l3):
+        """L3 mode adds VNI to bridge VLAN 200."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set bridge domain br_default vlan 200 vni 289200" in output
+
+    def test_nve_vxlan_rendered(self, oob_cli_template, oob_vars_l3):
+        """L3 mode configures NVE/VXLAN with loopback source."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set nve vxlan arp-nd-suppress enabled" in output
+        assert "nv set nve vxlan state enabled" in output
+        assert "nv set nve vxlan source address 172.16.176.21" in output
+
+    def test_bgp_global(self, oob_cli_template, oob_vars_l3):
+        """L3 mode configures BGP ASN and router-id."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set router bgp autonomous-system 4260394789" in output
+        assert "nv set router bgp router-id 172.16.176.21" in output
+
+    def test_route_maps(self, oob_cli_template, oob_vars_l3):
+        """L3 mode emits LOOPBACK_BGP and WEIGHTED_ECMP route-maps."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set router policy route-map LOOPBACK_BGP rule 10 action permit" in output
+        assert "nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo" in output
+        assert "nv set router policy route-map WEIGHTED_ECMP rule 10 action permit" in output
+
+    def test_vrr_state_enabled(self, oob_cli_template, oob_vars_l3):
+        """L3 mode enables VRR globally."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set router vrr state enabled" in output
+
+    def test_vrf_oob(self, oob_cli_template, oob_vars_l3):
+        """L3 mode configures VRF OOB with EVPN and BGP."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set vrf OOB evpn state enabled" in output
+        assert "nv set vrf OOB evpn vlan 3001" in output
+        assert "nv set vrf OOB evpn vni 5001" in output
+        assert "nv set vrf OOB loopback ip address 172.16.176.31/32" in output
+        assert "nv set vrf OOB router bgp autonomous-system 4260394789" in output
+
+    def test_default_vrf_bgp_overlay_peers(self, oob_cli_template, oob_vars_l3):
+        """L3 mode peers with CSL loopbacks via overlay."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set vrf default router bgp neighbor 172.16.176.11 peer-group overlay" in output
+        assert "nv set vrf default router bgp neighbor 172.16.176.12 peer-group overlay" in output
+        assert "nv set vrf default router bgp neighbor 172.16.176.11 type numbered" in output
+
+    def test_default_vrf_bgp_underlay_peers(self, oob_cli_template, oob_vars_l3):
+        """L3 mode peers with CSLs via underlay on spine bond ports."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set vrf default router bgp neighbor swp49 peer-group underlay" in output
+        assert "nv set vrf default router bgp neighbor swp51 peer-group underlay" in output
+        assert "nv set vrf default router bgp neighbor swp49 type unnumbered" in output
+
+    def test_overlay_peer_group(self, oob_cli_template, oob_vars_l3):
+        """L3 overlay peer-group has correct settings."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set vrf default router bgp peer-group overlay multihop-ttl 2" in output
+        assert "nv set vrf default router bgp peer-group overlay update-source lo" in output
+        assert "nv set vrf default router bgp peer-group overlay remote-as external" in output
+        assert "nv set vrf default router bgp peer-group overlay address-family ipv4-unicast state disabled" in output
+        assert "nv set vrf default router bgp peer-group overlay address-family l2vpn-evpn state enabled" in output
+
+    def test_underlay_peer_group(self, oob_cli_template, oob_vars_l3):
+        """L3 underlay peer-group has correct settings."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set vrf default router bgp peer-group underlay remote-as external" in output
+        assert "nv set vrf default router bgp peer-group underlay address-family ipv4-unicast state enabled" in output
+        assert "route-map WEIGHTED_ECMP" in output
+
+    def test_no_spine_bond(self, oob_cli_template, oob_vars_l3):
+        """L3 mode does NOT render the spine bond."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "spine_bond" not in output
+
+    def test_static_route_removed_in_l3(self, oob_cli_template, oob_vars_l3):
+        """Static default route is removed in L3 mode (BGP provides reachability)."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "nv set vrf default router static 0.0.0.0/0" not in output
+
+    def test_redistribute_connected_with_loopback_map(self, oob_cli_template, oob_vars_l3):
+        """L3 default VRF redistributes connected with LOOPBACK_BGP filter."""
+        output = self._render(oob_cli_template, oob_vars_l3)
+        assert "redistribute connected route-map LOOPBACK_BGP" in output
 
 
 class TestCoreTemplateRendering:
@@ -343,6 +484,45 @@ class TestCoreTemplateRendering:
 
         assert "nv set system hostname core-01" in output
 
+    def test_ntp_server_value_is_shell_quoted(self, core_cli_template, core_vars):
+        """SEC #1: ntp_servers render into a root-executed script — a hostile
+        value must be single-quoted so shell metacharacters can't execute."""
+        env = _make_rendering_env(core_cli_template.parent)
+        template = env.get_template(core_cli_template.name)
+        core_vars["ntp_servers"] = ["evil$(touch /tmp/pwn)"]
+        output = template.render(**core_vars)
+
+        assert "nv set system ntp server 'evil$(touch /tmp/pwn)'" in output
+        assert "nv set system ntp server evil$(" not in output
+
+    def test_timezone_value_is_shell_quoted(self, core_cli_template, core_vars):
+        """SEC #1: timezone renders into a root-executed script — metacharacters
+        must be neutralised by single-quoting."""
+        env = _make_rendering_env(core_cli_template.parent)
+        template = env.get_template(core_cli_template.name)
+        core_vars["timezone"] = "Etc/UTC; reboot"
+        output = template.render(**core_vars)
+
+        assert "nv set system date-time timezone 'Etc/UTC; reboot'" in output
+        assert "timezone Etc/UTC; reboot" not in output
+
+    def test_ldap_bind_fields_are_shell_quoted(self, core_cli_template, core_vars):
+        """SEC #1: LDAP base-dn/bind-dn/secret render unquoted into a
+        root-executed script — confirm each is single-quoted."""
+        env = _make_rendering_env(core_cli_template.parent)
+        template = env.get_template(core_cli_template.name)
+        core_vars["ldap"] = {
+            "enabled": True,
+            "base_dn": "dc=x;reboot",
+            "root_dn": "cn=admin`id`",
+            "admin_password": "p$(whoami)",
+        }
+        output = template.render(**core_vars)
+
+        assert "nv set system aaa ldap base-dn 'dc=x;reboot'" in output
+        assert "nv set system aaa ldap bind-dn 'cn=admin`id`'" in output
+        assert "nv set system aaa ldap secret 'p$(whoami)'" in output
+
     def test_bridge_vlan_commands(self, core_cli_template, core_vars):
         """Output contains VLAN bridge domain commands for all configured VLANs."""
         env = _make_rendering_env(core_cli_template.parent)
@@ -352,6 +532,96 @@ class TestCoreTemplateRendering:
         assert "nv set bridge domain br_default vlan 100 vni 4100" in output
         assert "nv set bridge domain br_default vlan 200 vni 4200" in output
         assert "nv set bridge domain br_default vlan 300 vni 4300" in output
+
+    def test_empty_link_state_strings_are_ignored(self, core_cli_template, core_vars):
+        """Empty interfaces_up/down values must not emit malformed commands."""
+        env = _make_rendering_env(core_cli_template.parent)
+        template = env.get_template(core_cli_template.name)
+        core_vars["interfaces_up"] = ""
+        core_vars["interfaces_down"] = ""
+
+        output = template.render(**core_vars)
+
+        assert "nv set interface  link state up" not in output
+        assert "nv set interface  link state down" not in output
+
+    def test_l3_oob_uplink_neighbors_render_without_oob_bonds(self, core_cli_template, core_vars):
+        """L3 OOB mode should render direct uplink BGP neighbors, not OOB bonds."""
+        env = _make_rendering_env(core_cli_template.parent)
+        template = env.get_template(core_cli_template.name)
+        core_vars["oob_uplink_interfaces"] = {
+            "ports": [59],
+            "breakout": 8,
+            "lanes": 1,
+            "port_overrides": {59: {"subports": [0, 1]}},
+        }
+        core_vars["default_vrf_bgp"] = {
+            "address_family": {
+                "ipv4_unicast": {"enable": True, "redistribute_connected": True},
+                "l2vpn_evpn": {"enable": True},
+            },
+            "neighbors": [
+                {"interfaces": "isl", "peer_group": "internal-isl", "type": "unnumbered", "ttl_security_hops": 1},
+                {"interfaces": "oob_uplink", "peer_group": "underlay", "type": "unnumbered"},
+                {"interfaces": ["10.187.4.35", "10.187.4.36"], "peer_group": "overlay", "type": "numbered"},
+            ],
+            "peer_groups": [
+                {"id": "internal-isl", "remote_as": "internal", "bfd_enable": True,
+                 "address_family": {"ipv4_unicast": {"enable": True}, "l2vpn_evpn": {"enable": True}}},
+                {"id": "underlay", "remote_as": "external", "bfd_enable": True,
+                 "address_family": {"ipv4_unicast": {"enable": True}}},
+                {"id": "overlay", "remote_as": "external", "multihop_ttl": 2, "update_source": "lo",
+                 "address_family": {"ipv4_unicast": {"enable": False}, "l2vpn_evpn": {"enable": True}}},
+            ],
+        }
+
+        output = template.render(**core_vars)
+
+        assert "nv set interface swp59s0,swp59s1 description 'OOB uplinks'" in output
+        assert "nv set vrf default router bgp neighbor swp59s0 peer-group underlay" in output
+        assert "nv set vrf default router bgp neighbor swp59s1 peer-group underlay" in output
+        assert "nv set vrf default router bgp neighbor swp59s0-1 peer-group underlay" not in output
+        assert "nv set vrf default router bgp neighbor 10.187.4.35 peer-group overlay" in output
+        assert "nv set vrf default router bgp neighbor 10.187.4.36 peer-group overlay" in output
+        assert "nv set vrf default router bgp neighbor 10.187.4.35,10.187.4.36 peer-group overlay" not in output
+        assert "nv set vrf default router bgp peer-group overlay update-source lo" in output
+        assert "bond59s0" not in output
+
+    def test_l3_oob_vlan200_no_ip_no_vrr_no_svi_type(self, core_cli_template, core_vars):
+        """In L3 OOB mode, vlan200 (VRF OOB) has vlan + vrf but no IP, VRR, or type svi."""
+        env = _make_rendering_env(core_cli_template.parent)
+        template = env.get_template(core_cli_template.name)
+        core_vars["vlan_interfaces"] = [
+            {"id": "vlan200", "vlan": "200", "vrf": "OOB", "no_svi_type": True},
+            {"id": "vlan300", "vlan": "300", "ip": "10.0.0.2/24",
+             "vrr": "10.0.0.1/24", "vrf": "INBAND"},
+        ]
+        output = template.render(**core_vars)
+
+        assert "nv set interface vlan200 vlan 200" in output
+        assert "nv set interface vlan200 vrf OOB" in output
+        assert "nv set interface vlan200 ipv4 address" not in output
+        assert "nv set interface vlan200 ipv4 vrr" not in output
+        assert "nv set interface vlan200 type svi" not in output
+        assert "nv set interface vlan300 ipv4 address 10.0.0.2/24" in output
+        assert "nv set interface vlan300 ipv4 vrr address 10.0.0.1/24" in output
+        assert "nv set interface vlan300 type svi" in output
+
+    def test_l2_oob_vlan200_has_full_svi(self, core_cli_template, core_vars):
+        """In L2 OOB mode (default), vlan200 has IP, VRR, and type svi."""
+        env = _make_rendering_env(core_cli_template.parent)
+        template = env.get_template(core_cli_template.name)
+        core_vars["vlan_interfaces"] = [
+            {"id": "vlan200", "vlan": "200", "ip": "10.0.0.2/25",
+             "vrr": "10.0.0.1/25", "vrf": "OOB"},
+        ]
+        output = template.render(**core_vars)
+
+        assert "nv set interface vlan200 ipv4 address 10.0.0.2/25" in output
+        assert "nv set interface vlan200 ipv4 vrr address 10.0.0.1/25" in output
+        assert "nv set interface vlan200 type svi" in output
+        assert "nv set interface vlan200 vlan 200" in output
+        assert "nv set interface vlan200 vrf OOB" in output
 
     def test_evpn_enabled(self, core_cli_template, core_vars):
         """Output contains EVPN enabled commands."""
@@ -702,3 +972,106 @@ class TestZTPShellInjectionRegression:
         assert "password 'Cumu1usLinux!'" in output, (
             "default password should render as a plain single-quoted literal"
         )
+
+
+class TestLoginBannerOOB:
+    """Pre/post-login banner rendering in oob_nvue_cli.j2.
+
+    The OOB template is the simplest of the three switch templates (no
+    macros, no network_roles), so we exercise the full Jinja substitution
+    contract here.  Lighter checks against the core template live in
+    TestLoginBannerCore to catch any template-specific regressions.
+    """
+
+    @pytest.fixture
+    def oob_vars_with_banner(self):
+        return {
+            "hostname": "oob-switch-01",
+            "ansible_date_time": {"iso8601": "2026-01-01T00:00:00Z"},
+            "spine_bond_members": ["swp49", "swp51"],
+            "access_ports": "swp1-46",
+            "svi_ip": "192.168.200.2/24",
+            "ntp_servers": ["0.pool.ntp.org"],
+            "ldap": {"enabled": False},
+            "timezone": "Etc/UTC",
+            "default_gateway": "192.168.200.1",
+            "common": {
+                "pre_login_message": "Welcome to {hostname} in site {site} ({arch})",
+                "post_login_message": "Logged in as {hostname}",
+                "site": "default",
+                "arch": "2-4-3-200",
+            },
+        }
+
+    def test_pre_login_placeholders_substituted(self, oob_cli_template, oob_vars_with_banner):
+        env = _make_rendering_env(oob_cli_template.parent)
+        output = env.get_template(oob_cli_template.name).render(**oob_vars_with_banner)
+        assert (
+            "nv set system message pre-login "
+            "'Welcome to oob-switch-01 in site default (2-4-3-200)'"
+            in output
+        )
+
+    def test_post_login_placeholders_substituted(self, oob_cli_template, oob_vars_with_banner):
+        env = _make_rendering_env(oob_cli_template.parent)
+        output = env.get_template(oob_cli_template.name).render(**oob_vars_with_banner)
+        assert "nv set system message post-login 'Logged in as oob-switch-01'" in output
+
+    def test_empty_pre_login_omits_emission(self, oob_cli_template, oob_vars_with_banner):
+        oob_vars_with_banner["common"]["pre_login_message"] = ""
+        env = _make_rendering_env(oob_cli_template.parent)
+        output = env.get_template(oob_cli_template.name).render(**oob_vars_with_banner)
+        # post-login still emits (it's still populated); only pre is gated
+        assert "nv set system message pre-login" not in output
+        assert "nv set system message post-login 'Logged in as oob-switch-01'" in output
+
+    def test_empty_post_login_omits_emission(self, oob_cli_template, oob_vars_with_banner):
+        oob_vars_with_banner["common"]["post_login_message"] = ""
+        env = _make_rendering_env(oob_cli_template.parent)
+        output = env.get_template(oob_cli_template.name).render(**oob_vars_with_banner)
+        assert "nv set system message post-login" not in output
+
+    def test_multi_line_preserved(self, oob_cli_template, oob_vars_with_banner):
+        oob_vars_with_banner["common"]["pre_login_message"] = "Line one\nLine two\nLine three"
+        env = _make_rendering_env(oob_cli_template.parent)
+        output = env.get_template(oob_cli_template.name).render(**oob_vars_with_banner)
+        assert "'Line one\nLine two\nLine three'" in output
+
+    def test_single_quote_in_message_escaped(self, oob_cli_template, oob_vars_with_banner):
+        # Apostrophe in operator text — must be escaped via the bash
+        # close-escape-reopen pattern so the rendered .sh stays valid.
+        oob_vars_with_banner["common"]["pre_login_message"] = "Don't break"
+        env = _make_rendering_env(oob_cli_template.parent)
+        output = env.get_template(oob_cli_template.name).render(**oob_vars_with_banner)
+        # Expected rendered literal: 'Don'\''t break'
+        assert "'Don'\\''t break'" in output
+
+    def test_backtick_treated_literally(self, oob_cli_template, oob_vars_with_banner):
+        # Inside single quotes bash doesn't expand backticks — confirm
+        # the rendered .sh keeps the backtick as literal text (i.e. no
+        # extra escaping that would change meaning).
+        oob_vars_with_banner["common"]["pre_login_message"] = "literal `id` here"
+        env = _make_rendering_env(oob_cli_template.parent)
+        output = env.get_template(oob_cli_template.name).render(**oob_vars_with_banner)
+        assert "'literal `id` here'" in output
+
+    def test_site_and_arch_substitution(self, oob_cli_template, oob_vars_with_banner):
+        oob_vars_with_banner["common"]["pre_login_message"] = "Banner for {site}/{arch}"
+        oob_vars_with_banner["common"]["site"] = "s2"
+        oob_vars_with_banner["common"]["arch"] = "2-8-9-800"
+        env = _make_rendering_env(oob_cli_template.parent)
+        output = env.get_template(oob_cli_template.name).render(**oob_vars_with_banner)
+        assert "nv set system message pre-login 'Banner for s2/2-8-9-800'" in output
+
+    def test_missing_common_dict_no_banner(self, oob_cli_template, oob_vars_with_banner):
+        # Old Excels (no banner fields) → parser still emits common dict
+        # but without the message keys. Template must not crash and must
+        # not emit any banner line.
+        oob_vars_with_banner["common"] = {
+            "site": "default",
+            "arch": "2-4-3-200",
+            # no pre_login_message / post_login_message keys
+        }
+        env = _make_rendering_env(oob_cli_template.parent)
+        output = env.get_template(oob_cli_template.name).render(**oob_vars_with_banner)
+        assert "nv set system message" not in output

@@ -45,7 +45,6 @@ vrf_vnis:
   GPU: 5003
   EXIT: 5004
 interfaces_disabled:
-- 56
 - 58
 - 62
 - 64
@@ -57,7 +56,7 @@ network_roles:
     - 53
     breakout: 4
     lanes: 2
-    vlan: 400
+    vlan: 200,300,400
     lacp_bypass: true
     port_overrides: {}
     bond_overrides: {}
@@ -69,19 +68,11 @@ network_roles:
     - 3
     breakout: 4
     lanes: 2
-    vlan: 300
+    vlan: 200,400
     lacp_bypass: true
     port_overrides: {}
     bond_overrides: {}
-  oob:
-    ports:
-    - 55
-    breakout: 8
-    lanes: 1
-    vlan: 200
-    lacp_bypass: false
-    port_overrides: {}
-    bond_overrides: {}
+    vlan_untagged: 300
   storage:
     ports:
     - 57
@@ -185,6 +176,34 @@ edge_interfaces:
       - 4
       - 5
   vrf: EXIT
+oob_uplink_interfaces:
+  ports:
+  - 55
+  breakout: 8
+  lanes: 1
+  port_overrides:
+    55:
+      subports:
+      - 0
+      - 1
+      - 2
+dhcp_relay:
+- vrf: OOB
+  server_group: oob-dhcp-servers
+  servers:
+  - 192.168.200.78
+  upstream_interfaces:
+  - vlan3001_l3
+  downstream_interfaces:
+  - vlan200
+- vrf: EXIT
+  server_group: exit-dhcp-servers
+  servers:
+  - 10.88.88.88
+  upstream_interfaces:
+  - vlan3004_l3
+  downstream_interfaces:
+  - vlan400
 telemetry:
   enabled: true
   histogram:
@@ -204,23 +223,6 @@ telemetry:
     count: 120
     name: /var/run/cumulus/histogram_stats
   snapshot_interval: 10
-interfaces_up: swp1,4-11,28-53,55,57,61,63
-interfaces_down: swp2-3,12-27
-dhcp_relay:
-- vrf: EXIT
-  interfaces: edge
-  vrf_vlan: 3004
-  servers:
-  - 192.168.210.41
-  - 192.168.220.42
-- vrf: OOB
-  interfaces:
-  - vlan200
-  vrf_vlan: 3001
-  servers:
-  - 192.168.200.2
-  - 192.168.200.3
-  - 192.168.200.4
 default_vrf_bgp:
   address_family:
     ipv4_unicast:
@@ -230,25 +232,46 @@ default_vrf_bgp:
       enable: true
   neighbors:
   - interfaces: isl
+    peer_group: internal-isl
+    type: unnumbered
+  - interfaces: oob_uplink
     peer_group: underlay
     type: unnumbered
-    ttl_security_hops: 1
+  - interfaces:
+    - 172.16.176.21
+    - 172.16.176.22
+    - 172.16.176.23
+    peer_group: overlay
+    type: numbered
   peer_groups:
-  - id: underlay
+  - id: internal-isl
     remote_as: internal
     bfd_enable: true
-    description: underlay_switch_interconnect
-    address_family:
-      l2vpn_evpn:
-        enable: true
-  - id: underlay-esl-external
-    remote_as: external
-    bfd_enable: true
-    description: underlay_esl_external_interconnect
+    description: internal_isl_interconnect
     address_family:
       ipv4_unicast:
         enable: true
-        policy_outbound_route_map: OUTBOUND_ERA_PREFIXES
+      l2vpn_evpn:
+        enable: true
+  - id: underlay
+    remote_as: external
+    bfd_enable: true
+    description: oob_underlay_interconnect
+    address_family:
+      ipv4_unicast:
+        enable: true
+  - id: overlay
+    remote_as: external
+    bfd_enable: true
+    bfd_profile: overlay
+    description: oob_overlay_interconnect
+    multihop_ttl: 2
+    update_source: lo
+    address_family:
+      ipv4_unicast:
+        enable: false
+      l2vpn_evpn:
+        enable: true
 nve_vxlan:
   her: evpn
   flooding_enable: true

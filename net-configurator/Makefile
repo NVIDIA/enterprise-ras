@@ -28,19 +28,21 @@ SHELL := /bin/bash
 #   3. Environment variable
 #   4. SITE falls back to "default" if not set anywhere
 #
-VALID_ARCHS     := 2-4-3-200 2-8-5-200 2-8-9-400
+VALID_ARCHS     := 2-4-3-200 2-8-5-200 2-8-9-400 2-8-9-800
 
 # Reusable architecture description block — keeps help/error messages DRY
 define print_archs
 	@echo "  2-4-3-200   (2 CPUs, 4 GPUs, 3 NICs, 200G)"
 	@echo "  2-8-5-200   (2 CPUs, 8 GPUs, 5 NICs, 200G)"
 	@echo "  2-8-9-400   (2 CPUs, 8 GPUs, 9 NICs, 400G)"
+	@echo "  2-8-9-800   (2 CPUs, 8 GPUs, 9 NICs, 800G — dual-plane GPU fabric)"
 endef
 
 # Shell-context version for use inside if/for blocks (no @ prefix, with \)
 ARCHS_ECHO = echo "  • 2-4-3-200   (2 CPUs, 4 GPUs, 3 NICs, 200G)"; \
              echo "  • 2-8-5-200   (2 CPUs, 8 GPUs, 5 NICs, 200G)"; \
-             echo "  • 2-8-9-400   (2 CPUs, 8 GPUs, 9 NICs, 400G)";
+             echo "  • 2-8-9-400   (2 CPUs, 8 GPUs, 9 NICs, 400G)"; \
+             echo "  • 2-8-9-800   (2 CPUs, 8 GPUs, 9 NICs, 800G — dual-plane GPU fabric)";
 
 # Read from .era-context if not already set on command line.
 #
@@ -251,18 +253,20 @@ help:  ## Show this help message
 	@echo "  make use ARCH=2-8-5-200           # Set arch once (SITE defaults to 'default')"
 	@echo "  make use ARCH=2-8-5-200 SITE=lab  # Set arch + custom site"
 	@echo ""
-	@echo "Detailed Help:"
-	@echo "  make help-<command>   Show options for a specific command"
-	@echo "  Examples:"
-	@echo "    make help-switch-ztp-deploy"
-	@echo "    make help-generate"
+	@echo "Detailed Help (available topics):"
+	@echo "  make help-generate           make help-switch-ztp-deploy"
+	@echo "  make help-ztp-setup          make help-oob-setup"
+	@echo "  make help-deploy-servers     make help-air"
+	@echo "  make help-air-setup          make help-air-destroy"
 
 list-archs:  ## List available architecture types
 	@echo "Available architectures:"
 	@echo ""
 	$(print_archs)
 	@echo ""
-	@echo "Naming: {CPUs}-{GPUs}-{NICs}-{NIC_Speed}"
+	@echo "Naming: {CPUs}-{GPUs}-{NICs}-{B}  (B = avg per-GPU East/West bandwidth, Gbps)"
+	@echo "  Exception: in 2-4-3-200 / 2-8-5-200 (1:2 NIC:GPU) the trailing"
+	@echo "  number follows the per-NIC link speed instead."
 	@echo ""
 	@echo "Usage: make <command> ARCH=<type> [SITE=<name>]"
 
@@ -296,7 +300,7 @@ help-switch-ztp-deploy:  ## Show detailed help for switch-ztp-deploy
 	@echo "  Sets up OOB server, generates configs, and configures ZTP server."
 	@echo ""
 	@echo "REQUIRED:"
-	@echo "  ARCH=<type>    Architecture type (2-4-3-200, 2-8-5-200, 2-8-9-400)"
+	@echo "  ARCH=<type>    Architecture type (2-4-3-200, 2-8-5-200, 2-8-9-400, 2-8-9-800)"
 	@echo ""
 	@echo "OPTIONAL:"
 	@echo "  SITE=<name>    Site name (default: 'default')"
@@ -407,7 +411,7 @@ help-deploy-servers:  ## Show detailed help for deploy-servers
 	@echo "    (~3 parallel connections)."
 	@echo ""
 	@echo "REQUIRED:"
-	@echo "  ARCH=<type>    Architecture type (2-4-3-200, 2-8-5-200, 2-8-9-400)"
+	@echo "  ARCH=<type>    Architecture type (2-4-3-200, 2-8-5-200, 2-8-9-400, 2-8-9-800)"
 	@echo ""
 	@echo "OPTIONAL:"
 	@echo "  SITE=<name>    Site name (default: 'default')"
@@ -493,8 +497,17 @@ generate:  ## Generate inventory + switch configs + Air topology - requires ARCH
 	$(call check_arch,$@)
 	$(call check_ansible)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Step 0: Validating Excel before generation..."
+	@python3 scripts/validate_excel.py input/$(ARCH)/$(SITE)/$(ARCH).xlsx || { \
+		echo ""; \
+		echo "❌ Validation failed. Refusing to generate from an invalid Excel."; \
+		echo "   Set GENERATE_SKIP_VALIDATE=1 to bypass (not recommended)."; \
+		[ -z "$(GENERATE_SKIP_VALIDATE)" ] && exit 1; \
+		echo "   GENERATE_SKIP_VALIDATE=1 set — proceeding anyway."; \
+	}
+	@echo ""
 	@echo "Step 1: Generating inventory from Excel for arch=$(ARCH) site=$(SITE)..."
-	python3 scripts/excel_parser.py --arch $(ARCH) --site $(SITE)
+	python3 scripts/excel_parser.py --arch $(ARCH) --site $(SITE) --skip-validate
 	@echo ""
 	@echo "Step 2: Generating NVUE CLI configurations..."
 	@mkdir -p $(CONFIG_OUTPUT_DIR)
@@ -510,6 +523,9 @@ generate:  ## Generate inventory + switch configs + Air topology - requires ARCH
 	@echo "Step 4: Generating Node Instruction scripts..."
 	python3 scripts/generate-node-instructions.py --arch $(ARCH) --site $(SITE)
 	@echo "✅ Node Instructions generated"
+	@echo ""
+	@echo "Step 5: Cross-check netplan ↔ topology eth-numbering..."
+	@python3 scripts/check-eth-consistency.py --arch $(ARCH) --site $(SITE)
 
 topology:  ## Generate Air topology only - requires ARCH, optional SITE
 	$(call check_arch,$@)
@@ -608,7 +624,11 @@ air-auth-test:  ## Test Air API credentials and connectivity - requires ARCH
 
 air-deploy:  ## Create Air simulation, configure SSH, and connect - requires ARCH
 	$(call check_arch,$@)
-	@python3 scripts/air-deploy.py --arch $(ARCH) --site $(SITE) $(if $(SERVER_CONFIG),--server-config,)
+	@python3 scripts/air-deploy.py --arch $(ARCH) --site $(SITE) $(if $(SERVER_CONFIG),--server-config,) $(if $(NOZTP),--no-ztp,) $(if $(RETRIES),--retry-on-capacity $(RETRIES),) $(if $(RETRY_DELAY),--retry-delay $(RETRY_DELAY),)
+
+air-deploy-retry:  ## Same as air-deploy but retries on capacity errors - RETRIES=3 RETRY_DELAY=300 by default
+	$(call check_arch,$@)
+	@python3 scripts/air-deploy.py --arch $(ARCH) --site $(SITE) $(if $(SERVER_CONFIG),--server-config,) $(if $(NOZTP),--no-ztp,) --retry-on-capacity $(or $(RETRIES),3) --retry-delay $(or $(RETRY_DELAY),300)
 
 air-destroy:  ## Destroy Air simulation and clean up - requires ARCH
 	$(call check_arch,$@)
@@ -751,18 +771,30 @@ deploy:  ## One-command deployment: import Excel + generate + create Air sim + Z
 	echo "  ✓ Step 1: Validate Excel input"; \
 	echo "  ✓ Step 2: Import Excel (auto-detect arch/site)"; \
 	echo "  ✓ Step 3: Generate inventory + configs + topology"; \
-	echo "  ✓ Step 4: Create Air simulation + configure SSH + inject server config"; \
+	if [ "$(NOZTP)" = "1" ]; then \
+		echo "  ✓ Step 4: Create Air sim + inject switch+server configs (NOZTP=1, no DHCP/HTTP fetch)"; \
+	else \
+		echo "  ✓ Step 4: Create Air simulation + configure SSH + inject server config"; \
+	fi; \
 	echo "  ✓ Step 5: Configure OOB Server (gateway/routing)"; \
 	if [ "$$_LDAP" = "1" ]; then \
 		echo "  ✓ Step 6: Configure LDAP Server"; \
 	else \
 		echo "  ○ Step 6: LDAP Server (skipped - set ldap_enabled=Yes in Excel or add LDAP=1)"; \
 	fi; \
-	echo "  ✓ Step 7: Generate switch configs (on target)"; \
-	echo "  ✓ Step 8: Setup ZTP Server (DHCP + nginx)"; \
+	if [ "$(NOZTP)" = "1" ]; then \
+		echo "  ⏭  Step 7: Generate switch configs (on target)  — SKIPPED (NOZTP=1)"; \
+		echo "  ⏭  Step 8: Setup ZTP Server (DHCP + nginx)      — SKIPPED (NOZTP=1)"; \
+	else \
+		echo "  ✓ Step 7: Generate switch configs (on target)"; \
+		echo "  ✓ Step 8: Setup ZTP Server (DHCP + nginx)"; \
+	fi; \
 	echo ""; \
 	echo "  Server config (hostname, netplan, lldp) injected via Node Instructions."; \
 	echo "  deploy-servers-via-jump is NOT needed."; \
+	if [ "$(NOZTP)" = "1" ]; then \
+		echo "  Switch configs injected via Node Instructions — no DHCP/ZTP server."; \
+	fi; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	if [ "$(AUTO_CONFIRM)" != "1" ]; then \
 		echo "Press Enter to continue, or Ctrl+C to cancel..."; \
@@ -775,14 +807,27 @@ deploy:  ## One-command deployment: import Excel + generate + create Air sim + Z
 	$(MAKE) generate ARCH=$$_ARCH SITE=$$_SITE && \
 	echo "" && \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" && \
-	echo "  Step 4/8: Creating Air simulation + injecting server config..." && \
+	if [ "$(NOZTP)" = "1" ]; then \
+		echo "  Step 4/8: Creating Air sim + injecting switch+server configs (NOZTP=1)..."; \
+	else \
+		echo "  Step 4/8: Creating Air simulation + injecting server config..."; \
+	fi && \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" && \
-	python3 scripts/air-deploy.py --arch $$_ARCH --site $$_SITE --server-config && \
+	python3 scripts/air-deploy.py --arch $$_ARCH --site $$_SITE --server-config $(if $(NOZTP),--no-ztp,) && \
 	echo "" && \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" && \
-	echo "  Steps 5-8: ZTP deployment..." && \
+	echo "  Step 4b/8: Injecting SSH key into Air jump hosts..." && \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" && \
-	$(MAKE) switch-ztp-deploy ARCH=$$_ARCH SITE=$$_SITE AUTO_CONFIRM=1 && \
+	$(MAKE) air-ssh-check ARCH=$$_ARCH SITE=$$_SITE FIX=1 && \
+	echo "" && \
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" && \
+	if [ "$(NOZTP)" = "1" ]; then \
+		echo "  Steps 5-8: OOB+LDAP only (ZTP server skipped)..."; \
+	else \
+		echo "  Steps 5-8: ZTP deployment..."; \
+	fi && \
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" && \
+	$(MAKE) switch-ztp-deploy ARCH=$$_ARCH SITE=$$_SITE AUTO_CONFIRM=1 NOZTP=$(NOZTP) && \
 	echo "" && \
 	echo "╔════════════════════════════════════════════════════════════════════╗" && \
 	echo "║  ✅ Deployment complete (with server config)!                     ║" && \
@@ -791,6 +836,19 @@ deploy:  ## One-command deployment: import Excel + generate + create Air sim + Z
 	echo "║    make validate-all    — validate everything                      ║" && \
 	echo "║    make air-list        — show SSH connection info                 ║" && \
 	echo "╚════════════════════════════════════════════════════════════════════╝" && \
+	if [ "$(NOZTP)" = "1" ]; then \
+		echo ""; \
+		echo "⚠️  NOZTP=1 deferred-apply notice"; \
+		echo "   Switch configs apply via era-apply.service AFTER multi-user.target"; \
+		echo "   on each switch — typically 2–3 minutes after the sim reaches LOADED."; \
+		echo "   Wait for that window before SSH'ing in or running validate-all."; \
+		echo "   If you log in early and change the password manually, the deferred"; \
+		echo "   apply's chpasswd will overwrite it — out-of-sync state, hard to debug."; \
+		echo ""; \
+		echo "   Quick check from a switch console:"; \
+		echo "     systemctl status era-apply.service   # 'active (exited)' = applied"; \
+		echo ""; \
+	fi && \
 	_STATUS_URL=$$(grep 'status_page_url:' output/$$_ARCH/$$_SITE/inventory/group_vars/all/main.yml 2>/dev/null | sed 's/.*: *//'); \
 	if [ -n "$$_STATUS_URL" ]; then \
 		echo ""; \
@@ -880,15 +938,24 @@ deploy-exclude-servers:  ## Deploy switches only (no server config) - requires E
 	echo "  ✓ Step 1: Validate Excel input"; \
 	echo "  ✓ Step 2: Import Excel (auto-detect arch/site)"; \
 	echo "  ✓ Step 3: Generate inventory + configs + topology"; \
-	echo "  ✓ Step 4: Create Air simulation + configure SSH"; \
+	if [ "$(NOZTP)" = "1" ]; then \
+		echo "  ✓ Step 4: Create Air sim + inject switch configs (NOZTP=1)"; \
+	else \
+		echo "  ✓ Step 4: Create Air simulation + configure SSH"; \
+	fi; \
 	echo "  ✓ Step 5: Configure OOB Server (gateway/routing)"; \
 	if [ "$$_LDAP" = "1" ]; then \
 		echo "  ✓ Step 6: Configure LDAP Server"; \
 	else \
 		echo "  ○ Step 6: LDAP Server (skipped - set ldap_enabled=Yes in Excel or add LDAP=1)"; \
 	fi; \
-	echo "  ✓ Step 7: Generate switch configs (on target)"; \
-	echo "  ✓ Step 8: Setup ZTP Server (DHCP + nginx)"; \
+	if [ "$(NOZTP)" = "1" ]; then \
+		echo "  ⏭  Step 7: Generate switch configs (on target)  — SKIPPED (NOZTP=1)"; \
+		echo "  ⏭  Step 8: Setup ZTP Server (DHCP + nginx)      — SKIPPED (NOZTP=1)"; \
+	else \
+		echo "  ✓ Step 7: Generate switch configs (on target)"; \
+		echo "  ✓ Step 8: Setup ZTP Server (DHCP + nginx)"; \
+	fi; \
 	echo ""; \
 	echo "  Server config skipped — run 'make deploy-servers-via-jump' afterwards"; \
 	echo "  to configure server hostnames, netplan, and lldp."; \
@@ -909,6 +976,11 @@ deploy-exclude-servers:  ## Deploy switches only (no server config) - requires E
 	$(MAKE) air-deploy ARCH=$$_ARCH SITE=$$_SITE && \
 	echo "" && \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" && \
+	echo "  Step 4b/8: Injecting SSH key into Air jump hosts..." && \
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" && \
+	$(MAKE) air-ssh-check ARCH=$$_ARCH SITE=$$_SITE FIX=1 && \
+	echo "" && \
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" && \
 	echo "  Steps 5-8: ZTP deployment..." && \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" && \
 	$(MAKE) switch-ztp-deploy ARCH=$$_ARCH SITE=$$_SITE AUTO_CONFIRM=1 && \
@@ -927,12 +999,20 @@ deploy-exclude-servers:  ## Deploy switches only (no server config) - requires E
 		echo "  ZTP Status Page: $$_STATUS_URL"; \
 	fi
 
-# Internal: check if Air connection is configured, prompt if not
+# Internal: check if Air connection is configured, prompt if not.
+# Mode-aware: reads `_oob_uplink_mode` from the generated topology JSON
+# and verifies the right jump-host host_vars file is configured. In L2
+# the jump host is oob-server-01; in L3 it's utility. Without consulting
+# the mode we'd risk accepting a stale L2 file in a site that's been
+# reconfigured to L3 (or vice versa) and silently use the wrong target.
 define check_air_connection
-	@if grep -q 'CHANGE_ME' $(INVENTORY_DIR)/host_vars/oob-server-01.yml 2>/dev/null; then \
+	@_MODE=$$(python3 scripts/_show_oob_mode.py "output/$(ARCH)/$(SITE)/topology/$(ARCH)-topology.json"); \
+	case "$$_MODE" in l3) _CHECK="$(INVENTORY_DIR)/host_vars/utility.yml" ;; \
+	                    *) _CHECK="$(INVENTORY_DIR)/host_vars/oob-server-01.yml" ;; esac; \
+	if [ ! -f "$$_CHECK" ] || grep -q 'CHANGE_ME' "$$_CHECK" 2>/dev/null; then \
 		echo ""; \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-		echo "  Air SSH not configured — running air-connect..."; \
+		echo "  Air SSH not configured (mode=$$_MODE) — running air-connect..."; \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 		python3 scripts/air-connect.py --arch $(ARCH) --site $(SITE); \
 	fi
@@ -994,16 +1074,45 @@ validate-ztp:  ## Validate ZTP via dhcp-oob bastion (works from laptop or inside
 			echo ""; \
 			echo "📄 Full report with raw command output: $(REPORT_DIR)/ztp-validation.txt"; \
 		fi; \
+		_STATUS_PAGE=$$(grep -q 'status_page_enabled.*[Yy]es\|status_page_enabled.*[Tt]rue' $(INVENTORY_DIR)/group_vars/all/main.yml 2>/dev/null && echo 1); \
+		if [ -z "$(SKIP_UPLOAD)" ] && [ "$$_STATUS_PAGE" = "1" ] && [ -f "$(REPORT_DIR)/ztp-validation.txt" ]; then \
+			echo ""; \
+			echo "Uploading ZTP validation report to status page..."; \
+			ansible-playbook -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
+				-e '{"reports_dir": "$(CURDIR)/$(REPORT_DIR)"}' 2>/dev/null && \
+				echo "  ✅ Report uploaded to status page" || \
+				echo "  ⚠️  Report upload failed (non-critical)"; \
+		fi; \
 		exit $$_STATUS
 
 validate-config:  ## Compare running config vs generated config (runs on dhcp-oob) - requires ARCH, optional SITE
 	$(call check_arch,$@)
+	@mkdir -p $(REPORT_DIR)
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Config Validation  arch=$(ARCH)  site=$(SITE)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@ansible-playbook -i $(INVENTORY_DIR)/hosts playbooks/validate-config.yml \
-		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)"
+	@set -o pipefail; \
+	ansible-playbook -i $(INVENTORY_DIR)/hosts playbooks/validate-config.yml \
+		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)" \
+		-e '{"report_file": "$(CURDIR)/$(REPORT_DIR)/config-validation.txt"}'; \
+	_AP=$$?; \
+	echo ""; \
+	if [ -f $(REPORT_DIR)/config-validation.txt ]; then \
+		cat $(REPORT_DIR)/config-validation.txt; \
+	else \
+		echo "  (no validation report generated)"; \
+	fi; \
+	_STATUS_PAGE=$$(grep -q 'status_page_enabled.*[Yy]es\|status_page_enabled.*[Tt]rue' $(INVENTORY_DIR)/group_vars/all/main.yml 2>/dev/null && echo 1); \
+	if [ -z "$(SKIP_UPLOAD)" ] && [ "$$_STATUS_PAGE" = "1" ] && [ -f "$(REPORT_DIR)/config-validation.txt" ]; then \
+		echo ""; \
+		echo "Uploading config validation report to status page..."; \
+		ansible-playbook -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
+			-e '{"reports_dir": "$(CURDIR)/$(REPORT_DIR)"}' 2>/dev/null && \
+			echo "  ✅ Report uploaded to status page" || \
+			echo "  ⚠️  Report upload failed (non-critical)"; \
+	fi; \
+	exit $$_AP
 
 validate-requirements:  ## Validate generated config against architecture requirements - optional ARCH
 	@echo ""
@@ -1011,9 +1120,26 @@ validate-requirements:  ## Validate generated config against architecture requir
 	@echo "  Architecture Requirements Validation"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 ifdef ARCH
-	@python3 scripts/validate_requirements.py --arch $(ARCH) --site $(SITE)
+	@if [ ! -f scripts/validate_requirements.py ]; then \
+		echo "  Internal-only target — requires architecture reference docs"; \
+		echo "  that are not included in the public release. Skipping."; \
+	elif [ ! -d "input/$(ARCH)" ]; then \
+		echo "❌ ERROR: Unknown architecture '$(ARCH)'"; \
+		echo ""; \
+		echo "Available architectures:"; \
+		ls -1 input/ | grep -E '^[0-9]' | sed 's/^/  • /'; \
+		echo ""; \
+		exit 1; \
+	else \
+		python3 scripts/validate_requirements.py --arch $(ARCH) --site $(SITE); \
+	fi
 else
-	@python3 scripts/validate_requirements.py
+	@if [ -f scripts/validate_requirements.py ]; then \
+		python3 scripts/validate_requirements.py; \
+	else \
+		echo "  Internal-only target — requires architecture reference docs"; \
+		echo "  that are not included in the public release. Skipping."; \
+	fi
 endif
 
 validate-servers:  ## Validate server config — bonds, VLANs, connectivity (runs on dhcp-oob) - requires ARCH
@@ -1033,6 +1159,15 @@ validate-servers:  ## Validate server config — bonds, VLANs, connectivity (run
 	else \
 		echo "  (no validation report generated)"; \
 	fi; \
+	_STATUS_PAGE=$$(grep -q 'status_page_enabled.*[Yy]es\|status_page_enabled.*[Tt]rue' $(INVENTORY_DIR)/group_vars/all/main.yml 2>/dev/null && echo 1); \
+	if [ -z "$(SKIP_UPLOAD)" ] && [ "$$_STATUS_PAGE" = "1" ] && [ -f "$(REPORT_DIR)/server-validation.txt" ]; then \
+		echo ""; \
+		echo "Uploading server validation report to status page..."; \
+		ansible-playbook -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
+			-e '{"reports_dir": "$(CURDIR)/$(REPORT_DIR)"}' 2>/dev/null && \
+			echo "  ✅ Report uploaded to status page" || \
+			echo "  ⚠️  Report upload failed (non-critical)"; \
+	fi; \
 	exit $$_AP
 
 validate-ping-matrix:  ## Run full server-to-server ping matrix (all VLANs) - requires ARCH
@@ -1047,7 +1182,7 @@ validate-ping-matrix:  ## Run full server-to-server ping matrix (all VLANs) - re
 	echo "" && \
 	cat $(REPORT_DIR)/ping-matrix-report.txt && \
 	_STATUS_PAGE=$$(grep -q 'status_page_enabled.*[Yy]es\|status_page_enabled.*[Tt]rue' $(INVENTORY_DIR)/group_vars/all/main.yml 2>/dev/null && echo 1); \
-	if [ "$$_STATUS_PAGE" = "1" ] && [ -f "$(REPORT_DIR)/ping-matrix-report.txt" ]; then \
+	if [ -z "$(SKIP_UPLOAD)" ] && [ "$$_STATUS_PAGE" = "1" ] && [ -f "$(REPORT_DIR)/ping-matrix-report.txt" ]; then \
 		echo ""; \
 		echo "Uploading ping matrix report to ZTP server..."; \
 		ansible-playbook -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
@@ -1056,7 +1191,7 @@ validate-ping-matrix:  ## Run full server-to-server ping matrix (all VLANs) - re
 			echo "  ⚠️  Report upload failed (non-critical)"; \
 	fi
 
-validate-all:  ## Run all validations: topology + ZTP + config comparison + servers - requires ARCH
+validate-all:  ## Run all validations: topology + config (canary) + ZTP + servers - requires ARCH
 	$(call check_arch,$@)
 	@mkdir -p $(REPORT_DIR)
 	@if ls $(REPORT_DIR)/*.txt 1>/dev/null 2>&1; then \
@@ -1074,39 +1209,59 @@ validate-all:  ## Run all validations: topology + ZTP + config comparison + serv
 	@echo "╚════════════════════════════════════════════════════════════════════╝"
 	@echo ""
 	@set -o pipefail; \
-	_TOPO=PASS; _ZTP=PASS; _CFG=PASS; _SRV=PASS; \
+	_TOPO=PASS; _CFG=PASS; _ZTP=PASS; _SRV=PASS; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	echo "  1/4: Validating topology against wiremap..."; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	{ echo "Report generated: $$(date '+%Y-%m-%d %H:%M:%S')"; echo ""; \
-	$(MAKE) validate-topology ARCH=$(ARCH) SITE=$(SITE) 2>&1; } | tee $(REPORT_DIR)/topology-validation.txt && \
+	$(MAKE) validate-topology ARCH=$(ARCH) SITE=$(SITE) SKIP_UPLOAD=1 2>&1; } | tee $(REPORT_DIR)/topology-validation.txt && \
 		echo "  ✅ Topology validation passed" || \
 		{ echo "  ❌ Topology validation failed"; _TOPO=FAIL; }; \
 	echo ""; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	echo "  2/4: Validating ZTP on switches..."; \
+	echo "  2/4: Comparing running config vs generated config (root canary)..."; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	$(MAKE) validate-ztp ARCH=$(ARCH) SITE=$(SITE) 2>&1 | tee $(REPORT_DIR)/ztp-validation-full.txt && \
-		echo "  ✅ ZTP validation passed" || \
-		{ echo "  ❌ ZTP validation failed"; _ZTP=FAIL; }; \
+	_CFG_OK=0; \
+	for _i in 1 2 3; do \
+		if [ "$$_i" -gt 1 ]; then \
+			echo ""; \
+			echo "  (attempt $$_i/3 — sleeping 15s to absorb NVUE apply lag)"; \
+			sleep 15; \
+		fi; \
+		if $(MAKE) validate-config ARCH=$(ARCH) SITE=$(SITE) SKIP_UPLOAD=1; then \
+			_CFG_OK=1; break; \
+		fi; \
+	done; \
+	if [ "$$_CFG_OK" = "1" ]; then \
+		echo "  ✅ Config comparison passed"; \
+	else \
+		echo "  ❌ Config comparison failed after 3 attempts"; _CFG=FAIL; \
+	fi; \
 	echo ""; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	echo "  3/4: Comparing running config vs generated config..."; \
+	echo "  3/4: Validating ZTP on switches..."; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	{ echo "Report generated: $$(date '+%Y-%m-%d %H:%M:%S')"; echo ""; \
-	$(MAKE) validate-config ARCH=$(ARCH) SITE=$(SITE) 2>&1; } | tee $(REPORT_DIR)/config-comparison.txt && \
-		echo "  ✅ Config comparison passed" || \
-		{ echo "  ❌ Config comparison failed"; _CFG=FAIL; }; \
+	if [ "$$_CFG" = "FAIL" ]; then \
+		echo "  ⏭️  Skipped — config validation failed (downstream tests would be noise)"; _ZTP=SKIP; \
+	elif $(MAKE) validate-ztp ARCH=$(ARCH) SITE=$(SITE) SKIP_UPLOAD=1; then \
+		echo "  ✅ ZTP validation passed"; \
+	else \
+		echo "  ❌ ZTP validation failed"; _ZTP=FAIL; \
+	fi; \
 	echo ""; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	echo "  4/4: Validating server architecture..."; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	$(MAKE) validate-servers ARCH=$(ARCH) SITE=$(SITE) 2>&1 | tee $(REPORT_DIR)/server-validation.txt && \
-		echo "  ✅ Server validation passed" || \
-		{ echo "  ❌ Server validation failed"; _SRV=FAIL; }; \
+	if [ "$$_CFG" = "FAIL" ]; then \
+		echo "  ⏭️  Skipped — config validation failed (downstream tests would be noise)"; _SRV=SKIP; \
+	elif $(MAKE) validate-servers ARCH=$(ARCH) SITE=$(SITE) SKIP_UPLOAD=1; then \
+		echo "  ✅ Server validation passed"; \
+	else \
+		echo "  ❌ Server validation failed"; _SRV=FAIL; \
+	fi; \
 	echo ""; \
 	_STATUS_PAGE=$$(grep -q 'status_page_enabled.*[Yy]es\|status_page_enabled.*[Tt]rue' $(INVENTORY_DIR)/group_vars/all/main.yml 2>/dev/null && echo 1); \
-	if [ "$$_STATUS_PAGE" = "1" ] && [ -d "$(REPORT_DIR)" ]; then \
+	if [ -z "$(SKIP_UPLOAD)" ] && [ "$$_STATUS_PAGE" = "1" ] && [ -d "$(REPORT_DIR)" ]; then \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 		echo "  Uploading reports to ZTP server..."; \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
@@ -1116,13 +1271,13 @@ validate-all:  ## Run all validations: topology + ZTP + config comparison + serv
 			echo "  ⚠️  Report upload failed (non-critical)"; \
 		echo ""; \
 	fi; \
-	_mark() { [ "$$1" = "PASS" ] && echo "✅ passed" || echo "❌ failed"; }; \
+	_mark() { case "$$1" in PASS) echo "✅ passed";; FAIL) echo "❌ failed";; SKIP) echo "⏭️  skipped (config canary failed)";; esac; }; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	echo "                      Validation Summary"; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	printf "  1/4  Topology            %s\n" "$$(_mark $$_TOPO)"; \
-	printf "  2/4  ZTP                 %s\n" "$$(_mark $$_ZTP)"; \
-	printf "  3/4  Config Comparison   %s\n" "$$(_mark $$_CFG)"; \
+	printf "  2/4  Config Comparison   %s\n" "$$(_mark $$_CFG)"; \
+	printf "  3/4  ZTP                 %s\n" "$$(_mark $$_ZTP)"; \
 	printf "  4/4  Servers             %s\n" "$$(_mark $$_SRV)"; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	echo ""; \
@@ -1150,10 +1305,16 @@ extract-requirements:  ## Extract requirements from architecture PDFs into draft
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Extracting Requirements from Architecture PDFs"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@python3 scripts/extract_requirements.py --all --draft
+	@if [ ! -f scripts/extract_requirements.py ]; then \
+		echo "  Internal-only target — requires architecture reference docs"; \
+		echo "  that are not included in the public release. Skipping."; \
+	else \
+		python3 scripts/extract_requirements.py --all --draft; \
+		echo ""; \
+		echo "Drafts written to docs/requirements/drafts/"; \
+		echo "Review port assignments (OCR can misparse), then copy to docs/requirements/"; \
+	fi
 	@echo ""
-	@echo "Drafts written to docs/requirements/drafts/"
-	@echo "Review port assignments (OCR can misparse), then copy to docs/requirements/"
 
 restart-ldap:  ## Restart LDAP via OOB server - requires ARCH, optional SITE
 	$(call check_arch,$@)
@@ -1195,7 +1356,14 @@ switch-ztp-deploy:  ## Complete ZTP deployment - requires ARCH, optional SITE LD
 	fi
 	@echo "  ✓ Step 3: Generate Inventory from Excel"
 	@echo "  ✓ Step 4: Generate Switch Configurations + Topology"
-	@echo "  ✓ Step 5: Setup ZTP Server (DHCP + nginx)"
+	@if [ "$(NOZTP)" = "1" ]; then \
+		echo "  ✓ Step 5: Install Operator Status Page (nginx + /reports/)"; \
+		echo "  ⏭  Step 6: Setup ZTP Server (DHCP + ztp.sh)  — SKIPPED (NOZTP=1)"; \
+		echo "      Switch configs were already injected directly into Air via Node Instructions."; \
+	else \
+		echo "  ✓ Step 5: Install Operator Status Page (nginx + /reports/)"; \
+		echo "  ✓ Step 6: Setup ZTP Server (DHCP + ztp.sh)"; \
+	fi
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@if [ "$(AUTO_CONFIRM)" != "1" ]; then \
@@ -1204,24 +1372,24 @@ switch-ztp-deploy:  ## Complete ZTP deployment - requires ARCH, optional SITE LD
 	fi
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  STEP 1/5: Configure OOB Server"
+	@echo "  STEP 1/6: Configure OOB Server"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@ansible-playbook playbooks/setup-oob-server.yml -i $(INVENTORY_DIR)/hosts
 	@echo ""
 	@if [ "$(_LDAP_ACTIVE)" = "1" ]; then \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-		echo "  STEP 2/5: Configure LDAP Server"; \
+		echo "  STEP 2/6: Configure LDAP Server"; \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 		ansible-playbook playbooks/era-servers.yml -i $(INVENTORY_DIR)/hosts --tags ldap; \
 		echo ""; \
 	fi
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  STEP 3/5: Generate Inventory from Excel"
+	@echo "  STEP 3/6: Generate Inventory from Excel"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	python3 scripts/excel_parser.py --arch $(ARCH) --site $(SITE)
+	python3 scripts/excel_parser.py --arch $(ARCH) --site $(SITE) --skip-validate
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  STEP 4/5: Generate Switch Configurations + Topology"
+	@echo "  STEP 4/6: Generate Switch Configurations + Topology"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@mkdir -p $(CONFIG_OUTPUT_DIR)
 	ansible-playbook playbooks/generate-cli-configs.yml \
@@ -1230,10 +1398,26 @@ switch-ztp-deploy:  ## Complete ZTP deployment - requires ARCH, optional SITE LD
 	python3 scripts/topology_generator.py generate --arch $(ARCH) --site $(SITE)
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  STEP 5/5: Setup ZTP Server"
+	@echo "  STEP 5/6: Install Operator Status Page"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@ansible-playbook playbooks/setup-ztp-server.yml -i $(INVENTORY_DIR)/hosts \
+	@echo "  Status page is independent of ZTP — runs even in NOZTP=1 so the"
+	@echo "  operator dashboard + /reports/ landing zone exist for validate-*."
+	@ansible-playbook playbooks/setup-status-page.yml -i $(INVENTORY_DIR)/hosts \
 		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)"
+	@echo ""
+	@if [ "$(NOZTP)" = "1" ]; then \
+		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+		echo "  STEP 6/6: Setup ZTP Server  ⏭  SKIPPED (NOZTP=1)"; \
+		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+		echo "  Switch configs were injected directly into Air via Node Instructions."; \
+		echo "  No DHCP/HTTP ZTP server needed."; \
+	else \
+		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+		echo "  STEP 6/6: Setup ZTP Server"; \
+		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+		ansible-playbook playbooks/setup-ztp-server.yml -i $(INVENTORY_DIR)/hosts \
+			-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)"; \
+	fi
 	@echo ""
 	@echo "╔════════════════════════════════════════════════════════════════════╗"
 	@echo "║           ✅ ZTP DEPLOYMENT COMPLETE!                              ║"
@@ -1300,8 +1484,7 @@ clean-output:  ## Remove generated output (inventory, configs, topology, reports
 	@if [ -d "output/$(ARCH)/$(SITE)" ]; then \
 		echo "This will delete: output/$(ARCH)/$(SITE)/"; \
 		echo "  inventory/  configs/  topology/  reports/"; \
-		read -r -p "  Continue? [y/N]: " _confirm; \
-		if [ "$$_confirm" = "y" ] || [ "$$_confirm" = "Y" ]; then \
+		if bash -c 'read -r -p "  Continue? [y/N]: " _confirm; [ "$$_confirm" = "y" ] || [ "$$_confirm" = "Y" ]'; then \
 			rm -rf "output/$(ARCH)/$(SITE)"; \
 			echo "✅ Removed output/$(ARCH)/$(SITE)/"; \
 		else \

@@ -4,14 +4,13 @@ ansible_host: 172.20.0.201
 hostname: core-01
 mac_address: 48:b0:2d:5d:11:cd
 ip_assignment_mode: dhcp
-router_id: 172.16.176.11
 lo_ip: 172.16.176.11/32
+router_id: 172.16.176.11
 vlan_interfaces:
 - id: vlan200
-  ip: 172.16.177.2/24
-  vrr: 172.16.177.1/24
   vlan: '200'
   vrf: OOB
+  no_svi_type: true
 - id: vlan300
   ip: 172.16.178.2/24
   vrr: 172.16.178.1/24
@@ -32,6 +31,11 @@ vlan_interfaces:
   vrr: 192.168.110.1/24
   vlan: '900'
   vrf: GPU
+vrf_loopbacks:
+  EXIT: 172.16.176.5/32
+  INBAND: 172.16.176.3/32
+  OOB: 172.16.176.1/32
+  GPU: 192.168.110.5/32
 prefix_list:
 - id: ALL_PREFIXES
   rule:
@@ -79,6 +83,9 @@ prefix_list:
   - id: '20'
     match: 172.16.176.0/24
     max_len: '32'
+  - id: '30'
+    match: 192.168.200.0/24
+    max_len: '32'
 - id: LOCAL_OOB_LOOPBACK
   rule:
   - id: '10'
@@ -105,11 +112,6 @@ prefix_list:
   - id: '5'
     match: 172.16.176.8/29
     max_len: '32'
-vrf_loopbacks:
-  EXIT: 172.16.176.5/32
-  INBAND: 172.16.176.3/32
-  OOB: 172.16.176.1/32
-  GPU: 192.168.110.5/32
 interfaces_disabled:
 - 54
 - 56
@@ -117,3 +119,40 @@ interfaces_disabled:
 - 60
 - 62
 - 64
+bond_descriptions:
+  bond52s0: support-07
+  bond52s1: support-08
+  bond57s0: storage-01
+  bond57s1: storage-02
+  bond57s2: storage-01
+  bond57s3: storage-02
+  bond57s4: storage-01
+  bond57s5: storage-02
+  bond57s6: storage-02
+  bond57s7: storage-02
+  bond52s2: support-01
+  bond52s3: support-02
+  bond53s0: support-03
+  bond53s1: support-04
+  bond53s2: support-05
+  bond53s3: support-06
+  bond1s0: su-01-node-01
+  bond4s0: su-01-node-01
+  bond4s1: su-01-node-01
+  bond5s0: su-01-node-01
+  bond5s1: su-01-node-01
+  bond1s1: su-01-node-02
+  bond6s0: su-01-node-02
+  bond6s1: su-01-node-02
+  bond7s0: su-01-node-02
+  bond7s1: su-01-node-02
+  bond1s2: su-01-node-03
+  bond8s0: su-01-node-03
+  bond8s1: su-01-node-03
+  bond9s0: su-01-node-03
+  bond9s1: su-01-node-03
+  bond1s3: su-01-node-04
+  bond10s0: su-01-node-04
+  bond10s1: su-01-node-04
+  bond11s0: su-01-node-04
+  bond11s1: su-01-node-04

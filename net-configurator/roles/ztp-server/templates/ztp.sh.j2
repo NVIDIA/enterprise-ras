@@ -166,7 +166,12 @@ function set_password(){
     
     # Use NVUE to set the password (works after NVUE config is applied)
     log "Setting password via NVUE"
+    # Disable xtrace around the password command so 'set -x' (line 6) does not
+    # echo the plaintext password to stderr -> the systemd/ZTP journal. Errexit
+    # is unaffected. Re-enable immediately after.
+    set +x
     nv set system aaa user {{ switch_user | default("cumulus") }} password {{ (switch_password | default("Cumu1usLinux!")) | quote }}
+    set -x
     nv config apply -y 2>&1 | while read line; do log "  $line"; done
     
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
@@ -181,7 +186,11 @@ function set_password(){
             sed -i 's/pam_pwhistory.so/# pam_pwhistory.so (disabled during ZTP)/' /etc/pam.d/common-password
         fi
         
+        # Disable xtrace so the plaintext user:password pair isn't echoed to
+        # the journal by 'set -x'; re-enable right after. Errexit stays on.
+        set +x
         echo {{ ((switch_user | default("cumulus")) ~ ":" ~ (switch_password | default("Cumu1usLinux!"))) | quote }} | chpasswd 2>&1 | while read line; do log "  $line"; done
+        set -x
         passwd -x 99999 {{ switch_user | default("cumulus") }} 2>&1 | while read line; do log "  $line"; done
         
         # Restore PAM config if backup exists

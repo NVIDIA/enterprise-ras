@@ -1,0 +1,4 @@
+---
+# Host variables for slurm-01 (Generated from Excel)
+ansible_host: 192.168.200.43
+hostname: slurm-01

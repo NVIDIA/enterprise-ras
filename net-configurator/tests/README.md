@@ -84,7 +84,7 @@ make test-fast
 
 ### Parser & Utility Unit Tests (`test_parser_functions.py`)
 
-Tests shared functions from `scripts/utils.py`, `scripts/excel_parser.py`, and `scripts/compare_excel_inventory_and_configs.py`:
+Tests shared functions from `scripts/utils.py` and `scripts/excel_parser.py` (plus `scripts/compare_excel_inventory_and_configs.py` when present — those classes skip automatically if the internal-only compare script is absent):
 
 - `generate_mac()` — deterministic MAC generation
 - `classify_node()` — node role classification

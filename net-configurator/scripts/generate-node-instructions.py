@@ -2,33 +2,53 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 """
-Generate pasteable Node Instruction scripts for manual Air deployment.
+Generate pasteable Node Instruction scripts for every node displayed in Air.
 
 Reads the generated inventory and topology for an architecture/site and
-produces standalone bash scripts that can be pasted into the Air GUI as
-Node Instructions for the three infrastructure nodes:
+writes one bash script per node into the node-instructions/ directory.
+The content mirrors what air-deploy.py would inject via the Air API at
+deploy time, so OEMs can review every node's NI before launch.
 
+Infrastructure nodes (custom content):
   - air-oob-switch  (VLAN-aware bridge)
   - oob-server-01   (OOB gateway: IP forwarding, static IPs, NAT)
   - dhcp-oob        (minimal networking so Ansible can run from it later)
 
+Per-node scripts (NOZTP-style, matching air-deploy.py injection):
+  - <server>.sh — hostname + netplan + lldp + (compute ARP-flux fix)
+  - <switch>.sh — deferred-apply wrapper that sources the rendered NVUE
+                  config under /opt/era/ on first boot
+
+Only nodes that appear in the generated topology (Display in Air = Yes)
+get a script.
+
 Usage:
     python3 scripts/generate-node-instructions.py --arch 2-8-5-200 [--site default]
-
-Output:
-    output/<arch>/<site>/topology/node-instructions/air-oob-switch.sh
-    output/<arch>/<site>/topology/node-instructions/oob-server-01.sh
-    output/<arch>/<site>/topology/node-instructions/dhcp-oob.sh
 """
 
 import argparse
 import base64
+import importlib
 import json
 import shlex
 import sys
 from pathlib import Path
 
 import yaml
+
+# Pull the NI builders from air-deploy.py so this script and the runtime
+# injector produce identical content. air-deploy.py has dashes in the name
+# so importlib is the cleanest way to load it.
+_HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(_HERE))
+_air_deploy = importlib.import_module("air-deploy".replace("-", "_")) if False else None
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location("air_deploy", _HERE / "air-deploy.py")
+_air_deploy = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_air_deploy)
+build_server_ni_commands = _air_deploy.build_server_ni_commands
+build_switch_ni_commands = _air_deploy.build_switch_ni_commands
+SERVER_NI_SKIP_PREFIXES = _air_deploy.SERVER_NI_SKIP_PREFIXES
 
 
 def write_file_cmd(path: str, content: str) -> str:
@@ -419,7 +439,6 @@ def main() -> None:
 
     # Load data
     global_vars = load_yaml(inventory / "group_vars" / "all" / "main.yml")
-    oob_host_vars = load_yaml(inventory / "host_vars" / "oob-server-01.yml")
     topo_file = topo_dir / f"{args.arch}-topology.json"
     topology = load_json(topo_file)
 
@@ -428,32 +447,121 @@ def main() -> None:
         print(f"  Run 'make generate ARCH={args.arch}' first.")
         sys.exit(1)
 
+    # Mode detection: L2 emits the air-oob-switch + dhcp-oob + oob-server-01
+    # trio; L3 mode has no Air-injected bridge node and uses external-conn /
+    # external-dhcp / utility (NI generation for the L3 trio is v2 follow-on).
+    mode = topology.get("_oob_uplink_mode", "l2")
+
     # Generate scripts
-    print(f"\n  Writing to {output_dir}/")
+    print(f"\n  Writing to {output_dir}/  (mode: {mode})")
 
-    write_script(
-        output_dir / "air-oob-switch.sh",
-        generate_air_oob_switch(topology),
-    )
-    write_script(
-        output_dir / "oob-server-01.sh",
-        generate_oob_server(oob_host_vars),
-    )
-    write_script(
-        output_dir / "dhcp-oob.sh",
-        generate_dhcp_oob(global_vars),
-    )
+    if mode == "l2":
+        oob_host_vars = load_yaml(inventory / "host_vars" / "oob-server-01.yml")
+        write_script(
+            output_dir / "air-oob-switch.sh",
+            generate_air_oob_switch(topology),
+        )
+        write_script(
+            output_dir / "oob-server-01.sh",
+            generate_oob_server(oob_host_vars),
+        )
+        write_script(
+            output_dir / "dhcp-oob.sh",
+            generate_dhcp_oob(global_vars),
+        )
+    else:
+        print(
+            "  L3 mode: skipping legacy L2 infra NI scripts "
+            "(air-oob-switch / oob-server-01 / dhcp-oob).\n"
+            "  L3 infra NI generation (external-conn / external-dhcp / utility) "
+            "is a v2 follow-on;\n"
+            "  for now `make air-deploy` handles the L3 trio programmatically."
+        )
 
+    # ── Per-node NI scripts for everything else displayed in Air ──
+    #
+    # Generates a .sh file for every server and switch that the topology
+    # places in Air (Display in Air = Yes). Content matches what
+    # air-deploy.py would POST via the Air API in NOZTP mode, so the OEM
+    # can review the exact commands that will run on each node.
+    topo_nodes = set(topology.get("content", {}).get("nodes", {}).keys())
+    devices = global_vars.get("devices", {})
+    common = global_vars.get("common", {})
+
+    # Server NIs ----------------------------------------------------------
+    server_count = 0
+    for node_name, dev in sorted(devices.items()):
+        if node_name not in topo_nodes:
+            continue
+        if any(node_name.startswith(p) for p in SERVER_NI_SKIP_PREFIXES):
+            continue
+        commands = build_server_ni_commands(node_name, dev, common)
+        if not commands:
+            continue
+        script = "#!/bin/bash\n" + (
+            f"# Generated by: scripts/generate-node-instructions.py\n"
+            f"# Paste this into the Air GUI → {node_name} → Node Instructions.\n"
+            "# This is the exact content air-deploy.py injects in NOZTP mode.\n\n"
+        ) + "\n".join(commands) + "\n"
+        write_script(output_dir / f"{node_name}.sh", script)
+        server_count += 1
+
+    # Switch NIs ----------------------------------------------------------
+    secrets_path = inventory / "group_vars" / "all" / "secrets.yml"
+    switch_password = "Cumu1usLinux!"  # documented placeholder
+    if secrets_path.exists():
+        with open(secrets_path) as f:
+            sec = yaml.safe_load(f) or {}
+        switch_password = sec.get("switch_password") or switch_password
+
+    configs_dir = base / "configs"
+    switch_count = 0
+    for node_name in sorted(topo_nodes):
+        if not any(node_name.startswith(p) for p in ("core-", "csl-", "gsl-", "oob-switch-")):
+            continue
+        if node_name == "air-oob-switch":
+            continue  # custom script already written above
+        config_file = configs_dir / f"{node_name}-config.sh"
+        if not config_file.exists():
+            print(f"  Warning: {node_name}: no rendered config at {config_file}; skipping")
+            continue
+
+        host_vars_path = inventory / "host_vars" / f"{node_name}.yml"
+        host_ip = None
+        if host_vars_path.exists():
+            with open(host_vars_path) as f:
+                hv = yaml.safe_load(f) or {}
+            host_ip = hv.get("ansible_host")
+
+        commands = build_switch_ni_commands(
+            node_name, config_file.read_text(), host_ip, switch_password
+        )
+        script = "#!/bin/bash\n" + (
+            f"# Generated by: scripts/generate-node-instructions.py\n"
+            f"# Paste this into the Air GUI → {node_name} → Node Instructions.\n"
+            "# This is the exact deferred-apply NI air-deploy.py injects in NOZTP mode.\n\n"
+        ) + "\n".join(commands) + "\n"
+        write_script(output_dir / f"{node_name}.sh", script)
+        switch_count += 1
+
+    infra_line = (
+        "  Infrastructure (3):\n"
+        "    air-oob-switch.sh  oob-server-01.sh  dhcp-oob.sh"
+        if mode == "l2"
+        else "  Infrastructure (0):  L3 mode — no manual-fallback NI in v1"
+    )
     print(f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Node Instruction scripts generated!
 
-  Paste each script into the Air GUI BEFORE starting the simulation:
-    1. air-oob-switch  → {output_dir}/air-oob-switch.sh
-    2. oob-server-01   → {output_dir}/oob-server-01.sh
-    3. dhcp-oob        → {output_dir}/dhcp-oob.sh
+  Output: {output_dir}/
 
-  Then start the simulation and follow docs/MANUAL_FALLBACK_GUIDE.md
+{infra_line}
+  Servers ({server_count}):    one .sh per server with NOZTP-style hostname/netplan/lldp
+  Switches ({switch_count}):    one .sh per switch with the deferred-apply wrapper
+
+  Paste each script into the Air GUI before starting the simulation,
+  or just review them to audit what air-deploy.py NOZTP mode will inject.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━""")
 
 

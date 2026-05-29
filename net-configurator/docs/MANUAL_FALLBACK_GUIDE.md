@@ -62,7 +62,7 @@ OOB network as all servers — eliminates the bottleneck entirely.
 - **Python 3.12+** (Ubuntu 22.04's default Python 3.10 is not enough — use `deadsnakes` PPA or a similar source)
 - `pip install -r requirements.txt` completed successfully
 - A filled-out Excel configuration file
-- A valid Air account at https://air-ngc.nvidia.com — request access from your NVIDIA contact if you don't have one
+- A valid NVIDIA Air account at https://air-ngc.nvidia.com — sign up with an NGC account (see [AIR_DEPLOYMENT_GUIDE.md → Step 1: Create an NGC Account](AIR_DEPLOYMENT_GUIDE.md#step-1-create-an-ngc-account)). This manual flow uses your Air login directly, so **no API key is required**.
 - An SSH key registered in Air (see [AIR_DEPLOYMENT_GUIDE.md](AIR_DEPLOYMENT_GUIDE.md#step-4-register-your-ssh-key-in-air))
 
 **On dhcp-oob** (after the sim boots — the Node Instruction script installs these for you):
@@ -174,8 +174,9 @@ Click **dhcp-oob** in the Air GUI → **Console**. Log in with `ubuntu` / `nvidi
 ### 3.2 Clone the Repository
 
 ```bash
-git clone <your-repo-url> era-automation
-cd era-automation
+# Public release lives in the net-configurator/ subdirectory of the NVIDIA enterprise-ras repo
+git clone https://github.com/NVIDIA/enterprise-ras.git
+cd enterprise-ras/net-configurator
 ```
 
 ### 3.3 Set Up the Python Environment
@@ -528,9 +529,9 @@ make generate    # produces topology + node instructions
 # Upload topology, paste 3 Node Instructions, start simulation
 
 # === Phase 3: On dhcp-oob ===
-git clone <repo-url> era-automation && cd era-automation
+git clone https://github.com/NVIDIA/enterprise-ras.git && cd enterprise-ras/net-configurator
 
-# Install Python 3.12 (Ubuntu 22.04 ships 3.10, Ansible 13+ needs 3.11+)
+# Install Python 3.12 (Ubuntu 22.04 ships 3.10, Ansible 13+ needs 3.12+)
 sudo add-apt-repository -y ppa:deadsnakes/ppa
 sudo apt-get update && sudo apt-get install -y python3.12 python3.12-venv
 

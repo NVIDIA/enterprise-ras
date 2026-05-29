@@ -5,10 +5,23 @@
 # Generated: {{ ansible_date_time.iso8601 }}
 # Format: NVUE CLI commands
 
+{% set is_l3 = (oob_uplink_mode | default('l2')) == 'l3' %}
 #============================================================================
 # Bridge and VLAN
 #============================================================================
+{% if is_l3 and oob_vni is defined %}
+nv set bridge domain br_default vlan 200 vni {{ oob_vni }}
+{% else %}
 nv set bridge domain br_default vlan 200
+{% endif %}
+
+{% if is_l3 %}
+#============================================================================
+# EVPN
+#============================================================================
+nv set evpn state enabled
+nv set evpn multihoming state enabled
+{% endif %}
 
 #============================================================================
 # Management Interface
@@ -16,13 +29,28 @@ nv set bridge domain br_default vlan 200
 nv set interface eth0 type eth
 nv set interface eth0 vrf mgmt
 
+{% if is_l3 and lo_ip is defined %}
+#============================================================================
+# Loopback
+#============================================================================
+nv set interface lo ipv4 address {{ lo_ip }}
+nv set interface lo type loopback
+{% endif %}
+
 #============================================================================
 # Access Ports (1G, VLAN 200)
 #============================================================================
-nv set interface swp1-46 bridge domain br_default access 200
-nv set interface swp1-46 link speed 1G
-nv set interface swp1-46,{{ spine_bond_members | join(',') }} type swp
+nv set interface {{ access_ports }} bridge domain br_default access 200
+nv set interface {{ access_ports }} link speed 1G
+{# Append spine bond members to the type-swp list only when non-empty;
+   otherwise we emit "<access_ports>," with a trailing comma which NVUE rejects. #}
+{% if spine_bond_members %}
+nv set interface {{ access_ports }},{{ spine_bond_members | join(',') }} type swp
+{% else %}
+nv set interface {{ access_ports }} type swp
+{% endif %}
 
+{% if spine_bond_members and not is_l3 %}
 #============================================================================
 # Spine Bond (L2 uplink to core)
 #============================================================================
@@ -31,19 +59,59 @@ nv set interface spine_bond type bond
 nv set interface spine_bond bridge domain br_default access 200
 nv set interface spine_bond link state down
 nv set interface {{ spine_bond_members | join(',') }} link state down
+{% endif %}
 
 #============================================================================
 # VLAN SVI
 #============================================================================
 nv set interface vlan200 ipv4 address {{ svi_ip }}
+{% if is_l3 and vrr_ip is defined %}
+nv set interface vlan200 ipv4 vrr address {{ vrr_ip }}
+nv set interface vlan200 ipv4 vrr state enabled
+nv set interface vlan200 ipv4 vrr vrr-state up
+nv set interface vlan200 vrf OOB
+{% endif %}
 nv set interface vlan200 type svi
 nv set interface vlan200 vlan 200
+
+{% if is_l3 and lo_ip is defined %}
+#============================================================================
+# NVE / VXLAN
+#============================================================================
+nv set nve vxlan arp-nd-suppress enabled
+nv set nve vxlan state enabled
+nv set nve vxlan flooding state enabled
+nv set nve vxlan flooding head-end-replication evpn
+nv set nve vxlan source address {{ lo_ip.split('/')[0] }}
+{% endif %}
+
+{% if is_l3 and bgp_asn is defined %}
+#============================================================================
+# Router / BGP global
+#============================================================================
+nv set router bfd state enabled
+nv set router bfd profile default detect-multiplier 3
+nv set router bfd profile default min-rx-interval 300
+nv set router bfd profile default min-tx-interval 300
+nv set router bfd profile overlay detect-multiplier 3
+nv set router bfd profile overlay min-rx-interval 1000
+nv set router bfd profile overlay min-tx-interval 1000
+nv set router bgp autonomous-system {{ bgp_asn }}
+nv set router bgp state enabled
+nv set router bgp router-id {{ router_id }}
+nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
+nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
+nv set router policy route-map WEIGHTED_ECMP rule 10 action permit
+nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths
+nv set router vrr state enabled
+{% endif %}
 
 #============================================================================
 # NTP (servers from Settings ntp_servers comma-separated, or default)
 #============================================================================
 {% for server in ntp_servers | default(['0.cumulusnetworks.pool.ntp.org', '1.cumulusnetworks.pool.ntp.org', '2.cumulusnetworks.pool.ntp.org', '3.cumulusnetworks.pool.ntp.org']) %}
-nv set system ntp server {{ server }}
+nv set system ntp server {{ server | quote }}
 {% endfor %}
 
 #============================================================================
@@ -70,28 +138,92 @@ nv set system config auto-save state enabled
 nv set system control-plane acl acl-default-dos inbound
 nv set system control-plane acl acl-default-whitelist inbound
 nv set system hostname {{ hostname }}
-nv set system message post-login '#####################################################################################
-#                     You are successfully logged in to: {{ hostname }}{{ ' ' * (27 - hostname|length) }}#
-#####################################################################################
-'
-nv set system message pre-login '#####################################################################################
-#  Welcome to NVIDIA Cumulus VX (TM)                                                #
-#  NVIDIA Cumulus VX (TM) is a community supported virtual appliance designed       #
-#  for experiencing, testing and prototyping NVIDIA Cumulus'"'"' latest technology. #
-#  For any questions or technical support, visit our community site at:             #
-#  https://www.nvidia.com/en-us/support                                             #
-#####################################################################################
-'
+{# Operator-configurable SSH login banners sourced from the Excel
+   `Settings.pre_login_message` / `post_login_message` fields. See
+   the comment in roles/core/templates/core_nvue_cli.j2 for the
+   encoding rationale and the design doc at
+   docs/plans/2026-05-26-switch-login-messages-design.md. #}
+{% if common is defined and common.get('pre_login_message') %}
+nv set system message pre-login '{{ common.get('pre_login_message') | replace("'", "'\\''") | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) }}'
+{% endif %}
+{% if common is defined and common.get('post_login_message') %}
+nv set system message post-login '{{ common.get('post_login_message') | replace("'", "'\\''") | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) }}'
+{% endif %}
 nv set system ssh-server state enabled
-nv set system date-time timezone {{ timezone }}
+nv set system date-time timezone {{ timezone | quote }}
 nv set system wjh channel forwarding trigger l2
 nv set system wjh channel forwarding trigger l3
 nv set system wjh channel forwarding trigger tunnel
 nv set system wjh state enabled
 
+{% if is_l3 and oob_vrf_vni is defined %}
+#============================================================================
+# VRF OOB
+#============================================================================
+nv set vrf OOB evpn state enabled
+nv set vrf OOB evpn vlan {{ oob_vrf_vlan | default(3001) }}
+nv set vrf OOB evpn vni {{ oob_vrf_vni }}
+{% if oob_vrf_loopback is defined %}
+nv set vrf OOB loopback ip address {{ oob_vrf_loopback }}
+{% endif %}
+nv set vrf OOB router bgp address-family ipv4-unicast state enabled
+nv set vrf OOB router bgp address-family ipv4-unicast redistribute connected state enabled
+nv set vrf OOB router bgp address-family ipv4-unicast route-export to-evpn state enabled
+nv set vrf OOB router bgp address-family l2vpn-evpn state enabled
+nv set vrf OOB router bgp autonomous-system {{ bgp_asn }}
+nv set vrf OOB router bgp state enabled
+{% if oob_vrf_loopback is defined %}
+nv set vrf OOB router bgp router-id {{ oob_vrf_loopback.split('/')[0] }}
+{% endif %}
+{% endif %}
+
+{% if is_l3 and bgp_asn is defined %}
+#============================================================================
+# Default VRF BGP
+#============================================================================
+nv set vrf default router bgp address-family ipv4-unicast state enabled
+nv set vrf default router bgp address-family ipv4-unicast redistribute connected state enabled
+nv set vrf default router bgp address-family ipv4-unicast redistribute connected route-map LOOPBACK_BGP
+nv set vrf default router bgp address-family l2vpn-evpn state enabled
+nv set vrf default router bgp state enabled
+
+{% if overlay_peers is defined %}
+# Overlay peers — numbered EVPN to CSL loopbacks
+{% for peer_ip in overlay_peers %}
+nv set vrf default router bgp neighbor {{ peer_ip }} peer-group overlay
+nv set vrf default router bgp neighbor {{ peer_ip }} type numbered
+{% endfor %}
+{% endif %}
+
+{% if spine_bond_members is defined %}
+# Underlay peers — unnumbered eBGP to CSLs
+{% for port in spine_bond_members %}
+nv set vrf default router bgp neighbor {{ port }} peer-group underlay
+nv set vrf default router bgp neighbor {{ port }} type unnumbered
+{% endfor %}
+{% endif %}
+
+nv set vrf default router bgp path-selection multipath aspath-ignore enabled
+
+# Peer-group: overlay
+nv set vrf default router bgp peer-group overlay address-family ipv4-unicast state disabled
+nv set vrf default router bgp peer-group overlay address-family l2vpn-evpn state enabled
+nv set vrf default router bgp peer-group overlay bfd profile overlay
+nv set vrf default router bgp peer-group overlay multihop-ttl 2
+nv set vrf default router bgp peer-group overlay remote-as external
+nv set vrf default router bgp peer-group overlay update-source lo
+
+# Peer-group: underlay
+nv set vrf default router bgp peer-group underlay address-family ipv4-unicast state enabled
+nv set vrf default router bgp peer-group underlay address-family ipv4-unicast policy outbound route-map WEIGHTED_ECMP
+nv set vrf default router bgp peer-group underlay bfd profile default
+nv set vrf default router bgp peer-group underlay remote-as external
+{% endif %}
+
+{% if not is_l3 %}
 #============================================================================
 # Default Route
 #============================================================================
 nv set vrf default router static 0.0.0.0/0 address-family ipv4-unicast
 nv set vrf default router static 0.0.0.0/0 via {{ default_gateway }} type ipv4-address
-
+{% endif %}

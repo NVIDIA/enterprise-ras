@@ -6,6 +6,7 @@
 {% set cpu_ifaces = ifaces.cpu | default([]) | reject('equalto', 'eth0') | list %}
 {% set gpu_ifaces = ifaces.gpu | default([]) | reject('equalto', 'eth0') | list %}
 {% set gpu_ips = dev.gpu_ips | default([]) %}
+{% set gpu_interfaces = dev.gpu_interfaces | default([]) %}
 {% if cpu_ifaces | length > 0 or gpu_ifaces | length > 0 %}
 network:
   version: 2
@@ -14,11 +15,33 @@ network:
 {% for iface in cpu_ifaces %}
     {{ iface }}:
       dhcp4: no
+      optional: true
 {% endfor %}
+{% if gpu_interfaces | length > 0 %}
+{# Dual-plane: per-NIC plane-aware IPs + PBR table per NIC #}
+{% for gnic in gpu_interfaces %}
+    {{ gnic.iface }}:
+      dhcp4: no
+      optional: true
+      addresses:
+        - {{ gnic.ip }}
+      routing-policy:
+        - from: {{ gnic.ip.split('/')[0] }}/32
+          table: {{ gnic.table }}
+      routes:
+        - to: 0.0.0.0/0
+          via: {{ gnic.gateway }}
+          table: {{ gnic.table }}
+{% endfor %}
+{% else %}
+{# Single-plane: flat gpu_ips list, PBR on first GPU NIC only.
+   Address-less GPU NICs (when gpu_ips ran out) get optional:true so
+   systemd-networkd-wait-online doesn't block boot waiting on them. #}
 {% for iface in gpu_ifaces %}
-{% if loop.index0 < gpu_ips | length %}
     {{ iface }}:
       dhcp4: no
+      optional: true
+{% if loop.index0 < gpu_ips | length %}
       addresses:
         - {{ gpu_ips[loop.index0] }}
 {% if loop.index0 == 0 %}
@@ -32,7 +55,8 @@ network:
 {% endif %}
 {% endif %}
 {% endfor %}
-{% if cpu_ifaces | length > 0 %}
+{% endif %}
+{% if cpu_ifaces | length > 0 and dev.bond_ip is defined and dev.bond_ip %}
   bonds:
     bond0:
       interfaces:

@@ -25,4 +25,3 @@
     name: networking
     state: restarted
   failed_when: false
-

@@ -38,6 +38,8 @@ from typing import Dict, List, Optional, Set, Tuple
 import openpyxl
 
 from utils import generate_mac, classify_node, is_switch, is_valid_hostname
+from excel_parser import (build_wiremap_column_map, _wm_cell_ws,
+                          parse_nodes, build_nodes_function_map)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -48,10 +50,16 @@ from utils import generate_mac, classify_node, is_switch, is_valid_hostname
 # the range automatically (e.g., SN2201 swp49-52 uplinks).
 SWITCH_MODELS = {
     "core":    {"model": "SN5610", "ports": 64},
+    "csl":     {"model": "SN5610", "ports": 64},
+    "gsl":     {"model": "SN5610", "ports": 64},
     "oob":     {"model": "SN2201", "ports": 48},
     "edge":    {"model": "SN2201", "ports": 48},
     "air-oob": {"model": "SN2201", "ports": 48},
 }
+
+# Set of switch role keys, used by topology walks to distinguish switches
+# from servers / infra / unknown nodes.
+SWITCH_ROLES = frozenset(SWITCH_MODELS.keys())
 
 # Fallback OS images used when no version mapping is available in the workbook
 SWITCH_OS_FALLBACK = "cumulus-linux-vx-amd64-5.16.0.qcow2"
@@ -64,6 +72,8 @@ SERVER_OS = "generic/ubuntu2204"
 # the same topology without per-env conditionals.
 NODE_DEFAULTS = {
     "core":    {"cpu": 4, "memory": 4096, "storage": 20},
+    "csl":     {"cpu": 4, "memory": 4096, "storage": 20},
+    "gsl":     {"cpu": 4, "memory": 4096, "storage": 20},
     "oob":     {"cpu": 1, "memory": 2048, "storage": 20},
     "air-oob": {"cpu": 1, "memory": 2048, "storage": 20},
     "edge":    {"cpu": 1, "memory": 2048, "storage": 20},
@@ -113,6 +123,12 @@ class WiremapRow:
     switch_role: str       # Right-side device role (core-01, oob-switch-01, …) — used for classification
     switch_name: str       # Right-side actual device name (may differ from role for OEM naming)
     switch_port: str       # Right-side interface (swpN, ethNN, …)
+    enabled: bool = True   # False if either side's node is Enabled=No on the Nodes tab.
+                           # Disabled rows are KEPT (so breakout-analysis sees the
+                           # switch_port → subport mapping and emits unconnected stubs)
+                           # but skipped by node enumeration and link creation, so the
+                           # disabled node doesn't spawn a phantom Air VM. See feedback
+                           # memory: "Enabled=No keeps switch port wired".
 
 
 
@@ -161,26 +177,68 @@ def parse_wiremap_excel(excel_path: Path) -> List[WiremapRow]:
     """Read the Wire Map sheet from the Excel workbook.
 
     Returns a list of WiremapRow for every data row (skips the header).
+    Applies the Nodes-tab Function lookup so rows with blank Function
+    cells get their roles resolved from the single source of truth
+    (matches `excel_parser._build_wiremap_row_list` behavior).
     """
     wb = openpyxl.load_workbook(excel_path, data_only=True)
     if "Wire Map" not in wb.sheetnames:
         raise ValueError(f"Sheet 'Wire Map' not found in {excel_path}")
 
+    # Build the {hostname: canonical_function} lookup from the Nodes tab.
+    # Used to resolve role values for Wire Map rows where the Function cell
+    # is blank — same cascading lookup the parser uses.
+    nodes_map = {}
+    # Build name→Function map AND collect disabled hostnames. R3-7:
+    # topology generator previously emitted disabled nodes into the
+    # topology JSON, creating phantom Air VMs.
+    disabled_names: Set[str] = set()
+    if "Nodes" in wb.sheetnames:
+        try:
+            parsed = parse_nodes(wb["Nodes"])
+            nodes_map = build_nodes_function_map(parsed)
+            for n in parsed:
+                if n.get('status') == 'Disabled':
+                    name = (n.get('name') or '').strip()
+                    if name:
+                        disabled_names.add(name)
+        except Exception:
+            nodes_map = {}  # missing/garbled Nodes — fall through
+
+    def _resolve(role, name):
+        return (nodes_map.get(name) if name else None) or role
+
     ws = wb["Wire Map"]
     rows: List[WiremapRow] = []
+    col_map = build_wiremap_column_map(ws, sheet_kind='wiremap')
 
     for row_idx in range(2, ws.max_row + 1):
-        display_raw = _cell_str(ws, row_idx, COL_DISPLAY_IN_AIR).lower()
-        system_role = _cell_str(ws, row_idx, COL_SYSTEM_ROLE)
-        system_name = _cell_str(ws, row_idx, COL_SYSTEM_NAME) or system_role
-        nic_port = _cell_str(ws, row_idx, COL_NIC_PORT)
-        net_profile = _cell_str(ws, row_idx, COL_NET_PROFILE)
-        switch_role = _cell_str(ws, row_idx, COL_SWITCH_ROLE)
-        switch_name = _cell_str(ws, row_idx, COL_SWITCH_NAME) or switch_role
-        switch_port = _cell_str(ws, row_idx, COL_SWITCH_PORT)
+        display_raw = _wm_cell_ws(ws, row_idx, col_map, 'display_in_air').lower()
+        system_role_raw = _wm_cell_ws(ws, row_idx, col_map, 'system_role')
+        system_name = _wm_cell_ws(ws, row_idx, col_map, 'system_name') or system_role_raw
+        nic_port = _wm_cell_ws(ws, row_idx, col_map, 'nic_port')
+        net_profile = _wm_cell_ws(ws, row_idx, col_map, 'network_profile')
+        switch_role_raw = _wm_cell_ws(ws, row_idx, col_map, 'switch_role')
+        switch_name = _wm_cell_ws(ws, row_idx, col_map, 'switch_name') or switch_role_raw
+        switch_port = _wm_cell_ws(ws, row_idx, col_map, 'switch_port')
 
-        if not system_role:
+        # Skip empty/spacer rows: both Role AND Name cells blank.
+        if not system_role_raw and not system_name:
             continue
+
+        # R3-7 revised: KEEP rows for disabled nodes but tag them disabled.
+        # We need the switch_port info for breakout analysis (per feedback
+        # memory rule "Enabled=No keeps switch port wired") — otherwise the
+        # config emits bondNsM/swpNsM references but the topology has only
+        # parent swpN, and ifreload-nvue rolls the apply back. Downstream
+        # consumers (_build_nodes, _build_connected_links) skip disabled
+        # rows so no phantom Air VM is created.
+        row_enabled = (system_name not in disabled_names
+                       and switch_name not in disabled_names)
+
+        # Resolve roles via Nodes-tab lookup (cascading fallback).
+        system_role = _resolve(system_role_raw, system_name)
+        switch_role = _resolve(switch_role_raw, switch_name)
 
         rows.append(WiremapRow(
             display_in_air=(display_raw == "yes"),
@@ -191,6 +249,7 @@ def parse_wiremap_excel(excel_path: Path) -> List[WiremapRow]:
             switch_role=switch_role,
             switch_name=switch_name,
             switch_port=switch_port,
+            enabled=row_enabled,
         ))
 
     wb.close()
@@ -217,18 +276,25 @@ def parse_air_only_sheet(wb) -> List[WiremapRow]:
 
     ws = wb["Air_Only"]
     rows: List[WiremapRow] = []
+    try:
+        col_map = build_wiremap_column_map(ws, sheet_kind='air_only')
+    except ValueError:
+        # Air_Only sheet is sometimes used purely for non-row data (e.g.
+        # version-image mapping). If required headers are absent, treat as
+        # "no connection rows" rather than failing the whole generate.
+        return []
 
     for row_idx in range(2, ws.max_row + 1):
-        display_raw = _cell_str(ws, row_idx, 1).lower()
-        system_role = _cell_str(ws, row_idx, 2)
-        system_name = _cell_str(ws, row_idx, 3) or system_role
-        nic_port    = _cell_str(ws, row_idx, 4)
-        net_profile = _cell_str(ws, row_idx, 5)
-        switch_role = _cell_str(ws, row_idx, 6)
-        switch_name = _cell_str(ws, row_idx, 7) or switch_role
-        switch_port = _cell_str(ws, row_idx, 8)
+        display_raw = _wm_cell_ws(ws, row_idx, col_map, 'display_in_air').lower()
+        system_role = _wm_cell_ws(ws, row_idx, col_map, 'system_role')
+        system_name = _wm_cell_ws(ws, row_idx, col_map, 'system_name') or system_role
+        nic_port    = _wm_cell_ws(ws, row_idx, col_map, 'nic_port')
+        net_profile = _wm_cell_ws(ws, row_idx, col_map, 'network_profile')
+        switch_role = _wm_cell_ws(ws, row_idx, col_map, 'switch_role')
+        switch_name = _wm_cell_ws(ws, row_idx, col_map, 'switch_name') or switch_role
+        switch_port = _wm_cell_ws(ws, row_idx, col_map, 'switch_port')
 
-        if not system_role:
+        if not system_role and not system_name:
             continue
 
         rows.append(WiremapRow(
@@ -356,15 +422,34 @@ class TopologyGenerator:
         else:
             self._switch_os = {}
 
+        # OOB uplink mode — drives whether we inject the L2 air-oob-switch
+        # flat bridge (existing default) or the L3 three-Ubuntu-node trio
+        # (external-conn + external-dhcp + utility). Read from Settings sheet
+        # with same snake_case normalization as scripts/excel_parser.py.
+        self._oob_uplink_mode = "l2"
+        if "Settings" in wb.sheetnames:
+            ws_settings = wb["Settings"]
+            for row_idx in range(1, ws_settings.max_row + 1):
+                key = ws_settings.cell(row_idx, 1).value
+                value = ws_settings.cell(row_idx, 2).value
+                if key is None or value is None:
+                    continue
+                key_clean = str(key).strip().lower().replace(" ", "_").replace("-", "_")
+                if key_clean == "oob_uplink_mode":
+                    self._oob_uplink_mode = str(value).strip().lower()
+                    break
+
         wb.close()
 
         # Build actual-name → function/role mapping for OEM-named devices.
         # Classification helpers (is_switch, classify_node) need the function name.
+        # Only map when we have a non-empty role; otherwise classify_node falls
+        # back to the name itself (correctly recognising cust-net-edge-* etc.).
         self._name_to_role: Dict[str, str] = {}
         for r in self.rows:
-            if r.system_name and r.system_name != r.system_role:
+            if r.system_name and r.system_role and r.system_name != r.system_role:
                 self._name_to_role[r.system_name] = r.system_role
-            if r.switch_name and r.switch_name != r.switch_role:
+            if r.switch_name and r.switch_role and r.switch_name != r.switch_role:
                 self._name_to_role[r.switch_name] = r.switch_role
 
         # Per-server counter for sequential ethN assignment
@@ -400,10 +485,17 @@ class TopologyGenerator:
         """Build the complete topology dict."""
         nodes = self._build_nodes()
         links, switch_connected = self._build_connected_links()
-        nodes, links, switch_connected = self._inject_air_oob_switch(
-            nodes, links, switch_connected,
-        )
+        if self._oob_uplink_mode == "l3":
+            nodes, links, switch_connected = self._inject_l3_oob_nodes(
+                nodes, links, switch_connected,
+            )
+        else:
+            nodes, links, switch_connected = self._inject_air_oob_switch(
+                nodes, links, switch_connected,
+            )
         links += self._build_unconnected_stubs(switch_connected)
+        # Re-run layout now that all infra/injected nodes exist.
+        self._apply_layout(nodes)
 
         return {
             "format": "JSON",
@@ -416,6 +508,8 @@ class TopologyGenerator:
             },
             # Metadata for air-deploy.py Node Instructions
             "_air_oob": getattr(self, '_air_oob_metadata', {}),
+            "_l3_oob": getattr(self, '_l3_oob_metadata', {}),
+            "_oob_uplink_mode": self._oob_uplink_mode,
         }
 
     def write(self, output_path: Path) -> None:
@@ -456,10 +550,21 @@ class TopologyGenerator:
         for r in self.rows:
             if not r.display_in_air:
                 continue
-            if r.system_role and is_valid_hostname(r.system_name):
+            # Skip rows whose A-side or B-side node is disabled — those rows
+            # exist only to retain switch-port info for breakout analysis
+            # (see WiremapRow.enabled). Don't spawn a phantom Air VM for them.
+            if not r.enabled:
+                continue
+            # A-side: collect if we have a valid hostname (regardless of
+            # whether the Function column was filled — it's optional now).
+            if is_valid_hostname(r.system_name):
                 device_names.add(r.system_name)
-            if r.switch_role and r.switch_role.upper() not in ("NA", "OUTBOUND") \
-                    and is_valid_hostname(r.switch_name):
+            # B-side: same. Skip when role explicitly says NA/OUTBOUND
+            # (those aren't real peers) — note the role check is _OR_
+            # against blank, since post-Nodes-lookup an empty Function (B)
+            # cell is normal.
+            sr_upper = r.switch_role.upper() if r.switch_role else ''
+            if sr_upper not in ("NA", "OUTBOUND") and is_valid_hostname(r.switch_name):
                 device_names.add(r.switch_name)
 
         nodes = {}
@@ -481,7 +586,8 @@ class TopologyGenerator:
                 "network_pci": {},
             }
 
-        self._apply_layout(nodes)
+        # Layout is applied later (in generate()) once air-oob-switch
+        # has been injected — see comment there.
         return nodes
 
     def _resolve_os(self, name: str) -> str:
@@ -501,6 +607,9 @@ class TopologyGenerator:
         # air-oob and edge switches share the same image as oob (both SN2201)
         if role in ("edge", "air-oob") and "oob" in self._switch_os:
             return self._switch_os["oob"]
+        # csl and gsl share the same image as core (all SN5610)
+        if role in ("csl", "gsl") and "core" in self._switch_os:
+            return self._switch_os["core"]
         return SWITCH_OS_FALLBACK
 
     # ---- layout -------------------------------------------------------------
@@ -513,6 +622,12 @@ class TopologyGenerator:
           - Left:   infrastructure (edge switches, OOB switches, dhcp/oob-server)
           - Center: core switches, k8s, bcme, storage columns
           - Right:  compute (su-*) nodes grouped by SU
+
+        After role-based placement, a final sweep scatters any nodes that
+        didn't get explicit positions and resolves overlaps — keeps the
+        Air UI readable when an arch ships nodes the layout heuristics
+        don't know about (e.g. ext-storage in L2 mode, future virtual
+        nodes added to the Wire Map).
         """
         G = 275  # grid unit (pixels)
 
@@ -522,18 +637,42 @@ class TopologyGenerator:
         # Categorise nodes by role
         edges = sorted(n for n in nodes if _role(n) == "edge")
         cores = sorted(n for n in nodes if _role(n) == "core")
+        # csl (CPU/Storage Leaf) is positionally equivalent to core in
+        # non-collapsed designs (2-8-9-800 dedicated_gpu).
+        csls = sorted(n for n in nodes if _role(n) == "csl")
+        gsls_p1 = sorted(n for n in nodes if _role(n) == "gsl" and "plane1" in n.lower())
+        gsls_p2 = sorted(n for n in nodes if _role(n) == "gsl" and "plane2" in n.lower())
         oobs = sorted(n for n in nodes if _role(n) == "oob")
         infras = sorted(n for n in nodes if _role(n) == "infra")
         k8s_nodes = sorted(n for n in nodes if n.lower().startswith("k8s"))
         bcme_nodes = sorted(n for n in nodes if n.lower().startswith("bcme"))
+        bcm_nodes = sorted(n for n in nodes
+                           if n.lower().startswith("bcm-") and not n.lower().startswith("bcme"))
+        slurm_nodes = sorted(n for n in nodes if n.lower().startswith("slurm"))
         storage_nodes = sorted(n for n in nodes if _role(n) == "storage")
-        # Support nodes that aren't k8s/bcme/storage
+        # Support nodes that aren't already in a more specific bucket
+        _specific = set(k8s_nodes) | set(bcme_nodes) | set(bcm_nodes) | set(slurm_nodes)
         support_other = sorted(
             n for n in nodes
-            if _role(n) == "support"
-            and n not in k8s_nodes and n not in bcme_nodes
+            if _role(n) == "support" and n not in _specific
         )
         compute = sorted(n for n in nodes if _role(n) == "compute")
+
+        # Dedicated-GPU layout (csl/gsl arch, e.g. 2-8-9-800) — distinct
+        # placement rules:
+        #   row 0 (y = -G):  GSLs on a single row, plane1 leaves grouped left,
+        #                    plane2 leaves grouped right (one-column gap between).
+        #   row 1 (y =  0):  CSLs adjacent on the same row, centered under GSLs.
+        #   row 2 (y =  G):  OOB row — air-oob-switch, oob-switches, dhcp-oob,
+        #                    oob-server, dhcp-edge all on one row, in that order.
+        #   row 3+ (y = 2G+): server columns (gpu | bcm | slurm | k8s | …).
+        if csls or gsls_p1 or gsls_p2:
+            self._apply_dedicated_gpu_layout(
+                nodes, G, csls, gsls_p1, gsls_p2, oobs, infras,
+                compute, bcm_nodes, slurm_nodes, k8s_nodes, bcme_nodes,
+                storage_nodes, support_other,
+            )
+            return
 
         # Parse compute nodes into SU groups: { su_id: [node_names sorted] }
         su_groups: Dict[str, list] = {}
@@ -591,7 +730,8 @@ class TopologyGenerator:
             else:
                 nodes[name]["positioning"] = {"x": i * G, "y": 0}
 
-        # Place core switches
+        # Place core switches (collapsed/converged designs only — dedicated_gpu
+        # arches are handled by _apply_dedicated_gpu_layout above).
         if len(cores) >= 1:
             nodes[cores[0]]["positioning"] = {
                 "x": core_start_col * G, "y": G,
@@ -603,10 +743,15 @@ class TopologyGenerator:
         for i, name in enumerate(cores[2:], 2):
             nodes[name]["positioning"] = {"x": (core2_col + i - 1) * G, "y": G}
 
-        # Place OOB switches (row 2, left side)
+        # Place OOB switches — stacked in a single column (left infra zone).
+        # In L2 mode the air-oob-switch sits next to them; in L3 mode utility
+        # sits to their LEFT (one column left). The column placement keeps
+        # them visually grouped regardless of how many OOB switches the arch
+        # has (2, 3, or more).
         for i, name in enumerate(oobs):
             nodes[name]["positioning"] = {
-                "x": (infra_x_base + i) * G, "y": 2 * G,
+                "x": (infra_x_base + 1) * G,
+                "y": (2 + i) * G,
             }
 
         # Place air-oob-switch (row 3, left side — between OOB switches and infra)
@@ -664,6 +809,215 @@ class TopologyGenerator:
                 "x": (infra_x_base + i) * G, "y": infra_row * G,
             }
 
+        # L3 OOB layout overrides — see docs/plans/2026-05-20-l3-oob-air-topology.md.
+        # Visual hierarchy from top to bottom:
+        #   y = -2G : external-conn, external-dhcp   (Ubuntu, simulated ISP/DC)
+        #   y = -G  : cust-net-edge-01, cust-net-edge-02   (Cumulus, EXIT VRF)
+        #   y =  G  : cores                                 (existing)
+        #   y = 2G  : oob-switches + first server row       (existing)
+        #   ...     : server columns + utility in infra row
+        if self._oob_uplink_mode == "l3":
+            # Place cust-net-edge above cores (one row up).
+            if len(edges) >= 1 and edges[0] in nodes:
+                nodes[edges[0]]["positioning"] = {
+                    "x": core_start_col * G, "y": -G,
+                }
+            if len(edges) >= 2 and edges[1] in nodes:
+                nodes[edges[1]]["positioning"] = {
+                    "x": core2_col * G, "y": -G,
+                }
+            # external-conn above cust-net-edge-01 (top row), external-dhcp
+            # LEFT of cust-net-edge-01 (same row as the edges).
+            if "external-conn" in nodes:
+                nodes["external-conn"]["positioning"] = {
+                    "x": core_start_col * G, "y": -2 * G,
+                }
+            if "external-dhcp" in nodes:
+                nodes["external-dhcp"]["positioning"] = {
+                    "x": (core_start_col - 1) * G, "y": -G,
+                }
+            # utility sits to the LEFT of oob-switch-01 (same row).
+            if "utility" in nodes:
+                nodes["utility"]["positioning"] = {
+                    "x": infra_x_base * G,
+                    "y": 2 * G,
+                }
+
+        self._resolve_position_collisions(nodes, G)
+
+    def _resolve_position_collisions(self, nodes: dict, G: int) -> None:
+        """Resolve overlapping (x, y) positions in the Air topology.
+
+        Two failure modes this catches:
+          - Nodes that never received an explicit positioning call sit at
+            the default (0, 0) — happens when a Wire Map references a
+            virtual node (e.g. ext-storage-*) the layout heuristic doesn't
+            classify.
+          - Two role-based placements that happen to land on the same
+            grid cell (e.g. oob-switch-03 + dhcp-oob both at (0, 4G)
+            when the arch templates 3 OOB switches).
+
+        Strategy: any group of >1 node sharing a coordinate gets fanned
+        out horizontally on the grid starting at the original x. Stable
+        order: alphabetical by name, so regenerations are deterministic.
+        """
+        from collections import defaultdict
+        occupied = defaultdict(list)
+        for name, nd in nodes.items():
+            pos = nd.get("positioning")
+            if not isinstance(pos, dict):
+                continue
+            occupied[(pos.get("x", 0), pos.get("y", 0))].append(name)
+        for (x, y), names in occupied.items():
+            if len(names) <= 1:
+                continue
+            # Stable order so output is deterministic.
+            names.sort()
+            # Leave the first node where it is; shift the rest right by G.
+            # If a shifted cell is itself occupied, keep stepping until
+            # we find empty space.
+            all_taken = {k for k, v in occupied.items()}
+            for i, n in enumerate(names[1:], 1):
+                step = i
+                while True:
+                    candidate = (x + step * G, y)
+                    if candidate not in all_taken:
+                        break
+                    step += 1
+                nodes[n]["positioning"] = {"x": candidate[0], "y": candidate[1]}
+                all_taken.add(candidate)
+
+    def _apply_dedicated_gpu_layout(
+        self, nodes, G, csls, gsls_p1, gsls_p2, oobs, infras,
+        compute, bcm_nodes, slurm_nodes, k8s_nodes, bcme_nodes,
+        storage_nodes, support_other,
+    ) -> None:
+        """Placement for non-collapsed designs (e.g. 2-8-9-800 dual-plane).
+
+        Visual structure (validated against the Air UI by hand):
+
+            y = -G    Air infra row:    dhcp-edge | oob-server | air-oob | dhcp-oob
+            y =  0    Switch row:       CSL-01 |·| CSL-02 |····| GSLs plane1 |·| GSLs plane2
+                                                ▲           ▲                  ▲
+            y = G+    Server columns:        ctrl col    oob col            gpu col
+                                            (k8s/bcm/  (oob-switch       (gpu compute,
+                                             slurm)     vertical stack)   between planes)
+
+        Three vertical channels interleave between switch positions on the
+        switch row; servers stack downward in those channels. Air-management
+        nodes sit on a row above the switches to keep the data plane (CSL/GSL
+        + servers) visually grouped.
+        """
+        # ---- Switch row (y = 0): CSLs + GSLs ----
+        # CSLs use even-spaced columns so the control-plane column can slot
+        # between them.
+        csl_start = 6
+        csl_step = 2
+        for i, name in enumerate(csls):
+            nodes[name]["positioning"] = {"x": (csl_start + i * csl_step) * G, "y": 0}
+
+        # OOB switch column sits 2 cols to the right of the last CSL.
+        csl_end = csl_start + (len(csls) - 1) * csl_step if csls else csl_start
+        oob_col = csl_end + 2
+
+        # GSL plane1 — adjacent leaves, starting 2 cols after the OOB column.
+        gsl_p1_start = oob_col + 2
+        for i, name in enumerate(gsls_p1):
+            nodes[name]["positioning"] = {"x": (gsl_p1_start + i) * G, "y": 0}
+
+        # GPU column sits between GSL plane1 and plane2.
+        gpu_col = gsl_p1_start + len(gsls_p1)
+
+        # GSL plane2 — adjacent leaves, one column past the GPU column.
+        gsl_p2_start = gpu_col + 1
+        for i, name in enumerate(gsls_p2):
+            nodes[name]["positioning"] = {"x": (gsl_p2_start + i) * G, "y": 0}
+
+        # ---- Air infra row (y = -G) ----
+        # L2 mode: dhcp-edge | oob-server | air-oob | dhcp-oob
+        # L3 mode: external-conn | external-dhcp | (cust-net-edge already
+        # placed in edges row) | utility (sits above OOB column on VLAN 200)
+        ctrl_col = csl_start + 1   # between CSL-01 and CSL-02
+        air_y = -G
+        placements = {
+            # L2 mode infra
+            'dhcp-edge':       ctrl_col,
+            'oob-server-01':   ctrl_col + 2,
+            'air-oob-switch':  oob_col,
+            'dhcp-oob':        oob_col + 1,
+            # L3 mode infra (none of these clash with L2 names since they're
+            # mode-exclusive — only the relevant set will exist in nodes)
+            'external-conn':   ctrl_col,
+            'external-dhcp':   ctrl_col + 2,
+            'utility':         oob_col + 1,
+        }
+        placed_infra = set()
+        for name, col in placements.items():
+            if name in nodes:
+                nodes[name]["positioning"] = {"x": col * G, "y": air_y}
+                placed_infra.add(name)
+        # Any extra infra nodes get sequential columns past dhcp-oob.
+        next_extra = oob_col + 2
+        for name in infras:
+            if name not in placed_infra:
+                nodes[name]["positioning"] = {"x": next_extra * G, "y": air_y}
+                next_extra += 1
+
+        # ---- Server columns (y = G+) ----
+        server_row_start = 1
+        # Control-plane column: k8s/bcm/slurm/bcme/storage/support stacked
+        ctrl_servers = (
+            list(k8s_nodes) + list(bcm_nodes) + list(slurm_nodes)
+            + list(support_other) + list(bcme_nodes) + list(storage_nodes)
+        )
+        for i, name in enumerate(ctrl_servers):
+            nodes[name]["positioning"] = {
+                "x": ctrl_col * G, "y": (server_row_start + i) * G,
+            }
+        # OOB switch column
+        for i, name in enumerate(oobs):
+            nodes[name]["positioning"] = {
+                "x": oob_col * G, "y": (server_row_start + i) * G,
+            }
+        # GPU column
+        for i, name in enumerate(compute):
+            nodes[name]["positioning"] = {
+                "x": gpu_col * G, "y": (server_row_start + i) * G,
+            }
+
+        # L3 OOB layout overrides for dedicated-GPU arches.
+        # Hierarchy (top to bottom):
+        #   y = -2G : external-conn, external-dhcp
+        #   y =  -G : cust-net-edge-01, cust-net-edge-02
+        #   y =   0 : CSLs and GSLs (existing row)
+        if self._oob_uplink_mode == "l3":
+            edges = sorted(
+                n for n in nodes
+                if classify_node(self._name_to_role.get(n, n)) == "edge"
+            )
+            # cust-net-edge above CSLs.
+            if len(edges) >= 1 and edges[0] in nodes:
+                nodes[edges[0]]["positioning"] = {"x": csl_start * G, "y": -G}
+            if len(edges) >= 2 and edges[1] in nodes:
+                # Right-side edge above the second CSL (or above GSL plane2 if no
+                # second CSL exists, but dedicated-GPU arches always have 2 CSLs).
+                target_x = (csl_start + csl_step) * G if len(csls) > 1 else (csl_start + 4) * G
+                nodes[edges[1]]["positioning"] = {"x": target_x, "y": -G}
+            # external-conn above cust-net-edge-01 (top), external-dhcp LEFT
+            # of cust-net-edge-01 (same row as edges).
+            if "external-conn" in nodes:
+                nodes["external-conn"]["positioning"] = {"x": csl_start * G, "y": -2 * G}
+            if "external-dhcp" in nodes:
+                nodes["external-dhcp"]["positioning"] = {"x": (csl_start - 1) * G, "y": -G}
+            # utility sits to the LEFT of the OOB column (one col left of oob_col).
+            if "utility" in nodes:
+                nodes["utility"]["positioning"] = {
+                    "x": (oob_col - 1) * G,
+                    "y": server_row_start * G,
+                }
+
+        self._resolve_position_collisions(nodes, G)
+
     # ---- connected links --------------------------------------------------
 
     def _build_connected_links(
@@ -691,6 +1045,10 @@ class TopologyGenerator:
 
         for r in self.rows:
             if not r.display_in_air:
+                continue
+            # Disabled rows are retained for breakout analysis only — don't
+            # create a link to a node that won't be in the topology.
+            if not r.enabled:
                 continue
             if not r.switch_role or r.switch_role.upper() == "NA":
                 continue
@@ -730,6 +1088,10 @@ class TopologyGenerator:
                     },
                     "outbound",
                 ])
+                # Track the port as connected so the unconnected-stub pass
+                # doesn't emit a duplicate for it.
+                if is_switch(r.system_role):
+                    switch_connected[r.system_name].add(system_port)
                 continue
 
             if not r.switch_port:
@@ -853,7 +1215,8 @@ class TopologyGenerator:
             other_name = other_ep["node"].lower()
 
             # Switch eth0 → rewire to air-oob-switch
-            if other_ep["interface"] == "eth0" and other_role in ("core", "oob", "edge"):
+            if other_ep["interface"] == "eth0" and other_role in SWITCH_ROLES \
+                    and other_role != "air-oob":
                 swp = _alloc_swp()
                 new_links.append(self._make_link(other_ep["node"], "eth0", AIR_OOB, swp))
                 switch_connected[oob_ep["node"]].discard(oob_ep["interface"])
@@ -878,7 +1241,7 @@ class TopologyGenerator:
         }
         for sw_name in sorted(nodes):
             role = classify_node(self._name_to_role.get(sw_name, sw_name))
-            if role not in ("core", "oob", "edge"):
+            if role not in SWITCH_ROLES or role == "air-oob":
                 continue
             if sw_name in already_on_air_oob:
                 continue
@@ -974,6 +1337,292 @@ class TopologyGenerator:
             'oob_switch_names': oob_switch_names,
             'connected_ports': sorted(air_connected, key=lambda p: int(p.replace("swp", ""))),
         }
+
+        return nodes, new_links, switch_connected
+
+    # ---- l3-oob injection -------------------------------------------------
+
+    def _inject_l3_oob_nodes(
+        self,
+        nodes: dict,
+        links: list,
+        switch_connected: Dict[str, Set[str]],
+    ) -> Tuple[dict, list, Dict[str, Set[str]]]:
+        """Inject L3-OOB Ubuntu trio (external-conn, external-dhcp, utility).
+
+        In L3 mode every cluster switch's eth0 is rerouted to cust-net-edge-01's
+        L2 Air-mgmt bridge (so ZTP works without the OOB switches being
+        pre-configured). external-conn provides outbound NAT, external-dhcp
+        answers switch ZTP DHCP, utility sits on the OOB VLAN 200 plane as
+        jump host + server-ZTP DHCP server.
+
+        Design doc: docs/plans/2026-05-20-l3-oob-air-topology.md
+        """
+        EDGE = "cust-net-edge-01"
+        OOB = "oob-switch-01"
+
+        # Required anchor nodes must exist in the Wire Map. If they don't,
+        # bail out with a warning rather than mangle the topology.
+        if EDGE not in nodes or OOB not in nodes:
+            print(f"    [WARN] L3 OOB mode requested but anchor nodes missing "
+                  f"(need {EDGE} and {OOB}); skipping L3 injection.")
+            return nodes, links, switch_connected
+
+        # Reserve cust-net-edge-01:swp1 / swp2 for external-conn / external-dhcp.
+        # Switch eth0s start at swp3 to keep the fixed ports stable.
+        edge_used = switch_connected.setdefault(EDGE, set())
+        edge_next_port = 3
+        edge_ext_conn_port = "swp1"
+        edge_ext_dhcp_port = "swp2"
+
+        def _alloc_edge_port() -> str:
+            nonlocal edge_next_port
+            while f"swp{edge_next_port}" in edge_used:
+                edge_next_port += 1
+            port = f"swp{edge_next_port}"
+            edge_used.add(port)
+            edge_next_port += 1
+            return port
+
+        oob_used = switch_connected.setdefault(OOB, set())
+
+        def _alloc_oob_port() -> str:
+            # Server eth0s already occupy swp1..N from Wire Map; utility
+            # goes on the next free port.
+            for n in range(1, 49):
+                cand = f"swp{n}"
+                if cand not in oob_used:
+                    oob_used.add(cand)
+                    return cand
+            raise RuntimeError(f"No free port on {OOB} for utility:eth0")
+
+        # --- Pass 1: rewrite existing links ------------------------------
+        # Drop dead Wire-Map links from dhcp-oob/oob-server-01 (L2-mode
+        # infra nodes) — those nodes don't exist in L3 mode. Rewire any
+        # switch eth0 currently landing on an OOB switch onto cust-net-edge-01.
+        rewired_switches: Set[str] = set()
+        new_links: list = []
+        for link in links:
+            if not (isinstance(link[0], dict) and isinstance(link[1], dict)):
+                new_links.append(link)
+                continue
+            ep0, ep1 = link[0], link[1]
+            name0, name1 = ep0["node"].lower(), ep1["node"].lower()
+
+            # Drop legacy dhcp-oob / oob-server-01 connections — they
+            # appear in Wire Map for L2 mode but have no role in L3.
+            if any("dhcp-oob" in n or "oob-server" in n for n in (name0, name1)):
+                continue
+
+            # Switch eth0 → re-home to cust-net-edge-01. Identify the switch
+            # endpoint: must be on a switch role AND using interface 'eth0'.
+            # This also handles the case where Wire Map already pinned eth0
+            # to a cust-net-edge node (peer role is 'edge'): without dropping
+            # the original link here, Pass 2 would add a second eth0 link
+            # and Air rejects duplicate (node, interface) endpoints.
+            sw_ep, other_ep = None, None
+            for cand_sw, cand_other in ((ep0, ep1), (ep1, ep0)):
+                role = classify_node(
+                    self._name_to_role.get(cand_sw["node"], cand_sw["node"])
+                )
+                if (cand_sw["interface"] == "eth0"
+                        and role in SWITCH_ROLES
+                        and role != "edge"
+                        and role != "air-oob"):
+                    sw_ep, other_ep = cand_sw, cand_other
+                    break
+            if sw_ep is not None:
+                # Drop the original eth0 link; we'll re-create it pointing at EDGE.
+                # Free up the port on the OOB/edge switch (other_ep) so it's
+                # still available for the unconnected-stubs pass.
+                if other_ep["node"] in switch_connected:
+                    switch_connected[other_ep["node"]].discard(other_ep["interface"])
+                rewired_switches.add(sw_ep["node"])
+                continue
+
+            new_links.append(link)
+
+        # --- Pass 1b: wire cust-net-edge nodes to cores (BGP EXIT VRF) ---
+        # Wire Map "Edge Uplink" rows have blank switch_role (the customer
+        # network doesn't fit a standard function), so _build_connected_links
+        # skipped them. In L3 mode we need these uplinks live for the EXIT
+        # VRF path, so re-scan self.rows and add them here.
+        used_endpoints = set()
+        for link in new_links:
+            if isinstance(link[0], dict) and isinstance(link[1], dict):
+                used_endpoints.add((link[0]["node"], link[0]["interface"]))
+                used_endpoints.add((link[1]["node"], link[1]["interface"]))
+        for r in self.rows:
+            if not r.display_in_air:
+                continue
+            # Skip disabled-node rows here too — Pass 1b creates LINKS, and
+            # _build_nodes won't emit the disabled node, so a link to it
+            # would dangle and Air would reject the topology.
+            if not r.enabled:
+                continue
+            if not (r.switch_name and r.switch_name.startswith("cust-net-edge")):
+                continue
+            if not (r.system_name and r.switch_port and r.nic_port):
+                continue
+            if not is_valid_hostname(r.system_name) or not is_valid_hostname(r.switch_name):
+                continue
+            left_ep = (r.system_name, r.nic_port)
+            right_ep = (r.switch_name, r.switch_port)
+            if left_ep in used_endpoints or right_ep in used_endpoints:
+                continue
+            used_endpoints.add(left_ep)
+            used_endpoints.add(right_ep)
+            new_links.append(self._make_link(
+                r.system_name, r.nic_port, r.switch_name, r.switch_port,
+            ))
+            switch_connected.setdefault(r.system_name, set()).add(r.nic_port)
+            switch_connected.setdefault(r.switch_name, set()).add(r.switch_port)
+
+        # --- Pass 2: connect every cluster-switch eth0 to cust-net-edge-01 ----
+        # Includes both switches we rewired above and any switch that didn't
+        # have an explicit Wire Map eth0 link. Match "eth0 already on ANY
+        # cust-net-edge" (not just -01) so we don't double-link a switch
+        # whose Wire Map eth0 row pointed at cust-net-edge-02 and somehow
+        # survived Pass 1's rewrite.
+        already_on_edge = set()
+        for link in new_links:
+            if not (isinstance(link[0], dict) and isinstance(link[1], dict)):
+                continue
+            n0, n1 = link[0].get("node", ""), link[1].get("node", "")
+            if not (n0.startswith("cust-net-edge") or n1.startswith("cust-net-edge")):
+                continue
+            for ep in link:
+                if ep.get("interface") == "eth0":
+                    already_on_edge.add(ep["node"])
+        for sw_name in sorted(nodes):
+            role = classify_node(self._name_to_role.get(sw_name, sw_name))
+            if role not in SWITCH_ROLES or role in ("edge", "air-oob"):
+                continue
+            if sw_name in already_on_edge:
+                continue
+            port = _alloc_edge_port()
+            new_links.append(self._make_link(sw_name, "eth0", EDGE, port))
+            switch_connected.setdefault(sw_name, set()).add("eth0")
+
+        # Mark the reserved fixed ports as occupied on EDGE.
+        edge_used.add(edge_ext_conn_port)
+        edge_used.add(edge_ext_dhcp_port)
+
+        # --- Pass 3: create the three Ubuntu nodes ---------------------------
+        infra_defaults = NODE_DEFAULTS.get("infra", NODE_DEFAULTS["unknown"])
+
+        def _ubuntu_node() -> dict:
+            return {
+                "cpu": infra_defaults["cpu"],
+                "memory": infra_defaults["memory"],
+                "storage": infra_defaults["storage"],
+                "positioning": {"x": 0, "y": 0},
+                "os": SERVER_OS,
+                "features": {"uefi": False, "tpm": False},
+                "pxehost": False,
+                "secureboot": False,
+                "oob": False,
+                "emulation_type": None,
+                "network_pci": {},
+            }
+
+        # external-conn: NAT egress. eth1 → cust-net-edge-01 (primary path),
+        # eth2 → cust-net-edge-02 (HA path). Both edges advertise default-
+        # route-origination, cores ECMP between them; each edge has its own
+        # bridge SVI + static 0/0 toward external-conn on its respective
+        # subnet (172.20.0.0/24 via -01, 172.20.1.0/24 via -02).
+        EDGE2 = "cust-net-edge-02"
+        nodes["external-conn"] = _ubuntu_node()
+        new_links.append([
+            {"interface": "eth0", "node": "external-conn",
+             "mac": generate_mac("external-conn", "eth0"), "network_pci": None},
+            "outbound",
+        ])
+        new_links.append(self._make_link("external-conn", "eth1", EDGE, edge_ext_conn_port))
+        if EDGE2 in nodes:
+            edge2_used = switch_connected.setdefault(EDGE2, set())
+            edge2_ext_conn_port = "swp1"
+            edge2_used.add(edge2_ext_conn_port)
+            new_links.append(self._make_link(
+                "external-conn", "eth2", EDGE2, edge2_ext_conn_port,
+            ))
+
+        # external-dhcp: switch ZTP DHCP + EXIT-VRF relay scopes
+        nodes["external-dhcp"] = _ubuntu_node()
+        new_links.append([
+            {"interface": "eth0", "node": "external-dhcp",
+             "mac": generate_mac("external-dhcp", "eth0"), "network_pci": None},
+            "outbound",
+        ])
+        new_links.append(self._make_link("external-dhcp", "eth1", EDGE, edge_ext_dhcp_port))
+
+        # eth2: customer-DC-side leg for EXIT-VRF inter-VRF DHCP relay
+        # testing. cust-net-edge-01 brings this swp up as an L3 interface
+        # (10.88.88.1/24) and `redistribute connected` (already on the
+        # cust-net-edge BGP block) advertises 10.88.88.0/24 to the cores'
+        # EXIT VRF via the existing ESL underlay eBGP session. Pairs with
+        # external-dhcp:eth2 = 10.88.88.88/24 in L3_TRIO_NETPLAN. See
+        # docs/plans/2026-05-27-l3-oob-exit-dhcp-relay.md.
+        edge_ext_dhcp_eth2_port = _alloc_edge_port()
+        new_links.append(self._make_link(
+            "external-dhcp", "eth2", EDGE, edge_ext_dhcp_eth2_port,
+        ))
+
+        # utility: server ZTP DHCP + jumpbox + status page.
+        # eth0 → outbound matches the dhcp-oob convention and is what Air
+        # uses to expose SSH/HTTP services to the operator (Air services
+        # bind to the node's outbound interface).
+        # eth1 → oob-switch-01 puts utility on VLAN 200 (OOB VRF) so it
+        # can L2-broadcast DHCP to ZTP'ing servers.
+        # eth2 → cust-net-edge-01 puts utility on the same Air-mgmt L2
+        # bridge as every cluster switch's eth0 (172.20.0.0/24). Without
+        # this link, validate-config and any Ansible play that connects
+        # from the jump host to switches gets "no route to host" — utility
+        # has no path to the Air-mgmt subnet otherwise.
+        nodes["utility"] = _ubuntu_node()
+        new_links.append([
+            {"interface": "eth0", "node": "utility",
+             "mac": generate_mac("utility", "eth0"), "network_pci": None},
+            "outbound",
+        ])
+        utility_port = _alloc_oob_port()
+        new_links.append(self._make_link("utility", "eth1", OOB, utility_port))
+        utility_edge_port = _alloc_edge_port()
+        new_links.append(self._make_link("utility", "eth2", EDGE, utility_edge_port))
+
+        # ext-storage-*: customer-side simulated storage aggregate, wired to
+        # CSL swp63 ports via Wire Map (eth1, eth2 for BGP unnumbered). They
+        # also need an eth0 on the Air-mgmt bridge (cust-net-edge-01) so
+        # they can DHCP a 172.20.0.x lease, get a default route via
+        # external-conn NAT, and resolve archive.ubuntu.com to apt-install
+        # FRR at first boot. Without this, the NI's apt-get hangs on DNS.
+        # Pattern mirrors how every switch eth0 lands on cust-net-edge-01.
+        ext_storage_names = sorted(
+            n for n in nodes if n.startswith("ext-storage-")
+        )
+        for ext_name in ext_storage_names:
+            ext_edge_port = _alloc_edge_port()
+            new_links.append(self._make_link(
+                ext_name, "eth0", EDGE, ext_edge_port,
+            ))
+
+        # Store L3 metadata so air-deploy.py can resolve roles by name.
+        self._l3_oob_metadata = {
+            "jump_host": "utility",
+            "ansible_target": "utility",
+            "status_page_host": "utility",
+            "nat_host": "external-conn",
+            "dhcp_relay_server": "external-dhcp",
+            "edge_switch": EDGE,
+            "oob_switch": OOB,
+            "rewired_switches": sorted(rewired_switches),
+            "utility_air_mgmt_iface": "eth2",
+        }
+
+        print(f"    L3 OOB topology: "
+              f"{len([n for n in nodes if classify_node(self._name_to_role.get(n, n)) in SWITCH_ROLES and classify_node(self._name_to_role.get(n, n)) not in ('edge', 'air-oob')])} "
+              f"switch eth0s on {EDGE}, "
+              f"utility on {OOB}:{utility_port}")
 
         return nodes, new_links, switch_connected
 
@@ -1150,12 +1799,15 @@ class TopologyValidator:
         if "Air_Only" in wb.sheetnames:
             self.rows = parse_air_only_sheet(wb) + self.rows
         wb.close()
-        # Build actual-name → function/role mapping
+        # Build actual-name → function/role mapping. Skip empty roles so
+        # classify_node falls back to the name (e.g., cust-net-edge-01 →
+        # 'edge'); storing '' would make classify_node return 'unknown'
+        # and break the is_switch check below.
         self._name_to_role: Dict[str, str] = {}
         for r in self.rows:
-            if r.system_name and r.system_name != r.system_role:
+            if r.system_name and r.system_role and r.system_name != r.system_role:
                 self._name_to_role[r.system_name] = r.system_role
-            if r.switch_name and r.switch_name != r.switch_role:
+            if r.switch_name and r.switch_role and r.switch_name != r.switch_role:
                 self._name_to_role[r.switch_name] = r.switch_role
         self.errors: List[str] = []
         self.warnings: List[str] = []
@@ -1184,6 +1836,12 @@ class TopologyValidator:
         for r in self.rows:
             if not r.display_in_air:
                 continue
+            # Mirror the generator's enabled gate — disabled-node rows are
+            # retained in self.rows only so _check_unconnected_stubs sees
+            # the breakout info; they should NOT count as "expected nodes"
+            # in the validator's missing-node check.
+            if not r.enabled:
+                continue
             # Track Air-only nodes separately (Air - prefixed network profiles)
             is_air_row = r.net_profile and r.net_profile.startswith('Air')
             if r.system_role:
@@ -1194,16 +1852,29 @@ class TopologyValidator:
                     air_only_devices.add(r.system_name)
                 else:
                     wiremap_devices.add(r.system_name)
-            if r.switch_role and r.switch_role.upper() not in ("NA", "OUTBOUND"):
-                if not is_valid_hostname(r.switch_name):
-                    continue
-                if is_air_row:
-                    air_only_devices.add(r.switch_name)
-                else:
-                    wiremap_devices.add(r.switch_name)
+            # Track the B-side device unless the role is explicitly OUTBOUND
+            # (which is a sink, not a device). Blank role and "NA" are both
+            # valid — cust-net-edge-* and ext-storage-* rows often carry NA
+            # or blank function because they're "Edge Uplink" / external
+            # device connections that don't map to a standard function.
+            if r.switch_name and is_valid_hostname(r.switch_name):
+                if not (r.switch_role and r.switch_role.upper() == "OUTBOUND"):
+                    if is_air_row:
+                        air_only_devices.add(r.switch_name)
+                    else:
+                        wiremap_devices.add(r.switch_name)
 
-        # Nodes always injected by the generator (Air infrastructure)
-        auto_injected = {"air-oob-switch", "dhcp-oob", "oob-server-01"}
+        # Nodes always injected by the generator (Air infrastructure).
+        # L2 mode injects the air-oob-switch flat-bridge trio; L3 mode injects
+        # the external-conn / external-dhcp / utility Ubuntu trio. Whitelist
+        # both sets so a topology in either mode validates cleanly.
+        # dhcp-edge is the legacy 2-8-9-400 inter-VRF DHCP-relay node.
+        auto_injected = {
+            # L2 mode
+            "air-oob-switch", "dhcp-oob", "oob-server-01", "dhcp-edge",
+            # L3 mode
+            "external-conn", "external-dhcp", "utility",
+        }
 
         # All devices the topology should contain
         all_expected = wiremap_devices | air_only_devices | auto_injected
@@ -1234,9 +1905,21 @@ class TopologyValidator:
         for r in self.rows:
             if not r.display_in_air:
                 continue
+            # Disabled-node rows are retained for breakout analysis only —
+            # we shouldn't expect the corresponding switch link to be in
+            # the topology, so skip them in the missing-link check.
+            if not r.enabled:
+                continue
             if not r.switch_role or r.switch_role.upper() in ("NA", "OUTBOUND"):
                 continue
             if not r.switch_port:
+                continue
+            # "Air - *" network profiles are physical wiremap entries that the
+            # topology generator rewrites through air-oob-switch (eg.
+            # dhcp-oob:eth1 → oob-switch-01:swpN becomes
+            # dhcp-oob:eth1 → air-oob-switch:swpX). Skip the original-port
+            # check for these — the post-injection topology is correct.
+            if r.net_profile and r.net_profile.startswith("Air"):
                 continue
 
             # Check right-side switch port
@@ -1290,8 +1973,15 @@ class TopologyValidator:
             role = classify_node(role_name)
             model_ports = SWITCH_MODELS.get(role, {}).get("ports", 48)
 
-            # Find max port and disabled ports from wiremap
-            max_port = model_ports
+            # Find disabled ports and the set of ports referenced by the
+            # wiremap for THIS switch. We only validate ports that fall in
+            # one of two sets:
+            #   1. the model's standard range (e.g., swp1..48 for SN2201)
+            #   2. explicit ports referenced in the wiremap (e.g., swp49,
+            #      swp51, swp52 uplinks on SN2201)
+            # This avoids false "missing port: swp50" warnings on SN2201
+            # where swp50 doesn't exist physically.
+            wiremap_ports: Set[int] = set()
             disabled_ports: Set[int] = set()
             for r in self.rows:
                 port_str = None
@@ -1302,16 +1992,19 @@ class TopologyValidator:
                     port_str = r.switch_port
                 if port_str:
                     parsed = parse_swp_port(port_str)
-                    if parsed and parsed[0] > max_port:
-                        max_port = parsed[0]
-                    desc_lower = (desc or "").lower()
-                    if parsed and ("disabled by neighbor" in desc_lower
-                                   or "port disabled" in desc_lower):
-                        disabled_ports.add(parsed[0])
+                    if parsed:
+                        wiremap_ports.add(parsed[0])
+                        desc_lower = (desc or "").lower()
+                        if ("disabled by neighbor" in desc_lower
+                                or "port disabled" in desc_lower):
+                            disabled_ports.add(parsed[0])
 
             ports_in_topo = topo_switch_ports.get(switch_name, set())
 
-            for port_num in range(1, max_port + 1):
+            # Validate: every port in the model's standard range OR
+            # explicitly named in the wiremap should appear in the topology.
+            check_ports = set(range(1, model_ports + 1)) | wiremap_ports
+            for port_num in sorted(check_ports):
                 if port_num in disabled_ports:
                     continue
                 port_name = f"swp{port_num}"

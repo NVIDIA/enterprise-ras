@@ -12,9 +12,10 @@ network:
 {% for iface in data_ifaces %}
     {{ iface }}:
       dhcp4: no
+      optional: true
 {% endfor %}
+{% if data_ifaces | length >= 2 and dev.bond_ip1 is defined and dev.bond_ip1 %}
   bonds:
-{% if data_ifaces | length >= 2 %}
     bond0:
       interfaces:
         - {{ data_ifaces[0] }}
@@ -23,8 +24,7 @@ network:
         mode: active-backup
         primary: {{ data_ifaces[0] }}
         mii-monitor-interval: 100
-{% endif %}
-{% if data_ifaces | length >= 4 %}
+{% if data_ifaces | length >= 4 and dev.bond_ip2 is defined and dev.bond_ip2 %}
     bond1:
       interfaces:
         - {{ data_ifaces[2] }}
@@ -35,7 +35,6 @@ network:
         mii-monitor-interval: 100
 {% endif %}
   vlans:
-{% if data_ifaces | length >= 2 %}
     bond0.{{ common.support_vlan }}:
       id: {{ common.support_vlan }}
       link: bond0
@@ -50,8 +49,7 @@ network:
         - to: 0.0.0.0/0
           via: {{ common.support_gateway }}
           table: {{ common.support_vlan }}
-{% endif %}
-{% if data_ifaces | length >= 4 %}
+{% if data_ifaces | length >= 4 and dev.bond_ip2 is defined and dev.bond_ip2 %}
     bond1.{{ common.support_vlan }}:
       id: {{ common.support_vlan }}
       link: bond1
@@ -59,5 +57,6 @@ network:
         - {{ dev.bond_ip2 }}
       nameservers:
         addresses: [8.8.8.8, 8.8.4.4]
+{% endif %}
 {% endif %}
 {% endif %}

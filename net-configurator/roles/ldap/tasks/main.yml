@@ -45,8 +45,19 @@
     state: started
     enabled: yes
 
+# SEC (scan finding #6): keep the LDAP bind secret off the command line.
+# `slappasswd -s <pw>` / `ldapadd -w <pw>` expose the password in `ps auxww`
+# to any local user on the LDAP host while the task runs. We write it once to
+# a 0600 file and feed slappasswd via `-T` and ldapadd via `-y` instead.
+- name: Write LDAP admin bind password to a protected file (off argv / ps)
+  copy:
+    dest: /tmp/.ldap_bind.secret
+    content: "{{ ldap.admin_password }}"
+    mode: '0600'
+  no_log: true
+
 - name: Generate SSHA hash for LDAP admin password
-  command: slappasswd -s "{{ ldap.admin_password }}"
+  command: slappasswd -T /tmp/.ldap_bind.secret
   register: ldap_admin_hash
   changed_when: false
   no_log: true
@@ -55,7 +66,7 @@
   debug:
     msg: "Generated hash: {{ ldap_admin_hash.stdout }}"
   no_log: true
-      
+
 - name: Update database configuration with correct RootDN and RootPW
   copy:
     dest: /tmp/update_db_config.ldif
@@ -67,14 +78,14 @@
       -
       replace: olcRootPW
       olcRootPW: {{ ldap_admin_hash.stdout }}
-    mode: '0644'
+    mode: '0600'
 
 - name: Apply database configuration updates
   command: ldapmodify -Y EXTERNAL -H ldapi:/// -f /tmp/update_db_config.ldif
 
 - name: Add Users organizational unit
   shell: |
-    cat <<EOF | ldapadd -x -D "{{ ldap.root_dn }}" -w "{{ ldap.admin_password }}"
+    cat <<'EOF' | ldapadd -x -D "{{ ldap.root_dn }}" -y /tmp/.ldap_bind.secret
     dn: ou=Users,{{ ldap.base_dn }}
     objectClass: top
     objectClass: organizationalUnit
@@ -87,7 +98,7 @@
 
 - name: Add Groups organizational unit
   shell: |
-    cat <<EOF | ldapadd -x -D "{{ ldap.root_dn }}" -w "{{ ldap.admin_password }}"
+    cat <<'EOF' | ldapadd -x -D "{{ ldap.root_dn }}" -y /tmp/.ldap_bind.secret
     dn: ou=Groups,{{ ldap.base_dn }}
     objectClass: top
     objectClass: organizationalUnit
@@ -100,7 +111,7 @@
 
 - name: Add admin user to LDAP
   shell: |
-    cat <<EOF | ldapadd -x -D "{{ ldap.root_dn }}" -w "{{ ldap.admin_password }}"
+    cat <<'EOF' | ldapadd -x -D "{{ ldap.root_dn }}" -y /tmp/.ldap_bind.secret
     dn: cn=admin,ou=Users,{{ ldap.base_dn }}
     objectClass: organizationalPerson
     objectClass: inetOrgPerson
@@ -115,8 +126,21 @@
   changed_when: add_admin_user.rc == 0
   no_log: true
 
+# SEC (scan finding #6): per-user passwords also stay off argv. The password
+# is passed via the environment (readable only by root/same-user, not by
+# `ps auxww`) and written to a umask-077 temp file that slappasswd reads with
+# `-T`, then removed in the same step.
 - name: Generate SSHA passwords for users
-  command: "slappasswd -s {{ item.password }}"
+  shell: |
+    set -eu
+    umask 077
+    printf '%s' "$LDAP_USER_PW" > /tmp/.ldap_user.secret
+    slappasswd -T /tmp/.ldap_user.secret
+    rm -f /tmp/.ldap_user.secret
+  args:
+    executable: /bin/bash
+  environment:
+    LDAP_USER_PW: "{{ item.password }}"
   loop: "{{ ldap.users }}"
   register: ldap_passwords
   changed_when: false
@@ -135,11 +159,21 @@
   ansible.builtin.template:
     src: users.j2
     dest: /tmp/add_users.ldif
+    mode: '0600'
 
 - name: Add users to LDAP directory
-  command: ldapadd -x -D "{{ ldap.root_dn }}" -w "{{ ldap.admin_password }}" -f /tmp/add_users.ldif
+  command: ldapadd -x -D "{{ ldap.root_dn }}" -y /tmp/.ldap_bind.secret -f /tmp/add_users.ldif
   register: ldapadd_users
   failed_when: "ldapadd_users.rc != 0 and 'already exists' not in (ldapadd_users.stderr | lower)"
   changed_when: "'adding new entry' in ldapadd_users.stdout"
   no_log: true
 
+- name: Remove LDIF + secret temp files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /tmp/update_db_config.ldif
+    - /tmp/add_users.ldif
+    - /tmp/.ldap_bind.secret
+    - /tmp/.ldap_user.secret

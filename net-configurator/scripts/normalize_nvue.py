@@ -175,6 +175,10 @@ _IMPLICIT_PATTERNS = [
     r'^nv set interface \S+ ip vrf \S+$',
     # VRR state up — implicit when VRR is enabled
     r'^nv set interface \S+ ip vrr state up$',
+    # SVI type on VLAN interfaces — NVUE auto-derives this for any
+    # vlanN interface attached to a VRF, even when the generated config
+    # intentionally skips emission (e.g. L3 OOB no_svi_type flag).
+    r'^nv set interface vlan\d+ type svi$',
     # VRF-level enable on — implicit defaults on 5.15
     r'^nv set vrf \S+ evpn enable on$',
     r'^nv set vrf \S+ router bgp address-family \S+ enable on$',

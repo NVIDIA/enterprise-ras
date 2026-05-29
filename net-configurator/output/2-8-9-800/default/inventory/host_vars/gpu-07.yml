@@ -1,0 +1,4 @@
+---
+# Host variables for gpu-07 (Generated from Excel)
+ansible_host: 192.168.200.36
+hostname: gpu-07

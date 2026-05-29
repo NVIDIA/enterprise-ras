@@ -45,6 +45,72 @@ a dedicated controller VM). If you must run on shared infrastructure,
 ensure no other users have local shell access during
 `make validate-*` / `make restart-ldap` / Air deployments.
 
+The LDAP server provisioning role (`roles/ldap/tasks/main.yml`) no longer
+exposes its bind/user passwords on the command line — `slappasswd` and
+`ldapadd` now read the secret from a mode-`0600` file (`-T` / `-y`) or the
+process environment, so the remaining `ps auxww` exposure is limited to the
+`sshpass`-based playbooks listed above.
+
+### The OOB management network is the trust boundary
+
+ERA provisions and manages switches over a dedicated Out-of-Band (OOB)
+management network. Two of the protocols on that network are
+unauthenticated/unencrypted by design (see the two risks below). The
+security model assumes the **OOB network is physically or logically
+isolated and carries no untrusted hosts.** An attacker with a foothold
+on the OOB segment — able to ARP-spoof, run a rogue DHCP server, or
+sniff traffic — can exploit both of the following. Treat OOB isolation
+as a hard requirement, not a convenience.
+
+### Zero-Touch Provisioning fetches and executes configuration over unauthenticated HTTP
+
+During ZTP, a factory-fresh switch receives a provisioning URL via DHCP
+option 239 and then downloads `ztp.sh`, its NVUE config script, its
+`authorized_keys`, and its topology file over plain **HTTP**
+(`roles/ztp-server/templates/ztp.sh.j2`). The config script is executed
+as root. There is no transport encryption and no integrity check.
+
+This is inherent to ZTP: a blank switch has no pre-installed trust
+anchor before provisioning runs, so HTTPS would fall back to
+`--no-check-certificate` (no real gain), and a checksum manifest served
+over the same channel is rewritable by an active MITM. Genuine
+integrity would require image-signed configs with a key baked into the
+switch OS image — outside this project's control.
+
+**Mitigations:**
+
+- Run ZTP only on an isolated OOB provisioning segment with no untrusted
+  hosts present during bring-up.
+- The nginx ZTP vhost restricts the secret-bearing locations (`/scripts/`,
+  `/configs/`, `/authorized_keys`) to the OOB provisioning subnet(s) with an
+  `allow`/`deny all` rule and disables directory listing, so a host outside
+  the OOB segment can neither enumerate nor fetch them. The allowed CIDRs
+  default to `192.168.200.0/24` + `192.168.210.0/24`; override the
+  `ztp_allow_subnets` group var if your provisioning network differs (a
+  mismatch will block ZTP delivery).
+- For environments where even that is unacceptable, use the **non-ZTP
+  delivery path** (`make air-deploy NOZTP=1`, or pre-staged Node
+  Instructions): configurations are placed on the switch at first boot
+  without any HTTP fetch, eliminating this vector entirely.
+
+### Switch-to-LDAP binds are not encrypted
+
+When LDAP is enabled, the generated switch config
+(`roles/core/templates/core_nvue_cli.j2`, and the OOB/GSL equivalents)
+binds to the LDAP server with `nv set system aaa ldap ...` and **no TLS
+directive**. The bind DN, bind secret, and user-authentication traffic
+cross the OOB network in cleartext.
+
+NVUE does support LDAPS/STARTTLS, so this is fixable — but it requires
+TLS-certificate infrastructure (a server certificate for the LDAP host
+and CA distribution to every switch) that this project does not yet
+provide. LDAPS support is tracked as planned future work.
+
+**Mitigation:** keep LDAP traffic on the isolated OOB network. Until
+LDAPS lands, do not extend the OOB segment across untrusted links, and
+treat the LDAP bind credential as exposed to anyone with OOB-network
+access.
+
 ## Credential Handling
 
 This project generates Ansible inventories that contain switch, server,

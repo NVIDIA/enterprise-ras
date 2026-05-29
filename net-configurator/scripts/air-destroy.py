@@ -38,7 +38,6 @@ from airlib.api import (
     list_simulations,
     list_userconfigs,
     resolve_simulation,
-    stop_simulation,
 )
 from airlib.auth import authenticate
 from airlib.env import load_air_config, require_config

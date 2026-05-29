@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: MIT
 #
 # SSH ProxyJump configuration for NVIDIA Air deployments
-# When via_server=true, routes SSH through oob-server-01 to reach internal hosts.
+# When via_server=true, routes SSH through the [jump] group's first host
+# to reach internal hosts. Resolves to oob-server-01 in L2 mode and to
+# utility in L3 mode — both are valid jump-box positions.
 # Requires sshpass installed on the control node: sudo apt install sshpass
 #
 # Usage:
@@ -11,17 +13,21 @@
 #   ansible-playbook playbooks/era-servers.yml -i ... -e via_server=true
 
 # Force OpenSSH transport (paramiko doesn't support ProxyCommand properly).
-# Safe default for both modes: direct SSH from dhcp-oob also uses the ssh plugin.
+# Safe default for both modes: direct SSH from the jump host also uses the ssh plugin.
 ansible_connection: ssh
 
 # Ensure python3 is found on Air virtual nodes (OpenSSH auto-discovery may miss it).
 # Ubuntu servers always have python3 at this path, so set unconditionally.
 ansible_python_interpreter: /usr/bin/python3
 
-# Build the ProxyCommand using sshpass for password auth to the jump host
-_jump_user: "{{ hostvars['oob-server-01']['ansible_user'] | default('ubuntu') }}"
-_jump_host: "{{ hostvars['oob-server-01']['ansible_host'] }}"
-_jump_port: "{{ hostvars['oob-server-01']['ansible_port'] | default(22) }}"
+# Build the ProxyCommand using sshpass for password auth to the jump host.
+# Resolve the jump host through the [jump] inventory group so L2 (dhcp-oob)
+# and L3 (utility) both work — the hardcoded 'oob-server-01' lookup would
+# error out in L3 where that node doesn't exist.
+_jump_name: "{{ groups['jump'][0] }}"
+_jump_user: "{{ hostvars[_jump_name]['ansible_user'] | default('ubuntu') }}"
+_jump_host: "{{ hostvars[_jump_name]['ansible_host'] }}"
+_jump_port: "{{ hostvars[_jump_name]['ansible_port'] | default(22) }}"
 _jump_pass: "{{ server_ansible_password }}"
 
 _air_proxy_command: >-

@@ -38,7 +38,7 @@
 # This ensures switches always download configs from the correct network interface.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-{% set all_switches = groups['core'] | default([]) + groups['oob'] | default([]) %}
+{% set all_switches = groups['switches'] | default([]) %}
 {% if all_switches | length > 0 %}
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SWITCH CONFIGURATIONS
@@ -97,7 +97,7 @@ dhcp-host={{ switch_vars.mac_address }},{{ switch_hostname }},ignore
 {% for device_name, device_info in devices.items() %}
 {% if device_info.mac is defined and device_info.eth0_ip is defined %}
 {# Skip switches — they get DHCP reservations from the ZTP section above #}
-{% if device_name not in (groups['core'] | default([]) + groups['oob'] | default([])) %}
+{% if device_name not in (groups['switches'] | default([])) %}
 # {{ device_name }}
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Mode: DHCP (MAC-based reservation for host)

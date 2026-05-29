@@ -25,7 +25,26 @@ network:
 {% endif %}
 {% endfor %}
 {% else %}
-    # Default configuration - customize in group_vars or host_vars
+{% if (oob_uplink_mode | default('l2') | string | lower) == 'l3' %}
+    # L3 OOB mode: external-conn's addresses are owned by
+    # L3_TRIO_NETPLAN (written at first boot by air-deploy.py).
+    # Do NOT claim 192.168.200.1/24 / 192.168.210.1/24 here — in L3
+    # mode those gateway IPs live on the OOB-switch anycast VRR, not
+    # on external-conn. Putting them on external-conn:eth1 made the
+    # kernel treat 192.168.200.0/24 as directly connected on the
+    # cust-net-edge bridge segment, which silently dropped MASQUERADE
+    # reply traffic from internet → compute servers.
+    # Declare the interfaces as managed-but-unaddressed so this file
+    # stays valid netplan; 99-era-l3.yaml (written by air-deploy) is
+    # merged on top to supply the real addresses.
+    eth1:
+      dhcp4: no
+      optional: true
+    eth2:
+      dhcp4: no
+      optional: true
+{% else %}
+    # Default L2 configuration - customize in group_vars or host_vars
     eth1:
       dhcp4: no
       addresses:
@@ -38,5 +57,6 @@ network:
       dhcp4: no
       addresses:
         - 192.168.220.1/24
+{% endif %}
 {% endif %}
 

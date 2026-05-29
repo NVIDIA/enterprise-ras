@@ -193,6 +193,70 @@ def check_password_access(
         return False
 
 
+def key_needs_passphrase(private_key_path: str) -> bool:
+    """Return True if the SSH private key file is passphrase-protected.
+
+    A passphrase-locked key without a loaded ssh-agent breaks every
+    BatchMode SSH attempt (including Ansible's), so callers use this to
+    distinguish "remote auth broken" from "local key not usable".
+    """
+    expanded = Path(private_key_path).expanduser()
+    if not expanded.exists():
+        return False
+    try:
+        result = subprocess.run(
+            ["ssh-keygen", "-y", "-P", "", "-f", str(expanded)],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.returncode != 0
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+        return False
+
+
+def verify_key_in_authorized_keys(
+    host: str,
+    port: str | int,
+    user: str,
+    password: str,
+    public_key: str,
+) -> bool:
+    """Confirm a public key is in the remote ~/.ssh/authorized_keys (via sshpass).
+
+    Used after `inject_key_via_password` to prove the key landed server-side,
+    independent of whether the local SSH client can complete key auth (a
+    passphrase-locked key + no ssh-agent would fail BatchMode key auth even
+    when the key is correctly present remotely).
+
+    Compares the base64 body of the key — comment fields are stripped before
+    matching so injected-with-comment vs stored-without-comment both match.
+    """
+    if not shutil.which("sshpass"):
+        return False
+
+    key_parts = public_key.strip().split()
+    if len(key_parts) < 2:
+        return False
+    key_body = key_parts[1]
+
+    cmd = [
+        "sshpass", "-p", password,
+        "ssh",
+        *SSH_STRICT_OFF,
+        "-p", str(port),
+        "-o", f"ConnectTimeout={CONNECT_TIMEOUT}",
+        "-o", "PubkeyAuthentication=no",
+        f"{user}@{host}",
+        f"grep -qF {shlex.quote(key_body)} ~/.ssh/authorized_keys",
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
 def inject_key_via_password(
     host: str,
     port: str | int,

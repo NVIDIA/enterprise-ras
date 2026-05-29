@@ -9,26 +9,69 @@ Ansible automation for ERA (Enterprise Reference Architecture) network switch co
 
 | Term | What it means |
 |---|---|
-| **ERA** | NVIDIA's Enterprise Reference Architecture — the set of network topologies this tool configures (2-4-3-200, 2-8-5-200, 2-8-9-400). |
+| **ERA** | NVIDIA's Enterprise Reference Architecture — the set of network topologies this tool configures (2-4-3-200, 2-8-5-200, 2-8-9-400, 2-8-9-800). |
 | **NVUE** | NVIDIA User Experience CLI — the config language for Cumulus Linux switches (`nv set ...`). This tool generates `.sh` scripts of NVUE commands. |
 | **Cumulus Linux** | The switch OS running on NVIDIA Spectrum hardware. NVUE is its management interface. |
 | **ZTP** | Zero Touch Provisioning — the switch boots, DHCP hands it a provisioning script, the script applies the NVUE config, done. No console access required. |
 | **NGC** | [NVIDIA GPU Cloud](https://ngc.nvidia.com) — NVIDIA's cloud service portal. You'll need an NGC account and API key to use NVIDIA Air. |
 | **NVIDIA Air** | A cloud-hosted network simulator. Runs your generated topology as virtual Cumulus switches so you can validate configs before touching physical hardware. Optional — you can skip Air and deploy straight to physical gear. |
-| **OOB** | Out-of-band — the management network that configures switches separately from the data plane. This tool creates an OOB subnet + switches in every deployment. |
-| **OOB server (`oob-server-01`)** | The management-network jump host that Ansible connects through. In Air, it's a virtual node; on physical hardware, it's the customer's management server. |
-| **`dhcp-oob`** | The node that runs the DHCP + ZTP web server. Switches receive their bootstrap script from here. |
+| **OOB** | Out-of-band — the dedicated management network that configures switches separately from the data plane. The current architecture routes it as an **L3 OOB** network (its own VRF with external connectivity, NAT, and eBGP); older deployments used a flat L2 OOB subnet. This tool builds the OOB network + switches in every deployment. |
+| **`utility`** | The L3 OOB jumpbox that Ansible connects through. Also hosts the status page and is the OOB-side DHCP relay target. In Air it's a virtual node; on physical hardware it's the customer's management server. (Supersedes the legacy L2 `oob-server-01`.) |
+| **`external-dhcp`** | The node that runs the ZTP DHCP + web server — switches fetch their bootstrap script from here. Also the inter-VRF EXIT relay target. (Supersedes the legacy L2 `dhcp-oob`.) |
+| **`external-conn`** | The NAT host (`172.20.0.1`) that routes OOB traffic outbound — provides internet access and the eBGP control plane into the OOB VRF. |
+| **`cust-net-edge-01` / `-02`** | Simulated customer-edge switches that bridge the management network and run the EXIT-VRF eBGP underlay (`-02` is the HA NAT return path). |
+| **`oob-server-01` / `dhcp-oob`** | Legacy L2 OOB jump host and DHCP/ZTP node. Still referenced in some sections of this guide; their L3 OOB equivalents are `utility` and `external-dhcp`. |
 | **Site** | A named deployment within an architecture (e.g., `customer-a`, `lab`, `default`). Lets you run multiple isolated deployments from one checkout. |
 
 ## Supported Architectures
 
-Architecture names follow the pattern `{CPUs}-{GPUs}-{NICs}-{East-West NIC Speed}`:
+Architecture names follow the pattern `{CPUs}-{GPUs}-{NICs}-{B}` per compute
+node, where **B = average per-GPU bandwidth on the East/West (compute)
+network, in Gbps**. This remains the right measure even on future
+systems that decouple North/South and East/West link speeds.
 
-| Architecture | CPUs | GPUs | Network Adapters | East-West NIC Speed |
-|---|---|---|---|---|
-| `2-4-3-200` | 2 | 4 | 3 | 200G |
-| `2-8-5-200` | 2 | 8 | 5 | 200G |
-| `2-8-9-400` | 2 | 8 | 9 | 400G |
+| Architecture | CPUs | GPUs | Network Adapters | Per-GPU E/W bandwidth | Fabric |
+|---|---|---|---|---|---|
+| `2-4-3-200`* | 2 | 4 | 3 | 200 Gbps | Converged (core) |
+| `2-8-5-200`* | 2 | 8 | 5 | 200 Gbps | Converged (core) |
+| `2-8-9-400` | 2 | 8 | 9 | 400 Gbps | Converged (core) |
+| `2-8-9-800` | 2 | 8 | 9 | 800 Gbps | **Dual-plane** (CSL + GSL) |
+
+\* In archs where the E/W NIC:GPU ratio is 1:2 (`2-4-3-200`, `2-8-5-200`),
+   strict per-GPU arithmetic gives 100 Gbps; the label `200` follows the
+   per-NIC link speed convention — a documented exception, not a bug.
+
+### Converged vs dual-plane fabric
+
+- **Converged (`core-*` switches):** one switch tier handles CPU/in-band,
+  storage, support, OOB, *and* GPU east-west traffic on the same fabric.
+  Used by 2-4-3-200 / 2-8-5-200 / 2-8-9-400.
+- **Dual-plane (`csl-*` + `gsl-plane1-*` + `gsl-plane2-*`):** CSL leaves
+  carry CPU/in-band, storage, support, and OOB. The GPU fabric is split
+  across two independent planes — `gsl-plane1-*` and `gsl-plane2-*` — each
+  with its own underlay loopback subnet, EVPN scope, and BGP graph. Same
+  VLAN ID (900) on both planes, but they're L3-isolated by design.
+  Used by 2-8-9-800 (HGX B300).
+
+See [`docs/ROLES.md`](docs/ROLES.md) for the full role taxonomy.
+
+### Feature support matrix
+
+| Feature | `2-4-3-200` | `2-8-5-200` | `2-8-9-400` | `2-8-9-800` |
+|---|:---:|:---:|:---:|:---:|
+| L3 OOB underlay + EVPN | ✅ | ✅ | ✅ | ✅ |
+| Inter-VRF DHCP relay (OOB + EXIT) | ✅ | ✅ | ✅ | ✅ |
+| Operator-configurable SSH login banners | ✅ | ✅ | ✅ | ✅ |
+| LDAP authentication (auto-detected from Excel) | ✅ | ✅ | ✅ | ✅ |
+| NVIDIA Air simulation | ✅ | ✅ | ✅ | ✅ |
+| Status page (HTTP report dashboard) | ✅ | ✅ | ✅ | ✅ |
+| STORAGE VRF as first-class | — | — | — | ✅ |
+| Dual-plane GPU fabric | — | — | — | ✅ |
+| Per-rail-per-plane GPU VLAN mode | — | — | — | ✅ |
+| Single-tier SU scaling | 1 SU | 1 SU | 1 SU | 1–2 SU |
+
+See [`docs/ARCH_SUPPORT_MATRIX.md`](docs/ARCH_SUPPORT_MATRIX.md) for the
+detailed support matrix including known gaps and roadmap items.
 
 ## Features
 
@@ -38,6 +81,7 @@ Architecture names follow the pattern `{CPUs}-{GPUs}-{NICs}-{East-West NIC Speed
 - **NVIDIA Air integration**: Automated simulation creation and SSH setup (optional — physical-only deployments work without it)
 - **Multi-site support**: Deploy the same architecture to multiple sites
 - **LDAP authentication**: Optional centralized user management (auto-detected from Excel)
+- **Inter-VRF DHCP relay**: VLAN clients in any VRF can lease from servers in OOB or EXIT (per the ERA Architecture Principals deck)
 - **Ansible Vault**: Encrypt secrets at rest
 
 ## Known Limitations
@@ -70,6 +114,8 @@ Architecture names follow the pattern `{CPUs}-{GPUs}-{NICs}-{East-West NIC Speed
 
 **Prerequisites:** Python 3.12+, Git, Make, SSH key pair for Air access (only if using NVIDIA Air), NGC account (only if using NVIDIA Air)
 
+> **macOS users:** After creating your venv, run `pip install certifi` before any other commands to avoid SSL certificate errors when connecting to NVIDIA Air.
+
 ### Option A: Download a release archive
 
 Download the latest `nc-v<version>.zip` from the
@@ -91,7 +137,7 @@ cd enterprise-ras/net-configurator
 
 python3 -m venv .venv
 source .venv/bin/activate        # Linux/macOS
-# .venv\Scripts\activate         # Windows
+# On Windows, run inside WSL — native Windows is not supported as a controller
 
 pip install -r requirements.txt
 
@@ -122,9 +168,10 @@ Copy the template for your architecture and fill it in:
 
 | Architecture | Sample File | Description |
 |---|---|---|
-| `2-4-3-200` | `input/sample-2-4-3-200.xlsx` | 2 CPU, 4 GPU, 3 NIC, 200G |
-| `2-8-5-200` | `input/sample-2-8-5-200.xlsx` | 2 CPU, 8 GPU, 5 NIC, 200G |
-| `2-8-9-400` | `input/sample-2-8-9-400.xlsx` | 2 CPU, 8 GPU, 9 NIC, 400G |
+| `2-4-3-200` | `input/sample-2-4-3-200.xlsx` | 2 CPU, 4 GPU, 3 NIC, 200G — converged |
+| `2-8-5-200` | `input/sample-2-8-5-200.xlsx` | 2 CPU, 8 GPU, 5 NIC, 200G — converged |
+| `2-8-9-400` | `input/sample-2-8-9-400.xlsx` | 2 CPU, 8 GPU, 9 NIC, 400G — converged |
+| `2-8-9-800` | `input/sample-2-8-9-800.xlsx` | 2 CPU, 8 GPU, 9 NIC, 800G — dual-plane (CSL + GSL) |
 
 These sample files have `site_name` set to `sample` so they import to their own
 directory (`input/<arch>/sample/`) without overwriting the committed defaults.
@@ -148,6 +195,7 @@ make deploy EXCEL=~/my-deployment.xlsx
 | `2-4-3-200` | `input/2-4-3-200/default/2-4-3-200.xlsx` |
 | `2-8-5-200` | `input/2-8-5-200/default/2-8-5-200.xlsx` |
 | `2-8-9-400` | `input/2-8-9-400/default/2-8-9-400.xlsx` |
+| `2-8-9-800` | `input/2-8-9-800/default/2-8-9-800.xlsx` |
 
 Each template is pre-configured with default values. Update the sheets for your deployment:
 
@@ -182,12 +230,24 @@ Pick the path that matches your target:
 **Deploying to NVIDIA Air (virtual simulation):**
 
 ```bash
-# Standard: switches + servers (servers auto-configure on boot via Node Instructions)
+# Fastest path (recommended for Air): configs are injected at boot via Air
+# Node Instructions — no DHCP/HTTP ZTP wait. Switches + servers come up
+# already configured (~2-3 min after the sim reaches LOADED).
+make deploy EXCEL=/path/to/your-config.xlsx NOZTP=1
+
+# Standard ZTP path: switches fetch their configs over DHCP/HTTP after boot
+# (5-10 min per switch). Use this to exercise the real ZTP server flow.
 make deploy EXCEL=/path/to/your-config.xlsx
 
-# Or: switches only (run make deploy-servers-via-jump afterwards for servers)
+# Switches only (run make deploy-servers-via-jump afterwards for servers)
 make deploy-exclude-servers EXCEL=/path/to/your-config.xlsx
 ```
+
+> **`NOZTP=1` is the quickest way to stand up an Air sim.** It skips the ZTP
+> server setup (steps 7-8 below) and delivers configs as Node Instructions
+> that apply via `era-apply.service` shortly after boot. Don't SSH in or run
+> validation until that apply window passes (~2-3 min after LOADED), or a
+> manual change can be overwritten by the deferred apply.
 
 **Deploying to physical hardware only (no Air):**
 
@@ -277,6 +337,7 @@ Choose the right command based on where you are in the workflow:
 
 | Command | Use When | What It Does |
 |---------|----------|--------------|
+| `make deploy EXCEL=... NOZTP=1` | **Fastest Air deploy** — want a configured sim quickly | Same all-in-one pipeline, but injects configs as Node Instructions at boot (no ZTP server, no DHCP wait) |
 | `make deploy EXCEL=...` | Starting from scratch, deploying to **NVIDIA Air** | Validate + import + generate + Air sim + ZTP + server config (all-in-one; **Air only**) |
 | `make deploy-exclude-servers EXCEL=...` | Air deploy without server config | Same as above but skips server Node Instructions |
 | `make switch-ztp-deploy` | Deploying to **physical hardware** (or Air sim already exists) | OOB setup + LDAP + generate + ZTP server setup |
@@ -470,7 +531,7 @@ make help-air                # Air deployment quick-reference
 ## Project Structure
 
 ```
-net-configurator/
+era-automation/
 ├── input/
 │   └── <arch>/
 │       └── <site>/          # 'default' site committed; others gitignored
@@ -481,6 +542,7 @@ net-configurator/
 │           ├── inventory/   # Ansible inventory (hosts, host_vars, group_vars)
 │           ├── configs/     # Generated NVUE CLI scripts (.sh)
 │           └── topology/    # Generated Air topology JSON
+├── topology/                # Reference NVIDIA Air topology JSON files (per arch)
 ├── roles/
 │   ├── core/                # Core switch role
 │   ├── oob-switch/          # OOB switch role
@@ -595,7 +657,7 @@ These changes are not needed for Air simulations or lab environments where node 
 
 **"architecture key not found in Settings tab"**
 - Open the Excel file and confirm the Settings sheet has an `architecture` field
-- The value must be one of: `2-4-3-200`, `2-8-5-200`, `2-8-9-400`
+- The value must be one of: `2-4-3-200`, `2-8-5-200`, `2-8-9-400`, `2-8-9-800`
 
 **"SameFileError" during import**
 This happens when your Excel file already lives at the exact destination
@@ -723,3 +785,36 @@ inspectable.
 make restart-ldap                             # Restart LDAP on switches (via OOB)
 ldapsearch -x -H ldap://<server-ip>          # Test LDAP server directly
 ```
+
+### Validation Failures
+
+After deploying, `make validate-all` runs the full validation suite:
+topology, ZTP, running-config comparison, and server checks. When a
+stage fails, run the individual targets to narrow it down:
+
+```bash
+make validate-topology     # Air topology vs. wiremap
+make validate-config       # Running switch config vs. generated config
+make validate-servers      # Server bonds, VLANs, connectivity
+make validate-ping-matrix  # Full server-to-server ping matrix across VLANs
+```
+
+- **`validate-config` reports diffs:** the switch is running a config
+  that differs from the freshly generated one. Re-push with
+  `make push-switch-configs`, or for a ZTP deployment re-run
+  `make ztp-update` then reboot the affected switch. Cosmetic ordering
+  differences (NVUE re-orders some stanzas on apply) are normalized by
+  the comparison and should not be reported — if you see them, confirm
+  you regenerated configs after the last Excel change.
+- **`validate-servers` shows missing bonds or VLANs:** the server-side
+  config did not land. Re-run `make deploy-servers` (direct SSH) or
+  `make deploy-servers-via-jump` (Air, via the OOB jump host).
+- **`validate-ping-matrix` flags failures:** confirm the VRF routing
+  rules. INBAND members (compute/support/storage) can cross-ping; the
+  GPU/East-West network is intentionally isolated, and OOB never leaks
+  into INBAND — failures across those boundaries are *expected*. On the
+  dual-plane `2-8-9-800` architecture, GPU↔GPU pings *across* planes
+  are also expected to fail, since each plane is a separate fabric.
+- **`validate-topology` fails:** the generated topology references a
+  port or node the wiremap does not define. Regenerate with
+  `make generate` and confirm the Wire Map sheet matches your node list.

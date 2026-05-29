@@ -1,0 +1,4 @@
+---
+# Host variables for bcm-01 (Generated from Excel)
+ansible_host: 192.168.200.38
+hostname: bcm-01
