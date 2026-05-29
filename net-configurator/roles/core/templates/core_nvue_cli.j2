@@ -52,16 +52,24 @@ nv set evpn multihoming state enabled
 {% endif %}
 {% endfor %}
 {% endif %}
-{% if gpu_interfaces is defined and gpu_interfaces.breakout is defined %}
+{% if gpu_interfaces is defined and gpu_interfaces.breakout is defined and convergence | default('full') == 'full' %}
 {% set _ = all_iface_defs.append(gpu_interfaces) %}
 {% endif %}
 {% if isl_interfaces is defined and isl_interfaces.breakout is defined %}
 {% set _ = all_iface_defs.append(isl_interfaces) %}
 {% endif %}
+{% if oob_uplink_interfaces is defined and oob_uplink_interfaces.breakout is defined %}
+{% set _ = all_iface_defs.append(oob_uplink_interfaces) %}
+{% endif %}
 {% if edge_interfaces is defined and edge_interfaces.breakout is defined %}
 {% set _ = all_iface_defs.append(edge_interfaces) %}
 {% endif %}
-{# Classify each port into breakout buckets (no macro — inline for compatibility) #}
+{# PR-c: STORAGE VRF uplinks (e.g. swp63 → external storage) need
+   breakout config too. See docs/plans/2026-05-19-storage-vrf-design.md #}
+{% if storage_interfaces is defined and storage_interfaces.breakout is defined %}
+{% set _ = all_iface_defs.append(storage_interfaces) %}
+{% endif %}
+{# Classify each port into breakout buckets (no macro - inline for compatibility) #}
 {% set breakout_4x_2lanes = [] %}
 {% set breakout_2x_4lanes = [] %}
 {% set breakout_8x_1lane = [] %}
@@ -169,6 +177,14 @@ nv set interface {{ ports_list | join(',') }} link breakout disabled
 {% set segment_id = bond_overrides.get(bond_name, {}).get('segment_id', default_segment) %}
 nv set interface {{ bond_name }} bond member swp{{ port }}s{{ sub }}
 nv set interface {{ bond_name }} evpn multihoming segment local-id {{ segment_id }}
+{# Per-bond description naming the connected host. Parser builds the
+   bond_descriptions dict from Wire Map B-side names so e.g. bond1s0 →
+   gpu-01. Only emit when the parser found a peer (Wire Map row exists
+   for this bond's underlying swp port). Matches customer golden:
+     nv set interface bond1s0 description <host>-gpu-01 #}
+{% if bond_descriptions is defined and bond_descriptions[bond_name] is defined %}
+nv set interface {{ bond_name }} description {{ bond_descriptions[bond_name] }}
+{% endif %}
 {% endfor %}
 {% endfor %}
 
@@ -222,15 +238,30 @@ nv set interface lo type loopback
 #============================================================================
 # Physical Interfaces - State Up
 #============================================================================
-{% if interfaces_up is defined %}
+{% if interfaces_up is defined and interfaces_up | length > 0 %}
 nv set interface {{ interfaces_up }} link state up
 {% endif %}
 
 #============================================================================
 # Direct Interfaces (Non-Bonded) - GPU, ISL, Edge
 #============================================================================
-{# GPU Interfaces #}
-{% if gpu_interfaces is defined %}
+{# GPU Interfaces - only rendered in collapsed/converged mode.
+   When convergence == 'dedicated_gpu' the GPU fabric lives on separate GSL
+   switches, so core/CSL switches do not carry GPU access ports.
+
+   When `gpu_rail_interfaces` is defined (gpu_vlan_mode = per_rail or
+   per_rail_per_plane), emit one access line per (rail [, plane]) entry
+   instead of bundling all GPU ports into a single VLAN. Keys are either
+   `rail<R>` or `rail<R>_plane<P>`; emission is the same shape either way. #}
+{% if gpu_rail_interfaces is defined and convergence | default('full') == 'full' %}
+# GPU role - direct interfaces (per-rail VLAN)
+{% for rail_key, rail in gpu_rail_interfaces.items() | sort %}
+{% set rail_ifs = expand_subports(rail) | trim %}
+{% if rail_ifs | length > 0 %}
+nv set interface {{ rail_ifs }} bridge domain br_default access {{ rail.vlan }}
+{% endif %}
+{% endfor %}
+{% elif gpu_interfaces is defined and convergence | default('full') == 'full' %}
 {% set gpu_ifs = expand_subports(gpu_interfaces) | trim %}
 {% if gpu_ifs | length > 0 %}
 # GPU role - direct interfaces
@@ -239,7 +270,7 @@ nv set interface {{ gpu_ifs }} bridge domain br_default access {{ gpu_interfaces
 {% endif %}
 
 {# GPU Interfaces - QoS #}
-{% if gpu_interfaces is defined %}
+{% if gpu_interfaces is defined and convergence | default('full') == 'full' %}
 {% set gpu_ifs = expand_subports(gpu_interfaces) | trim %}
 {% if gpu_ifs | length > 0 %}
 # GPU role - QoS PFC watchdog
@@ -267,10 +298,31 @@ nv set interface {{ edge_ifs }} vrf {{ edge_interfaces.vrf }}
 {% endif %}
 {% endif %}
 
+{# OOB Uplink Interfaces (L3 mode) #}
+{% if oob_uplink_interfaces is defined %}
+{% set oob_uplink_ifs = expand_subports(oob_uplink_interfaces) | trim %}
+{% if oob_uplink_ifs | length > 0 %}
+# OOB role - direct L3 uplinks
+nv set interface {{ oob_uplink_ifs }} description 'OOB uplinks'
+{% endif %}
+{% endif %}
+
+{# Storage Interfaces (PR-c: STORAGE VRF L3 uplinks to external storage).
+   Subports come pre-resolved from the parser as a comma-joinable list of
+   swpNsM strings; the parser only populates storage_interfaces.subports
+   when the Wire Map has L3 Storage Uplink rows.
+   See docs/plans/2026-05-19-storage-vrf-design.md #}
+{% if storage_interfaces is defined and storage_interfaces.subports is defined and storage_interfaces.subports | length > 0 %}
+{% set storage_ifs = storage_interfaces.subports | join(',') %}
+# STORAGE role - L3 external uplinks
+nv set interface {{ storage_ifs }} description 'External Uplink - {{ storage_interfaces.vrf }} VRF'
+nv set interface {{ storage_ifs }} vrf {{ storage_interfaces.vrf }}
+{% endif %}
+
 #============================================================================
 # Disabled Interfaces / Link State Down
 #============================================================================
-{% if interfaces_down is defined %}
+{% if interfaces_down is defined and interfaces_down | length > 0 %}
 nv set interface {{ interfaces_down }} link state down
 {% endif %}
 
@@ -287,7 +339,8 @@ nv set interface {{ interfaces_down }} link state down
 {% set _ = all_iface_sources.append(role) %}
 {% endfor %}
 {% endif %}
-{% for iface_def in [gpu_interfaces | default(none), isl_interfaces | default(none), edge_interfaces | default(none)] %}
+{% set _gpu_iface_def = gpu_interfaces if (gpu_interfaces is defined and convergence | default('full') == 'full') else none %}
+{% for iface_def in [_gpu_iface_def, isl_interfaces | default(none), oob_uplink_interfaces | default(none), edge_interfaces | default(none)] %}
 {% if iface_def is not none %}
 {% set _ = all_iface_sources.append(iface_def) %}
 {% endif %}
@@ -301,8 +354,21 @@ nv set interface {{ interfaces_down }} link state down
 {% endif %}
 {% endfor %}
 
-{# Set type swp for all physical ports and all sub-interfaces #}
-nv set interface swp1-{{ num_physical_ports | default(64) }},{{ all_sub_interfaces | join(',') }} type swp
+{# Set type swp for all physical ports and all sub-interfaces.
+   Exclude parent ports that are broken out into sub-interfaces — they don't
+   exist after breakout — and ports disabled by adjacent breakouts (e.g. the
+   even-numbered port next to an 8x breakout on SN5610). Including them would
+   cause ifreload-nvue to fail with "port does not exist" and roll back the
+   whole apply. See feedback_topology_config_consistency. #}
+{% set _broken_out_parents = (breakout_4x_2lanes + breakout_2x_4lanes + breakout_8x_1lane) | unique | list %}
+{% set _disabled_ports = interfaces_disabled | default([]) %}
+{% set _existing_parents = [] %}
+{% for _n in range(1, (num_physical_ports | default(64)) + 1) %}
+{% if _n not in _broken_out_parents and _n not in _disabled_ports %}
+{% set _ = _existing_parents.append('swp' ~ _n) %}
+{% endif %}
+{% endfor %}
+nv set interface {{ _existing_parents | join(',') }}{% if all_sub_interfaces | length > 0 %},{{ all_sub_interfaces | join(',') }}{% endif %} type swp
 
 {# Telemetry histograms for all sub-interfaces #}
 nv set interface {{ all_sub_interfaces | join(',') }} telemetry histogram counter counter-type rx-packet
@@ -315,11 +381,17 @@ nv set interface {{ all_sub_interfaces | join(',') }} telemetry histogram ingres
 # VLAN SVIs (from host_vars)
 #============================================================================
 {% for vlan_int in vlan_interfaces %}
+{% if vlan_int.ip is defined and vlan_int.ip %}
 nv set interface {{ vlan_int.id }} ipv4 address {{ vlan_int.ip }}
+{% endif %}
+{% if vlan_int.vrr is defined and vlan_int.vrr %}
 nv set interface {{ vlan_int.id }} ipv4 vrr address {{ vlan_int.vrr }}
 nv set interface {{ vlan_int.id }} ipv4 vrr state enabled
 nv set interface {{ vlan_int.id }} ipv4 vrr vrr-state up
+{% endif %}
+{% if not vlan_int.no_svi_type | default(false) %}
 nv set interface {{ vlan_int.id }} type svi
+{% endif %}
 nv set interface {{ vlan_int.id }} vlan {{ vlan_int.vlan }}
 {% if vlan_int.vrf is defined %}
 nv set interface {{ vlan_int.id }} vrf {{ vlan_int.vrf }}
@@ -330,6 +402,7 @@ nv set interface {{ vlan_int.id }} vrf {{ vlan_int.vrf }}
 # NVE / VXLAN
 #============================================================================
 {% if nve_vxlan is defined %}
+nv set nve vxlan arp-nd-suppress enabled
 {% if nve_vxlan.decap_dscp is defined %}
 nv set nve vxlan decapsulation dscp action {{ nve_vxlan.decap_dscp }}
 {% endif %}
@@ -346,6 +419,7 @@ nv set nve vxlan flooding head-end-replication {{ nve_vxlan.her }}
 {# Use nve_vxlan.source if defined, otherwise default to router_id #}
 nv set nve vxlan source address {{ nve_vxlan.source | default(router_id) }}
 {% else %}
+nv set nve vxlan arp-nd-suppress enabled
 nv set nve vxlan state enabled
 {% endif %}
 
@@ -356,11 +430,14 @@ nv set router bgp state enabled
 nv set router bgp autonomous-system {{ bgp_asn }}
 nv set router bgp router-id {{ router_id }}
 
-{# BFD: 3x300ms with HW offload (5.15+ requires named profile for peer-group BFD) #}
+{# BFD profiles: default (300ms) for direct links, overlay (1000ms) for multihop #}
 nv set router bfd state enabled
 nv set router bfd profile default detect-multiplier 3
 nv set router bfd profile default min-rx-interval 300
 nv set router bfd profile default min-tx-interval 300
+nv set router bfd profile overlay detect-multiplier 3
+nv set router bfd profile overlay min-rx-interval 1000
+nv set router bfd profile overlay min-tx-interval 1000
 nv set router bfd offload enabled
 
 {# BGP Path Selection: multipath aspath-ignore + 128 ECMP paths for quad-plane #}
@@ -418,8 +495,16 @@ nv set router vrr state enabled
 #============================================================================
 # VRFs
 #============================================================================
-{% if vrf_config is defined %}
-{% for vrf in vrf_config %}
+{# PR-c: STORAGE VRF support. vrf_config_extra (host_vars, optional)
+   carries per-switch dynamic VRF entries (STORAGE, future L3-only VRFs)
+   that aren't in the shared group_vars vrf_config. Merge them so the
+   per-VRF emission loop handles both. Entry in vrf_config_extra has
+   the same shape as a vrf_config entry plus an implicit `table_auto`
+   for L3-neighbor VRFs.
+   See docs/plans/2026-05-19-storage-vrf-design.md #}
+{% set _all_vrfs = (vrf_config | default([])) + (vrf_config_extra | default([])) %}
+{% if _all_vrfs | length > 0 %}
+{% for vrf in _all_vrfs %}
 {# VRF EVPN - comes FIRST #}
 {% if vrf.vni is defined or vrf.vlan is defined or vrf.rd is defined %}
 nv set vrf {{ vrf.id }} evpn state enabled
@@ -467,7 +552,10 @@ nv set vrf {{ vrf.id }} router bgp address-family l2vpn-evpn state {{ 'enabled' 
 {% endif %}
 {% endif %}
 
-{# VRF BGP Basic #}
+{# VRF BGP Basic — every VRF inherits the fabric Settings.bgp_asn.
+   (Per-VRF ASN customization was introduced briefly and reverted — the
+   customer golden config and our own defaults both use one ASN across all
+   VRFs, so the override was YAGNI.) #}
 nv set vrf {{ vrf.id }} router bgp autonomous-system {{ bgp_asn }}
 nv set vrf {{ vrf.id }} router bgp state enabled
 
@@ -475,15 +563,32 @@ nv set vrf {{ vrf.id }} router bgp state enabled
 {% if vrf.bgp is defined and vrf.bgp.neighbors is defined %}
 {% for neighbor in vrf.bgp.neighbors %}
 {% if neighbor.interfaces is defined %}
-{# Convert interface list to range syntax for cleaner output #}
-{% set neighbor_str = neighbor.interfaces | join(',') %}
-{% set neighbor_str = neighbor_str | regex_replace('swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5', 'swp59s0-5') %}
-{% set neighbor_str = neighbor_str | regex_replace('swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5', 'swp61s0-5') %}
-{% set neighbor_str = neighbor_str | regex_replace('swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5', 'swp63s0-5') %}
-nv set vrf {{ vrf.id }} router bgp neighbor {{ neighbor_str }} peer-group {{ neighbor.peer_group }}
-nv set vrf {{ vrf.id }} router bgp neighbor {{ neighbor_str }} type {{ neighbor.type }}
-{% if neighbor.type == 'unnumbered' %}
-nv set vrf {{ vrf.id }} router bgp neighbor {{ neighbor_str }} update-source {{ router_id }}
+{% set numbered_ip_neighbors = (neighbor.type is defined and neighbor.type == 'numbered'
+                                 and neighbor.interfaces | length > 0
+                                 and (neighbor.interfaces[0] | string).startswith('swp') == false) %}
+{% if numbered_ip_neighbors %}
+{% for ip in neighbor.interfaces %}
+nv set vrf {{ vrf.id }} router bgp neighbor {{ ip }} peer-group {{ neighbor.peer_group }}
+nv set vrf {{ vrf.id }} router bgp neighbor {{ ip }} type {{ neighbor.type }}
+{# Keep update-source on numbered peers. Use explicit per-neighbor override
+   when present, otherwise retain the legacy router_id-based behavior. #}
+{% if neighbor.update_source is defined %}
+nv set vrf {{ vrf.id }} router bgp neighbor {{ ip }} update-source {{ neighbor.update_source }}
+{% else %}
+nv set vrf {{ vrf.id }} router bgp neighbor {{ ip }} update-source {{ router_id }}
+{% endif %}
+{% endfor %}
+{% else %}
+{% for iface in neighbor.interfaces %}
+nv set vrf {{ vrf.id }} router bgp neighbor {{ iface }} peer-group {{ neighbor.peer_group }}
+nv set vrf {{ vrf.id }} router bgp neighbor {{ iface }} type {{ neighbor.type }}
+{# PR1: update-source is meaningless on unnumbered neighbors — they peer
+   over the interface itself, not a sourced IP. Cumulus ignores it and
+   the line confuses operators. Only emit on numbered peers. #}
+{% if neighbor.type != 'unnumbered' %}
+nv set vrf {{ vrf.id }} router bgp neighbor {{ iface }} update-source {{ router_id }}
+{% endif %}
+{% endfor %}
 {% endif %}
 {% endif %}
 {% endfor %}
@@ -498,25 +603,57 @@ nv set vrf {{ vrf.id }} router bgp peer-group {{ pg.id }} address-family ipv4-un
 nv set vrf {{ vrf.id }} router bgp peer-group {{ pg.id }} address-family ipv4-unicast policy outbound route-map {{ pg.address_family.ipv4_unicast.policy.outbound_route_map }}
 {% endif %}
 {% endif %}
+{# PR-c: STORAGE-style peer-groups carry both ipv4_unicast AND l2vpn_evpn
+   address-families. The default-VRF peer-group block already handles
+   l2vpn_evpn but the per-VRF block didn't. #}
+{% if pg.address_family is defined and pg.address_family.l2vpn_evpn is defined %}
+nv set vrf {{ vrf.id }} router bgp peer-group {{ pg.id }} address-family l2vpn-evpn state {{ 'enabled' if pg.address_family.l2vpn_evpn.enable else 'disabled' }}
+{% endif %}
+{% if pg.bfd_enable is defined and pg.bfd_enable %}
+nv set vrf {{ vrf.id }} router bgp peer-group {{ pg.id }} bfd profile {{ pg.bfd_profile | default('default') }}
+{% endif %}
 {% if pg.remote_as is defined %}
 nv set vrf {{ vrf.id }} router bgp peer-group {{ pg.id }} remote-as {{ pg.remote_as }}
 {% endif %}
 {% endfor %}
 {% endif %}
 
-{# VRF BGP RD and Route-Export #}
-{# RD is calculated as router_id:vni (e.g., 172.16.176.11:5004) unless explicitly set in vrf.rd #}
-{% if vrf.vni is defined %}
-{% set calculated_rd = vrf.rd | default(router_id ~ ':' ~ vrf.vni) %}
-nv set vrf {{ vrf.id }} router bgp rd {{ calculated_rd }}
-{% endif %}
+{# VRF BGP Route-Export #}
+{# PR4: dropped explicit `nv set vrf X router bgp rd <ip>:<vni>` — NVUE
+   5.16 auto-derives the RD from the router-id, and the explicit form
+   adds noise. If a non-default RD is ever needed, re-introduce as an
+   explicit Excel override rather than auto-emission. #}
 {% if vrf.route_export | default(false) %}
 nv set vrf {{ vrf.id }} router bgp route-export
 {% endif %}
 {% if vrf.route_import | default(false) %}
 nv set vrf {{ vrf.id }} router bgp route-import
 {% endif %}
+{# Per-VRF BGP router-id resolution order:
+     1. Explicit override (vrf.router_id) — operator-set
+     2. The VRF's own loopback (best-practice — avoids router-id collision
+        across VRFs and makes BGP traceability obvious per-VRF)
+     3. Fabric loopback (router_id) — legacy fallback for VRFs with no
+        loopback declared
+   Matches the customer golden config pattern:
+     vrf STORAGE router bgp router-id <STORAGE loopback IP>
+   See docs/plans/2026-05-19-storage-vrf-design.md. #}
+{% if vrf.router_id is defined %}
+nv set vrf {{ vrf.id }} router bgp router-id {{ vrf.router_id }}
+{% elif vrf_loopbacks is defined and vrf_loopbacks[vrf.id] is defined %}
+nv set vrf {{ vrf.id }} router bgp router-id {{ vrf_loopbacks[vrf.id].split('/')[0] }}
+{% else %}
 nv set vrf {{ vrf.id }} router bgp router-id {{ router_id }}
+{% endif %}
+
+{# PR-c: emit `vrf X table auto` when the entry explicitly opts in.
+   STORAGE VRF (and other L3-neighbor VRFs) need this so the kernel
+   gets a routing table for the VRF. Existing overlay-only VRFs
+   (OOB / INBAND / EXIT current-style) don't set this; only entries
+   added via vrf_config_extra do. #}
+{% if vrf.table_auto | default(false) %}
+nv set vrf {{ vrf.id }} table auto
+{% endif %}
 
 {% endfor %}
 {% endif %}
@@ -558,32 +695,56 @@ nv set vrf default router bgp state enabled
 {% for port in isl_interfaces.ports %}
 {% set port_breakout = port_overrides.get(port, {}).get('breakout', isl_interfaces.breakout) %}
 {% set port_subports = port_overrides.get(port, {}).get('subports', range(port_breakout)) %}
-{# For each port, create range syntax like swp28s0-1 #}
-{% if port_subports | list | length > 1 %}
-{% set first_sub = port_subports | list | first %}
-{% set last_sub = port_subports | list | last %}
-{% set _ = neighbor_ifs.append('swp' ~ port ~ 's' ~ first_sub ~ '-' ~ last_sub) %}
-{% else %}
-{% set _ = neighbor_ifs.append('swp' ~ port ~ 's' ~ (port_subports | list | first)) %}
-{% endif %}
+{% for sub in port_subports %}
+{% set _ = neighbor_ifs.append('swp' ~ port ~ 's' ~ sub) %}
 {% endfor %}
-{# Join with commas #}
-{% set neighbor_if_str = neighbor_ifs | join(',') %}
-nv set vrf default router bgp neighbor {{ neighbor_if_str }} peer-group {{ neighbor.peer_group }}
-{% if neighbor.ttl_security_hops is defined %}
-nv set vrf default router bgp neighbor {{ neighbor_if_str }} ttl-security hops {{ neighbor.ttl_security_hops }}
-{% endif %}
-{% if neighbor.type is defined %}
-nv set vrf default router bgp neighbor {{ neighbor_if_str }} type {{ neighbor.type }}
-{% endif %}
-{# Update-source for unnumbered neighbors - automatically set to router_id #}
-{% if neighbor.type == 'unnumbered' %}
-nv set vrf default router bgp neighbor {{ neighbor_if_str }} update-source {{ router_id }}
-{% endif %}
+{% endfor %}
+{% elif neighbor.interfaces == 'oob_uplink' %}
+{# Build OOB uplink interface list from oob_uplink_interfaces role #}
+{% set neighbor_ifs = [] %}
+{% set port_overrides = oob_uplink_interfaces.port_overrides | default({}) %}
+{% for port in oob_uplink_interfaces.ports %}
+{% set port_breakout = port_overrides.get(port, {}).get('breakout', oob_uplink_interfaces.breakout) %}
+{% set port_subports = port_overrides.get(port, {}).get('subports', range(port_breakout)) %}
+{% for sub in port_subports %}
+{% set _ = neighbor_ifs.append('swp' ~ port ~ 's' ~ sub) %}
+{% endfor %}
+{% endfor %}
 {% else %}
 {# Explicit interface list #}
-{# Convert to range syntax using regex_replace #}
-{% set neighbor_if_str = neighbor.interfaces | join(',') | regex_replace(',(swp\\d+)s', '-\\1s') %}
+{% set numbered_ip_neighbors = (neighbor.type is defined and neighbor.type == 'numbered'
+                                 and neighbor.interfaces | length > 0
+                                 and (neighbor.interfaces[0] | string).startswith('swp') == false) %}
+{% if numbered_ip_neighbors %}
+{% for ip in neighbor.interfaces %}
+nv set vrf default router bgp neighbor {{ ip }} peer-group {{ neighbor.peer_group }}
+{% if neighbor.ttl_security_hops is defined %}
+nv set vrf default router bgp neighbor {{ ip }} ttl-security hops {{ neighbor.ttl_security_hops }}
+{% endif %}
+nv set vrf default router bgp neighbor {{ ip }} type {{ neighbor.type }}
+{% if neighbor.update_source is defined %}
+nv set vrf default router bgp neighbor {{ ip }} update-source {{ neighbor.update_source }}
+{% endif %}
+{% endfor %}
+{% set neighbor_if_str = none %}
+{% else %}
+{% set neighbor_ifs = neighbor.interfaces %}
+{% endif %}
+{% endif %}
+{% if neighbor_ifs is defined %}
+{% for iface in neighbor_ifs %}
+nv set vrf default router bgp neighbor {{ iface }} peer-group {{ neighbor.peer_group }}
+{% if neighbor.ttl_security_hops is defined %}
+nv set vrf default router bgp neighbor {{ iface }} ttl-security hops {{ neighbor.ttl_security_hops }}
+{% endif %}
+{% if neighbor.type is defined %}
+nv set vrf default router bgp neighbor {{ iface }} type {{ neighbor.type }}
+{% endif %}
+{% if neighbor.update_source is defined %}
+nv set vrf default router bgp neighbor {{ iface }} update-source {{ neighbor.update_source }}
+{% endif %}
+{% endfor %}
+{% elif neighbor_if_str is not none %}
 nv set vrf default router bgp neighbor {{ neighbor_if_str }} peer-group {{ neighbor.peer_group }}
 {% if neighbor.ttl_security_hops is defined %}
 nv set vrf default router bgp neighbor {{ neighbor_if_str }} ttl-security hops {{ neighbor.ttl_security_hops }}
@@ -591,17 +752,28 @@ nv set vrf default router bgp neighbor {{ neighbor_if_str }} ttl-security hops {
 {% if neighbor.type is defined %}
 nv set vrf default router bgp neighbor {{ neighbor_if_str }} type {{ neighbor.type }}
 {% endif %}
-{# Update-source for unnumbered neighbors - automatically set to router_id #}
-{% if neighbor.type == 'unnumbered' %}
-nv set vrf default router bgp neighbor {{ neighbor_if_str }} update-source {{ router_id }}
+{% if neighbor.update_source is defined %}
+nv set vrf default router bgp neighbor {{ neighbor_if_str }} update-source {{ neighbor.update_source }}
 {% endif %}
 {% endif %}
 {% endfor %}
 {% endif %}
 
-{# Default VRF BGP Peer-Groups #}
+{# Default VRF BGP Peer-Groups
+   PR5: only emit a peer-group definition when at least one neighbor in
+   the default VRF is bound to it. Otherwise the block is dead code that
+   confuses operators and pollutes the running config. #}
 {% if default_vrf_bgp.peer_groups is defined %}
+{% set _pgs_in_use = [] %}
+{% if default_vrf_bgp.neighbors is defined %}
+{% for n in default_vrf_bgp.neighbors %}
+{% if n.peer_group is defined and n.peer_group not in _pgs_in_use %}
+{% set _ = _pgs_in_use.append(n.peer_group) %}
+{% endif %}
+{% endfor %}
+{% endif %}
 {% for pg in default_vrf_bgp.peer_groups %}
+{% if pg.id in _pgs_in_use %}
 {% if pg.address_family is defined %}
 {% if pg.address_family.ipv4_unicast is defined %}
 {% set af = pg.address_family.ipv4_unicast %}
@@ -616,7 +788,13 @@ nv set vrf default router bgp peer-group {{ pg.id }} address-family l2vpn-evpn s
 {% endif %}
 {% endif %}
 {% if pg.bfd_enable is defined and pg.bfd_enable %}
-nv set vrf default router bgp peer-group {{ pg.id }} bfd profile default
+nv set vrf default router bgp peer-group {{ pg.id }} bfd profile {{ pg.bfd_profile | default('default') }}
+{% endif %}
+{% if pg.update_source is defined %}
+nv set vrf default router bgp peer-group {{ pg.id }} update-source {{ pg.update_source }}
+{% endif %}
+{% if pg.multihop_ttl is defined %}
+nv set vrf default router bgp peer-group {{ pg.id }} multihop-ttl {{ pg.multihop_ttl }}
 {% endif %}
 {% if pg.description is defined %}
 nv set vrf default router bgp peer-group {{ pg.id }} description {{ pg.description }}
@@ -624,39 +802,26 @@ nv set vrf default router bgp peer-group {{ pg.id }} description {{ pg.descripti
 {% if pg.remote_as is defined %}
 nv set vrf default router bgp peer-group {{ pg.id }} remote-as {{ pg.remote_as }}
 {% endif %}
+{% endif %}
 {% endfor %}
 {% endif %}
 {% endif %}
 
 #============================================================================
-# DHCP Relay
+# DHCP Relay (VRF-aware, Excel-driven)
 #============================================================================
 {% if dhcp_relay is defined %}
 {% for relay in dhcp_relay %}
-{% set sg_name = relay.vrf | lower ~ '-servers' %}
-{# Server group: servers + upstream interface (toward DHCP server) #}
 {% for server in relay.servers %}
-nv set service dhcp-relay {{ relay.vrf }} server-group {{ sg_name }} server {{ server }}
+nv set service dhcp-relay {{ relay.vrf }} server-group {{ relay.server_group }} server {{ server }}
 {% endfor %}
-{% if relay.vrf_vlan is defined %}
-nv set service dhcp-relay {{ relay.vrf }} server-group {{ sg_name }} upstream-interface vlan{{ relay.vrf_vlan }}_l3
-{% endif %}
-{# Downstream interfaces (client-facing) #}
-{% if relay.interfaces == 'edge' %}
-{# Build edge interface list using expand_subports macro #}
-{% set relay_edge_ifs = expand_subports(edge_interfaces) | trim %}
-{% for iface in relay_edge_ifs.split(',') %}
-nv set service dhcp-relay {{ relay.vrf }} downstream-interface {{ iface }} server-group-name {{ sg_name }}
+{% for upstream in relay.upstream_interfaces %}
+nv set service dhcp-relay {{ relay.vrf }} server-group {{ relay.server_group }} upstream-interface {{ upstream }}
 {% endfor %}
-{% else %}
-{% for iface in relay.interfaces %}
-nv set service dhcp-relay {{ relay.vrf }} downstream-interface {{ iface }} server-group-name {{ sg_name }}
+{% for iface in relay.downstream_interfaces %}
+nv set service dhcp-relay {{ relay.vrf }} downstream-interface {{ iface }} server-group-name {{ relay.server_group }}
 {% endfor %}
-{% endif %}
-{# Gateway interface (L3 VRF interface for giaddr) #}
-{% if relay.vrf_vlan is defined %}
-nv set service dhcp-relay {{ relay.vrf }} gateway-interface vlan{{ relay.vrf_vlan }}_l3
-{% endif %}
+nv set service dhcp-relay {{ relay.vrf }} source-ip giaddress
 {% endfor %}
 {% endif %}
 
@@ -672,7 +837,7 @@ nv set qos traffic-pool roce-lossless memory-percent 90
 # NTP (servers from Settings ntp_servers comma-separated, or default)
 #============================================================================
 {% for server in ntp_servers | default(['0.cumulusnetworks.pool.ntp.org', '1.cumulusnetworks.pool.ntp.org', '2.cumulusnetworks.pool.ntp.org', '3.cumulusnetworks.pool.ntp.org']) %}
-nv set system ntp server {{ server }}
+nv set system ntp server {{ server | quote }}
 {% endfor %}
 
 #============================================================================
@@ -697,15 +862,15 @@ nv set system aaa ldap vrf mgmt
    on the switch fails loudly with a clear pointer to the missing field,
    rather than silently producing a broken LDAP binding.
    The `, true` second argument on each default() tells Jinja2 to fall back
-   on ANY falsy value (None, empty string, 0) — not just undefined keys —
+   on ANY falsy value (None, empty string, 0) - not just undefined keys -
    because scripts/excel_parser.py writes empty strings for blank Excel
    cells rather than omitting keys, which would slip past a one-arg default. #}
-nv set system aaa ldap base-dn {{ ldap.base_dn | default('MISSING_ldap_base_dn_SET_IN_EXCEL', true) }}
-nv set system aaa ldap bind-dn {{ ldap.root_dn | default('MISSING_ldap_root_dn_SET_IN_EXCEL', true) }}
-nv set system aaa ldap secret {{ ldap.admin_password | default('MISSING_ldap_admin_password_SET_IN_VAULT', true) }}
+nv set system aaa ldap base-dn {{ ldap.base_dn | default('MISSING_ldap_base_dn_SET_IN_EXCEL', true) | quote }}
+nv set system aaa ldap bind-dn {{ ldap.root_dn | default('MISSING_ldap_root_dn_SET_IN_EXCEL', true) | quote }}
+nv set system aaa ldap secret {{ ldap.admin_password | default('MISSING_ldap_admin_password_SET_IN_VAULT', true) | quote }}
 {% if ldap.servers is defined %}
 {% for server in ldap.servers %}
-nv set system aaa ldap server {{ server.ip }}{% if server.priority is defined and server.priority != 1 %} priority {{ server.priority }}{% endif %}
+nv set system aaa ldap server {{ server.ip | quote }}{% if server.priority is defined and server.priority != 1 %} priority {{ server.priority }}{% endif %}
 
 {% endfor %}
 {% else %}
@@ -731,18 +896,21 @@ nv set system control-plane acl acl-default-whitelist inbound
 nv set system global anycast-mac {{ anycast_mac }}
 {% endif %}
 nv set system hostname {{ hostname }}
-nv set system message post-login '#####################################################################################
-#                     You are successfully logged in to: {{ hostname }}{{ ' ' * (27 - hostname|length) }}#
-#####################################################################################
-'
-nv set system message pre-login '#####################################################################################
-#  Welcome to NVIDIA Cumulus VX (TM)                                                #
-#  NVIDIA Cumulus VX (TM) is a community supported virtual appliance designed       #
-#  for experiencing, testing and prototyping NVIDIA Cumulus'"'"' latest technology. #
-#  For any questions or technical support, visit our community site at:             #
-#  https://www.nvidia.com/en-us/support                                             #
-#####################################################################################
-'
+{# Operator-configurable SSH login banners sourced from the Excel
+   `Settings.pre_login_message` / `post_login_message` fields. Defaults
+   ship pre-populated with the NVIDIA Cumulus VX welcome message, so
+   existing deploys see no behavior change. Empty cell → no NVUE line
+   emitted and any existing banner on the switch persists.
+   Placeholder substitution happens per-switch; single quotes in the
+   operator's text are escaped via the bash-standard '\'' (close-
+   escape-reopen) pattern so the rendered .sh stays safe to apply.
+   See docs/plans/2026-05-26-switch-login-messages-design.md. #}
+{% if common is defined and common.get('pre_login_message') %}
+nv set system message pre-login '{{ common.get('pre_login_message') | replace("'", "'\\''") | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) }}'
+{% endif %}
+{% if common is defined and common.get('post_login_message') %}
+nv set system message post-login '{{ common.get('post_login_message') | replace("'", "'\\''") | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) }}'
+{% endif %}
 nv set system ssh-server state enabled
 {% if telemetry is defined and telemetry.enabled | default(false) %}
 nv set system telemetry state enabled
@@ -771,7 +939,7 @@ nv set system telemetry snapshot-file name {{ telemetry.snapshot_file.name | def
 nv set system telemetry snapshot-interval {{ telemetry.snapshot_interval }}
 {% endif %}
 {% endif %}
-nv set system date-time timezone {{ timezone }}
+nv set system date-time timezone {{ timezone | quote }}
 nv set system wjh channel forwarding trigger l2
 nv set system wjh channel forwarding trigger l3
 nv set system wjh channel forwarding trigger tunnel

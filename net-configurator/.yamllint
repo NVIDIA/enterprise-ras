@@ -7,7 +7,11 @@ extends: default
 
 rules:
   line-length:
-    max: 200
+    # 360 chars accommodates the longest shell-command/Jinja chains in the
+    # validate-* playbooks (PASS/FAIL ternary echoes with multiple inlined
+    # variables). Splitting those across lines hurts readability without
+    # any actionable benefit. Anything > 360 is a real refactor signal.
+    max: 360
     allow-non-breakable-words: true
     allow-non-breakable-inline-mappings: true
   truthy:

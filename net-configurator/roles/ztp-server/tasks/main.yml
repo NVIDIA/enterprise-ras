@@ -22,7 +22,7 @@
   failed_when: false
   changed_when: false
   loop: "{{ ztp_interfaces | default([]) }}"
-  when: 
+  when:
     - configure_ztp_ips | default(false)
     - ztp_interfaces is defined
 
@@ -33,7 +33,7 @@
       - "    Cannot configure IP {{ item.item.ip }}"
       - "    Please create the interface first or disable configure_ztp_ips"
   loop: "{{ interface_check.results | default([]) }}"
-  when: 
+  when:
     - configure_ztp_ips | default(false)
     - item.rc is defined
     - item.rc != 0
@@ -46,7 +46,7 @@
   failed_when: false
   changed_when: ip_config.rc == 0
   loop: "{{ ztp_interfaces | default([]) }}"
-  when: 
+  when:
     - configure_ztp_ips | default(false)
     - ztp_interfaces is defined
     - interface_check.results is defined
@@ -57,7 +57,7 @@
   register: link_up
   changed_when: false
   loop: "{{ ztp_interfaces | default([]) }}"
-  when: 
+  when:
     - configure_ztp_ips | default(false)
     - ztp_interfaces is defined
     - interface_check.results is defined
@@ -68,7 +68,7 @@
     src: netplan-ztp.yaml.j2
     dest: /etc/netplan/99-ztp-interfaces.yaml
     mode: '0644'
-  when: 
+  when:
     - configure_ztp_ips | default(false)
     - ztp_interfaces is defined
     - ansible_distribution == "Ubuntu"
@@ -79,7 +79,7 @@
     src: interfaces-ztp.j2
     dest: /etc/network/interfaces.d/ztp-interfaces
     mode: '0644'
-  when: 
+  when:
     - configure_ztp_ips | default(false)
     - ztp_interfaces is defined
     - ansible_distribution == "Debian"
@@ -92,7 +92,7 @@
       {% for iface in ztp_interfaces | default([]) %}
         {{ iface.name }}: {{ iface.ip }} ({{ iface.network }})
       {% endfor %}
-  when: 
+  when:
     - configure_ztp_ips | default(false)
     - ztp_interfaces is defined
 
@@ -267,8 +267,10 @@
     mode: '0755'
     owner: www-data
     group: www-data
-  loop: "{{ groups['core'] | default([]) + groups['oob'] | default([]) }}"
-  when: (groups['core'] is defined and groups['core'] | length > 0) or (groups['oob'] is defined and groups['oob'] | length > 0)
+  # Loop over the 'switches' parent group (children: core, csl, gsl, oob)
+  # so this works for collapsed (core) and dedicated_gpu (csl/gsl) archs.
+  loop: "{{ groups['switches'] | default([]) }}"
+  when: groups['switches'] is defined and groups['switches'] | length > 0
   ignore_errors: yes
 
 - name: Create reports directory
@@ -290,7 +292,11 @@
     chmod 640 /etc/nginx/.htpasswd
     chown root:www-data /etc/nginx/.htpasswd
   environment:
-    HTPASSWD_PASS: "{{ status_page_password | default(switch_password | default('nvidia')) }}"
+    # Do NOT fall back to switch_password: the status page is served over plain
+    # HTTP, so reusing the switch credential would expose it. Use the dedicated
+    # status_page_password secret (set in secrets.yml); a placeholder default
+    # keeps deploys working but should be overridden.
+    HTPASSWD_PASS: "{{ status_page_password | default('era-status-CHANGE_ME') }}"
     HTPASSWD_USER: "{{ status_page_username | default('era') }}"
   when: status_page_enabled | default(false) | bool
   changed_when: true
@@ -425,7 +431,7 @@
   file:
     path: /etc/resolv.conf
     state: absent
-  when: 
+  when:
     - configure_dhcp | default(true)
     - resolv_conf_stat.stat.islnk is defined
     - resolv_conf_stat.stat.islnk
@@ -507,4 +513,3 @@
       - "  Cumulus version, BGP status, and EVPN VNIs for all switches."
       - ""
       - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-

@@ -34,10 +34,13 @@ support-07
 support-08
 
 [dhcp]
-dhcp-oob
+external-dhcp
 
 [oob-server]
-oob-server-01
+external-conn
+
+[jump]
+utility
 
 [switches:children]
 core
@@ -52,6 +55,7 @@ storage
 support
 dhcp
 oob-server
+jump
 
 [servers:vars]
 ansible_user=ubuntu

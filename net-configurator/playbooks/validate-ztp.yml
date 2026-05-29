@@ -6,7 +6,7 @@
 # This playbook runs validation commands from the ZTP server to reach switches
 
 - name: Validate ZTP Configuration via ZTP Server
-  hosts: dhcp-oob
+  hosts: jump
   gather_facts: false
 
   tasks:
@@ -32,7 +32,9 @@
 
     - name: Get list of switches from inventory
       set_fact:
-        switch_list: "{{ groups['oob'] + groups['core'] }}"
+        # Use the 'switches' parent group (children: core, csl, gsl, oob)
+        # so the same playbook works for collapsed (core) and dedicated_gpu (csl/gsl) archs.
+        switch_list: "{{ groups['switches'] | default([]) }}"
       delegate_to: localhost
       run_once: true
 
@@ -57,7 +59,15 @@
         iface_output=$($SSH_CMD 'nv show interface brief 2>/dev/null' 2>/dev/null || echo "N/A")
         interfaces_up=$(echo "$iface_output" | awk 'NR>2 && $3=="up" {count++} END {print count+0}')
 
-        {% if 'core' in hostvars[item].group_names %}
+        # Additional commands for OEM hand-off (all switches)
+        system_output=$($SSH_CMD 'nv show system 2>/dev/null' 2>/dev/null || echo "N/A")
+        platform_output=$($SSH_CMD 'nv show platform 2>/dev/null' 2>/dev/null || echo "N/A")
+        vrf_output=$($SSH_CMD 'nv show vrf 2>/dev/null' 2>/dev/null || echo "N/A")
+        ntp_output=$($SSH_CMD 'nv show service ntp 2>/dev/null' 2>/dev/null || echo "N/A")
+        lldp_output=$($SSH_CMD 'nv show interface --view=lldp 2>/dev/null' 2>/dev/null || echo "N/A")
+        running_config=$($SSH_CMD 'nv config show 2>/dev/null' 2>/dev/null || echo "N/A")
+
+        {% if 'core' in hostvars[item].group_names or 'csl' in hostvars[item].group_names or 'gsl' in hostvars[item].group_names %}
         bgp_output=$($SSH_CMD 'nv show vrf default router bgp 2>/dev/null' 2>/dev/null || echo "N/A")
         bgp_enabled=$(echo "$bgp_output" | awk '/^state/ {print $2}')
         bgp_configured=$(echo "$bgp_output" | awk '/^configured-neighbors/ {print $2}')
@@ -66,19 +76,72 @@
         evpn_output=$($SSH_CMD 'nv show evpn 2>/dev/null' 2>/dev/null || echo "N/A")
         evpn_l2vni=$($SSH_CMD 'nv show evpn --output json 2>/dev/null | jq -r ".\"l2vni-count\" // 0" 2>/dev/null' 2>/dev/null || echo "0")
         evpn_l3vni=$($SSH_CMD 'nv show evpn --output json 2>/dev/null | jq -r ".\"l3vni-count\" // 0" 2>/dev/null' 2>/dev/null || echo "0")
+
+        # Additional commands for OEM hand-off (L3 switches)
+        bgp_neighbor_output=$($SSH_CMD 'nv show vrf default router bgp neighbor 2>/dev/null' 2>/dev/null || echo "N/A")
+        evpn_vni_output=$($SSH_CMD 'nv show evpn vni 2>/dev/null' 2>/dev/null || echo "N/A")
+        qos_roce_output=$($SSH_CMD 'nv show qos roce 2>/dev/null' 2>/dev/null || echo "N/A")
+
+        # Identify configured-but-not-established BGP sessions.
+        # The tabular output has columns: Neighbor Hostname AS State Uptime ResetTime ...
+        # but for never-established sessions, Hostname and AS are blank, shifting State from
+        # col 4 to col 2. We check both. State words are: established, idle, active, connect,
+        # opensent, openconfirm.
+        # For each down neighbor, look up the ports link state from iface_output to distinguish
+        # no peer in topology (link down) from peer unreachable (link up).
+        # Output: comma-separated neighbor:linkstate (e.g. swp55s6:down,swp55s7:down).
+        bgp_down_neighbors=$(echo "$bgp_neighbor_output" | awk -v ifaces="$iface_output" '
+          BEGIN {
+            n = split(ifaces, lines, "\n")
+            for (i = 1; i <= n; i++) {
+              split(lines[i], f, /[[:space:]]+/)
+              if (f[1] ~ /^swp/) port_state[f[1]] = f[3]
+            }
+          }
+          /^[-]+[[:space:]]+[-]+/ { started=1; next }
+          started {
+            state = ""
+            if ($4 ~ /^(established|idle|active|connect|opensent|openconfirm)$/) state = $4
+            else if ($2 ~ /^(established|idle|active|connect|opensent|openconfirm)$/) state = $2
+            if (state != "" && state != "established") {
+              link = (port_state[$1] != "" ? port_state[$1] : "unknown")
+              if (out != "") out = out ","
+              out = out $1 ":" link
+            }
+          }
+          END { print out }
+        ')
         {% endif %}
 
-        echo "RESULT|SUCCESS|$hostname|$version|$nvue_exists|$bridges|$interfaces_up{% if 'core' in hostvars[item].group_names %}|$bgp_enabled|$bgp_configured|$bgp_established|$evpn_l2vni|$evpn_l3vni{% endif %}"
+        echo "RESULT|SUCCESS|$hostname|$version|$nvue_exists|$bridges|$interfaces_up{% if 'core' in hostvars[item].group_names or 'csl' in hostvars[item].group_names or 'gsl' in hostvars[item].group_names %}|$bgp_enabled|$bgp_configured|$bgp_established|$evpn_l2vni|$evpn_l3vni|$bgp_down_neighbors{% endif %}"
+        echo "---RAW:system---"
+        echo "$system_output"
+        echo "---RAW:platform---"
+        echo "$platform_output"
         echo "---RAW:bridge_domain---"
         echo "$bridge_output"
         echo "---RAW:interface_brief---"
         echo "$iface_output"
+        echo "---RAW:vrf---"
+        echo "$vrf_output"
+        echo "---RAW:ntp---"
+        echo "$ntp_output"
+        echo "---RAW:lldp---"
+        echo "$lldp_output"
         {% if 'core' in hostvars[item].group_names %}
         echo "---RAW:bgp---"
         echo "$bgp_output"
+        echo "---RAW:bgp_neighbor---"
+        echo "$bgp_neighbor_output"
         echo "---RAW:evpn---"
         echo "$evpn_output"
+        echo "---RAW:evpn_vni---"
+        echo "$evpn_vni_output"
+        echo "---RAW:qos_roce---"
+        echo "$qos_roce_output"
         {% endif %}
+        echo "---RAW:running_config---"
+        echo "$running_config"
       loop: "{{ switch_list }}"
       register: validation_results
       changed_when: false
@@ -111,10 +174,20 @@
             NVUE Config:              {{ r[4] }}
             Bridge Domains:           {{ r[5] }}
             Interfaces Up:            {{ r[6] }}
-          {% if 'core' in hostvars[item.item].group_names %}
+          {% if 'core' in hostvars[item.item].group_names or 'csl' in hostvars[item.item].group_names or 'gsl' in hostvars[item.item].group_names %}
             BGP State:                {{ r[7] | default('N/A') }}
             BGP Configured Neighbors: {{ r[8] | default('0') }}
             BGP Established Neighbors:{{ r[9] | default('0') }}
+          {% set _down = (r[8] | default(0) | int) - (r[9] | default(0) | int) %}
+          {% if _down > 0 %}
+            BGP Sessions Down:        ⚠ {{ _down }}
+          {% if r[12] is defined and (r[12] | trim) %}
+          {% for _entry in r[12].split(',') %}
+          {% set _port = _entry.split(':')[0] %}
+              └─ {{ _port }}
+          {% endfor %}
+          {% endif %}
+          {% endif %}
             EVPN L2 VNIs:             {{ r[10] | default('0') }}
             EVPN L3 VNIs:             {{ r[11] | default('0') }}
           {% endif %}
@@ -133,31 +206,51 @@
           {% endif %}
           ══════════════════════════════════════════════════════════════
 
+          Per-switch raw `nv show` output (bridge, interface, vrf, ntp,
+          lldp, bgp, evpn, qos_roce, running config) lives in
+          {{ report_file | dirname }}/raw/.
+        dest: "{{ report_file | default('/tmp/era-ztp-validation-report.txt') }}"
+      delegate_to: localhost
+      run_once: true
 
-          ╔══════════════════════════════════════════════════════════════╗
-          ║  RAW COMMAND OUTPUT                                        ║
-          ╚══════════════════════════════════════════════════════════════╝
-          {% for item in validation_results.results %}
-          {% set result_line = item.stdout_lines | select('match', '^RESULT\\|') | list | first %}
-          {% if 'SUCCESS' in result_line %}
+    # ── Per-switch raw nv show output → reports/raw/ (audit detail) ──
+    - name: Compute raw output directory
+      set_fact:
+        raw_report_dir: "{{ report_file | dirname }}/raw"
+      delegate_to: localhost
+      run_once: true
 
-          ┌──────────────────────────────────────────────────────────────
-          │ {{ item.item }}  ({{ hostvars[item.item].ansible_host }})
-          └──────────────────────────────────────────────────────────────
-          {% set in_raw = {'active': false, 'section': ''} %}
+    - name: Ensure raw output directory exists
+      file:
+        path: "{{ raw_report_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
+
+    - name: Write per-switch raw nv show output files
+      copy:
+        dest: "{{ raw_report_dir }}/ztp-{{ item.item }}.txt"
+        mode: '0644'
+        content: |
+          {{ item.item }}  ({{ hostvars[item.item].ansible_host }})
+          Captured during validate-ztp, {{ '%Y-%m-%d %H:%M:%S' | strftime }}
+
           {% for line in item.stdout_lines %}
           {% if line.startswith('---RAW:') %}
 
-          --- {{ line | replace('---RAW:', '') | replace('---', '') }} ---
+          === {{ line | replace('---RAW:', '') | replace('---', '') }} ===
           {% elif not line.startswith('RESULT|') %}
           {{ line }}
           {% endif %}
           {% endfor %}
-          {% endif %}
-          {% endfor %}
-        dest: "{{ report_file | default('/tmp/era-ztp-validation-report.txt') }}"
+      loop: "{{ validation_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when:
+        - item.stdout is defined
+        - "'SUCCESS' in (item.stdout_lines | select('match', '^RESULT\\\\|') | list | first | default(''))"
       delegate_to: localhost
-      run_once: true
 
     - name: Fail if any validation failed
       fail:

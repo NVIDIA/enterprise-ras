@@ -1,0 +1,50 @@
+[flake8]
+max-line-length = 120
+
+# Ignored rules — pre-existing across the codebase. These are cosmetic or
+# style-only and not bugs. If we ever want to enforce one, it should be
+# fixed across the tree in a single dedicated MR.
+#   E402 — module-level import not at top of file. Several scripts adjust
+#          sys.path BEFORE importing local modules; that's intentional.
+#   E501 — overridden by max-line-length above; some lines in shell-heavy
+#          scripts still exceed even 120. Don't crash on those.
+#   E116/E114/E127/E128/E131 — continuation-line indentation. Older code
+#          uses alignment styles that flake8 dislikes.
+#   E221 — multiple spaces before operator (often used for visual alignment
+#          in constant tables / dicts).
+#   E303 — too many blank lines (cosmetic).
+#   E731 — lambda assignment (intentional in a few callbacks).
+#   E741 — ambiguous variable name 'l' (used in some short loops).
+#   W293 — whitespace on otherwise-blank lines (would be nice to clean
+#          but isn't a bug).
+#   W391 — blank line at end of file (cosmetic).
+#   F401 — imported but unused (some scripts re-export for back-compat).
+#   F541 — f-string without placeholders (harmless).
+#   F841 — local variable assigned but never used (sometimes kept for
+#          debug logging / future use).
+extend-ignore =
+    E402,
+    E501,
+    E116,
+    E114,
+    E127,
+    E128,
+    E131,
+    E221,
+    E302,
+    E303,
+    E731,
+    E741,
+    W293,
+    W391,
+    F401,
+    F541,
+    F841
+
+exclude =
+    .venv,
+    .venv-test,
+    venv,
+    archive,
+    __pycache__,
+    .git

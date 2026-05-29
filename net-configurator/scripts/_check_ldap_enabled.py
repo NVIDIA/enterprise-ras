@@ -29,7 +29,7 @@ import re
 import sys
 from pathlib import Path
 
-VALID_ARCHS = {"2-4-3-200", "2-8-5-200", "2-8-9-400"}
+VALID_ARCHS = {"2-4-3-200", "2-8-5-200", "2-8-9-400", "2-8-9-800"}
 SITE_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]*$")
 
 

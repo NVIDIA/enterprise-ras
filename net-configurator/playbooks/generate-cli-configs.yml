@@ -3,12 +3,12 @@
 # SPDX-License-Identifier: MIT
 
 - name: Generate NVUE CLI Format Configurations
-  hosts: core:oob
+  hosts: core:csl:gsl_plane1:gsl_plane2:oob
   gather_facts: false
   connection: local
   vars:
     config_output_dir: "../exported-configurations-cli"
-  
+
   tasks:
     - name: Set timestamp fact
       set_fact:
@@ -27,14 +27,28 @@
         src: "../roles/core/templates/core_nvue_cli.j2"
         dest: "{{ config_output_dir }}/{{ hostname }}-config.sh"
         mode: '0755'
-      when: inventory_hostname in groups['core']
+      when: "'core' in group_names"
+
+    - name: Generate CSL Switch CLI Configuration
+      template:
+        src: "../roles/core/templates/core_nvue_cli.j2"
+        dest: "{{ config_output_dir }}/{{ hostname }}-config.sh"
+        mode: '0755'
+      when: "'csl' in group_names"
+
+    - name: Generate GSL Switch CLI Configuration
+      template:
+        src: "../roles/gsl/templates/gsl_nvue_cli.j2"
+        dest: "{{ config_output_dir }}/{{ hostname }}-config.sh"
+        mode: '0755'
+      when: "'gsl_plane1' in group_names or 'gsl_plane2' in group_names"
 
     - name: Generate OOB Switch CLI Configuration
       template:
         src: "../roles/oob-switch/templates/oob_nvue_cli.j2"
         dest: "{{ config_output_dir }}/{{ hostname }}-config.sh"
         mode: '0755'
-      when: inventory_hostname in groups['oob']
+      when: "'oob' in group_names"
 
     - name: Collapse excessive blank lines in generated configs
       replace:

@@ -31,7 +31,7 @@ from excel_parser import parse_settings as _parse_settings
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INPUT_DIR = BASE_DIR / "input"
-VALID_ARCHS = ("2-4-3-200", "2-8-5-200", "2-8-9-400")
+VALID_ARCHS = ("2-4-3-200", "2-8-5-200", "2-8-9-400", "2-8-9-800")
 
 # Characters not allowed in site directory names
 _INVALID_SITE_CHARS = re.compile(r'[^\w\-]')
@@ -111,9 +111,14 @@ def import_excel(xlsx_path: Path, site_override: str | None = None,
     # Create destination directory
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    # Copy the Excel (don't move — leave original in place)
-    shutil.copy2(xlsx_path, dest_file)
-    print(f"\n✓ Copied to: {dest_file.relative_to(BASE_DIR)}")
+    # Copy the Excel (don't move — leave original in place).
+    # If the source IS the destination (e.g. re-running make deploy with the
+    # already-imported file), skip the copy and just refresh the context.
+    if xlsx_path.resolve() == dest_file.resolve():
+        print(f"\n✓ Already at: {dest_file.relative_to(BASE_DIR)} (no copy needed)")
+    else:
+        shutil.copy2(xlsx_path, dest_file)
+        print(f"\n✓ Copied to: {dest_file.relative_to(BASE_DIR)}")
 
     # Write .era-context
     context_path = BASE_DIR / '.era-context'

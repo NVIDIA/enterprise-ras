@@ -90,7 +90,7 @@ Create a permanent configuration for Ansible.
 
 In the project root:
 ```bash
-cd /path/to/era-automation
+cd /path/to/net-configurator
 vim ansible.cfg
 ```
 

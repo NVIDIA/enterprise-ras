@@ -322,9 +322,14 @@ def write_encrypted_vault(vault_path: Path, data: dict, password: str) -> None:
 def write_password_file(cfg_dir: Path, password: str) -> Path:
     """Write the vault password to cfg_dir/vault-pass with 0600 perms."""
     cfg_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # Enforce 0700 even if the directory already existed with looser perms.
+    cfg_dir.chmod(0o700)
     pass_path = cfg_dir / SHARED_VAULT_PASS_FILENAME
-    pass_path.write_text(password + "\n")
-    pass_path.chmod(0o600)
+    # Create the file atomically with 0600 so the secret is never briefly
+    # readable through a umask-widened window between write and chmod.
+    fd = os.open(pass_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(password + "\n")
     return pass_path
 
 

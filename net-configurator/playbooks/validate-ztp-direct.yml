@@ -7,7 +7,7 @@
 # Can be run from the workstation or delegated to the ZTP server
 
 - name: Validate ZTP Configuration on Switches
-  hosts: oob:core
+  hosts: switches
   gather_facts: false
 
   tasks:
@@ -39,31 +39,31 @@
         - startup_config.stat.exists | default(false)
       changed_when: false
 
-    - name: Get BGP summary (core switches only)
+    - name: Get BGP summary (L3 switches)
       shell: nv show vrf default router bgp 2>/dev/null
       register: bgp_output
       ignore_errors: true
       when:
         - hostname_result is succeeded
-        - "'core' in group_names"
+        - "'core' in group_names or 'csl' in group_names or 'gsl' in group_names"
       changed_when: false
 
-    - name: Check EVPN configuration (core switches only)
+    - name: Check EVPN configuration (L3 switches)
       shell: nv show evpn 2>/dev/null
       register: evpn_output
       ignore_errors: true
       when:
         - hostname_result is succeeded
-        - "'core' in group_names"
+        - "'core' in group_names or 'csl' in group_names or 'gsl' in group_names"
       changed_when: false
 
-    - name: Get EVPN VNI counts (core switches only)
+    - name: Get EVPN VNI counts (L3 switches)
       shell: nv show evpn --output json 2>/dev/null | jq -r '."l2vni-count" // 0, ."l3vni-count" // 0' 2>/dev/null
       register: evpn_vni_counts
       ignore_errors: true
       when:
         - hostname_result is succeeded
-        - "'core' in group_names"
+        - "'core' in group_names or 'csl' in group_names or 'gsl' in group_names"
       changed_when: false
 
     - name: Get bridge domain output
@@ -84,32 +84,32 @@
       set_fact:
         validation_result:
           ssh_reachable: "{{ hostname_result is succeeded }}"
-          hostname_matches: "{{ (hostname_result.stdout | default('') == inventory_hostname) }}"
+          hostname_matches: "{{ (hostname_result.stdout | default('') == (hostname | default(inventory_hostname))) }}"
           hostname_actual: "{{ hostname_result.stdout | default('N/A') }}"
           cumulus_version: "{{ version_result.stdout | default('N/A') }}"
           nvue_config_exists: "{{ startup_config.stat.exists | default(false) }}"
-          nvue_config_applied: "{{ (nvue_hostname.stdout | default('') == inventory_hostname) }}"
-          bgp_state: "{{ bgp_output.stdout_lines | select('match', '^state') | map('regex_replace', '^state\\s+', '') | first | default('N/A') if 'core' in group_names and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
-          bgp_configured: "{{ bgp_output.stdout_lines | select('match', '^configured-neighbors') | map('regex_replace', '^configured-neighbors\\s+', '') | first | default('0') if 'core' in group_names and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
-          bgp_established: "{{ bgp_output.stdout_lines | select('match', '^established-neighbors') | map('regex_replace', '^established-neighbors\\s+', '') | first | default('0') if 'core' in group_names and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
-          evpn_l2vni: "{{ evpn_vni_counts.stdout_lines[0] | default('0') if 'core' in group_names and evpn_vni_counts is defined and evpn_vni_counts.stdout_lines is defined else 'N/A' }}"
-          evpn_l3vni: "{{ evpn_vni_counts.stdout_lines[1] | default('0') if 'core' in group_names and evpn_vni_counts is defined and evpn_vni_counts.stdout_lines is defined else 'N/A' }}"
+          nvue_config_applied: "{{ (nvue_hostname.stdout | default('') == (hostname | default(inventory_hostname))) }}"
+          bgp_state: "{{ bgp_output.stdout_lines | select('match', '^state') | map('regex_replace', '^state\\s+', '') | first | default('N/A') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names) and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
+          bgp_configured: "{{ bgp_output.stdout_lines | select('match', '^configured-neighbors') | map('regex_replace', '^configured-neighbors\\s+', '') | first | default('0') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names) and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
+          bgp_established: "{{ bgp_output.stdout_lines | select('match', '^established-neighbors') | map('regex_replace', '^established-neighbors\\s+', '') | first | default('0') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names) and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
+          evpn_l2vni: "{{ evpn_vni_counts.stdout_lines[0] | default('0') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names) and evpn_vni_counts is defined and evpn_vni_counts.stdout_lines is defined else 'N/A' }}"
+          evpn_l3vni: "{{ evpn_vni_counts.stdout_lines[1] | default('0') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names) and evpn_vni_counts is defined and evpn_vni_counts.stdout_lines is defined else 'N/A' }}"
           bridge_domains: "{{ bridge_output.stdout_lines | select('match', '^\\S') | reject('match', '^\\s*$') | list | length - 2 if bridge_output is defined and bridge_output.stdout is defined else 0 }}"
           interfaces_up: "{{ iface_output.stdout_lines | select('search', '\\s+up\\s+') | list | length if iface_output is defined and iface_output.stdout is defined else 0 }}"
         raw_output:
           bridge: "{{ bridge_output.stdout | default('N/A') }}"
           interfaces: "{{ iface_output.stdout | default('N/A') }}"
-          bgp: "{{ bgp_output.stdout | default('N/A') if 'core' in group_names else 'N/A (OOB switch)' }}"
-          evpn: "{{ evpn_output.stdout | default('N/A') if 'core' in group_names else 'N/A (OOB switch)' }}"
+          bgp: "{{ bgp_output.stdout | default('N/A') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names) else 'N/A (OOB switch)' }}"
+          evpn: "{{ evpn_output.stdout | default('N/A') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names) else 'N/A (OOB switch)' }}"
 
 - name: Display Validation Summary
-  hosts: oob:core
+  hosts: switches
   gather_facts: false
 
   tasks:
     - name: Collect statistics
       set_fact:
-        total_checks: "{{ groups['oob'] | default([]) | length + groups['core'] | default([]) | length }}"
+        total_checks: "{{ groups['switches'] | default([]) | length }}"
         successful_checks: "{{ ansible_play_hosts | map('extract', hostvars, ['validation_result', 'ssh_reachable']) | select('equalto', true) | list | length }}"
       run_once: true
       delegate_to: localhost
@@ -135,7 +135,7 @@
             NVUE Config Applied:      {{ vr.nvue_config_applied }}
             Bridge Domains:           {{ vr.bridge_domains }}
             Interfaces Up:            {{ vr.interfaces_up }}
-          {% if 'core' in hostvars[host].group_names %}
+          {% if 'core' in hostvars[host].group_names or 'csl' in hostvars[host].group_names or 'gsl' in hostvars[host].group_names %}
             BGP State:                {{ vr.bgp_state }}
             BGP Configured Neighbors: {{ vr.bgp_configured }}
             BGP Established Neighbors:{{ vr.bgp_established }}
@@ -156,7 +156,6 @@
           RESULT:   ❌ {{ total_checks | int - successful_checks | int }} SWITCH(ES) FAILED
           {% endif %}
           ══════════════════════════════════════════════════════════════
-
 
           ╔══════════════════════════════════════════════════════════════╗
           ║  RAW COMMAND OUTPUT                                        ║

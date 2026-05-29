@@ -24,7 +24,19 @@ server {
     location /scripts/ {
         auth_basic off;
         alias /var/www/ztp/scripts/;
-        autoindex on;
+        # Directory listing disabled: switches fetch known filenames, and the
+        # scripts may embed provisioning secrets — don't let the OOB network
+        # enumerate them.
+        autoindex off;
+        # Restrict to the OOB provisioning subnet(s). These files are fetched
+        # unauthenticated and may embed secrets, so only switches on the OOB
+        # management network may reach them. Override ztp_allow_subnets if your
+        # provisioning network differs from the 192.168.200/210 defaults.
+        allow 127.0.0.1;
+{% for net in ztp_allow_subnets | default(['192.168.200.0/24', '192.168.210.0/24']) %}
+        allow {{ net }};
+{% endfor %}
+        deny all;
 
         # Add headers for ZTP
         add_header Cache-Control "no-cache, no-store, must-revalidate";
@@ -36,7 +48,15 @@ server {
     location /configs/ {
         auth_basic off;
         alias /var/www/ztp/configs/;
-        autoindex on;
+        # Directory listing disabled: generated configs embed switch and LDAP
+        # bind secrets — don't let the OOB network browse them.
+        autoindex off;
+        # OOB-subnet allow-list (see /scripts/ above) — configs carry secrets.
+        allow 127.0.0.1;
+{% for net in ztp_allow_subnets | default(['192.168.200.0/24', '192.168.210.0/24']) %}
+        allow {{ net }};
+{% endfor %}
+        deny all;
     }
 
     # Main location (status page)
@@ -71,6 +91,13 @@ server {
         auth_basic off;
         alias /var/www/ztp/authorized_keys;
         add_header Content-Type "text/plain";
+        # OOB-subnet allow-list (see /scripts/ above) — this is the key material
+        # ZTP installs on switches; keep it off the broader network.
+        allow 127.0.0.1;
+{% for net in ztp_allow_subnets | default(['192.168.200.0/24', '192.168.210.0/24']) %}
+        allow {{ net }};
+{% endfor %}
+        deny all;
     }
 
     # Access logs

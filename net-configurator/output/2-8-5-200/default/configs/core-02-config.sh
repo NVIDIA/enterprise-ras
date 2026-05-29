@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for core-02
-# Generated: 2026-04-22T18:42:28Z
+# Generated: 2026-05-28T18:03:06Z
 # Format: NVUE CLI commands (Simplified with Pure Jinja2)
 
 #============================================================================
@@ -36,12 +36,16 @@ nv set interface swp50,swp52,swp60,swp62,swp64 link breakout disabled
 
 nv set interface bond1s0 bond member swp1s0
 nv set interface bond1s0 evpn multihoming segment local-id 10
+nv set interface bond1s0 description su-01-node-01
 nv set interface bond1s1 bond member swp1s1
 nv set interface bond1s1 evpn multihoming segment local-id 11
+nv set interface bond1s1 description su-01-node-02
 nv set interface bond1s2 bond member swp1s2
 nv set interface bond1s2 evpn multihoming segment local-id 12
+nv set interface bond1s2 description su-01-node-03
 nv set interface bond1s3 bond member swp1s3
 nv set interface bond1s3 evpn multihoming segment local-id 13
+nv set interface bond1s3 description su-01-node-04
 
 nv set interface bond2s0 bond member swp2s0
 nv set interface bond2s0 evpn multihoming segment local-id 20
@@ -83,75 +87,75 @@ nv set interface bond5s3 evpn multihoming segment local-id 53
 nv set interface bond1s0,bond1s1,bond1s2,bond1s3,bond2s0,bond2s1,bond2s2,bond2s3,bond3s0,bond3s1,bond3s2,bond3s3,bond4s0,bond4s1,bond4s2,bond4s3,bond5s0,bond5s1,bond5s2,bond5s3 evpn multihoming segment state enabled
 nv set interface bond1s0,bond1s1,bond1s2,bond1s3,bond2s0,bond2s1,bond2s2,bond2s3,bond3s0,bond3s1,bond3s2,bond3s3,bond4s0,bond4s1,bond4s2,bond4s3,bond5s0,bond5s1,bond5s2,bond5s3 evpn multihoming segment mac-address 44:38:39:FF:00:AA
 nv set interface bond1s0,bond1s1,bond1s2,bond1s3,bond2s0,bond2s1,bond2s2,bond2s3,bond3s0,bond3s1,bond3s2,bond3s3,bond4s0,bond4s1,bond4s2,bond4s3,bond5s0,bond5s1,bond5s2,bond5s3 type bond
-nv set interface bond1s0,bond1s1,bond1s2,bond1s3,bond2s0,bond2s1,bond2s2,bond2s3,bond3s0,bond3s1,bond3s2,bond3s3,bond4s0,bond4s1,bond4s2,bond4s3,bond5s0,bond5s1,bond5s2,bond5s3 bridge domain br_default access 300
+nv set interface bond1s0,bond1s1,bond1s2,bond1s3,bond2s0,bond2s1,bond2s2,bond2s3,bond3s0,bond3s1,bond3s2,bond3s3,bond4s0,bond4s1,bond4s2,bond4s3,bond5s0,bond5s1,bond5s2,bond5s3 bridge domain br_default vlan 200,400
+nv set interface bond1s0,bond1s1,bond1s2,bond1s3,bond2s0,bond2s1,bond2s2,bond2s3,bond3s0,bond3s1,bond3s2,bond3s3,bond4s0,bond4s1,bond4s2,bond4s3,bond5s0,bond5s1,bond5s2,bond5s3 bridge domain br_default untagged 300
 nv set interface bond1s0,bond1s1,bond1s2,bond1s3,bond2s0,bond2s1,bond2s2,bond2s3,bond3s0,bond3s1,bond3s2,bond3s3,bond4s0,bond4s1,bond4s2,bond4s3,bond5s0,bond5s1,bond5s2,bond5s3 bond lacp-bypass enabled
 
 nv set interface bond26s0 bond member swp26s0
 nv set interface bond26s0 evpn multihoming segment local-id 260
+nv set interface bond26s0 description support-07
 nv set interface bond26s1 bond member swp26s1
 nv set interface bond26s1 evpn multihoming segment local-id 261
+nv set interface bond26s1 description support-08
 nv set interface bond26s2 bond member swp26s2
 nv set interface bond26s2 evpn multihoming segment local-id 262
+nv set interface bond26s2 description support-01
 nv set interface bond26s3 bond member swp26s3
 nv set interface bond26s3 evpn multihoming segment local-id 263
+nv set interface bond26s3 description support-02
 
 nv set interface bond27s0 bond member swp27s0
 nv set interface bond27s0 evpn multihoming segment local-id 270
+nv set interface bond27s0 description support-03
 nv set interface bond27s1 bond member swp27s1
 nv set interface bond27s1 evpn multihoming segment local-id 271
+nv set interface bond27s1 description support-04
 nv set interface bond27s2 bond member swp27s2
 nv set interface bond27s2 evpn multihoming segment local-id 272
+nv set interface bond27s2 description support-05
 nv set interface bond27s3 bond member swp27s3
 nv set interface bond27s3 evpn multihoming segment local-id 273
+nv set interface bond27s3 description support-06
 
 # SUPPORT role - 2 ports, 8 bonds
 nv set interface bond26s0,bond26s1,bond26s2,bond26s3,bond27s0,bond27s1,bond27s2,bond27s3 evpn multihoming segment state enabled
 nv set interface bond26s0,bond26s1,bond26s2,bond26s3,bond27s0,bond27s1,bond27s2,bond27s3 evpn multihoming segment mac-address 44:38:39:FF:00:AA
 nv set interface bond26s0,bond26s1,bond26s2,bond26s3,bond27s0,bond27s1,bond27s2,bond27s3 type bond
-nv set interface bond26s0,bond26s1,bond26s2,bond26s3,bond27s0,bond27s1,bond27s2,bond27s3 bridge domain br_default vlan 400
+nv set interface bond26s0,bond26s1,bond26s2,bond26s3,bond27s0,bond27s1,bond27s2,bond27s3 bridge domain br_default vlan 200,300,400
 nv set interface bond26s0,bond26s1,bond26s2,bond26s3,bond27s0,bond27s1,bond27s2,bond27s3 bridge domain br_default untagged 300
 nv set interface bond26s0,bond26s1,bond26s2,bond26s3,bond27s0,bond27s1,bond27s2,bond27s3 bond lacp-bypass enabled
 
-nv set interface bond49s0 bond member swp49s0
-nv set interface bond49s0 evpn multihoming segment local-id 490
-nv set interface bond49s1 bond member swp49s1
-nv set interface bond49s1 evpn multihoming segment local-id 491
-nv set interface bond49s2 bond member swp49s2
-nv set interface bond49s2 evpn multihoming segment local-id 492
-nv set interface bond49s3 bond member swp49s3
-nv set interface bond49s3 evpn multihoming segment local-id 493
-nv set interface bond49s4 bond member swp49s4
-nv set interface bond49s4 evpn multihoming segment local-id 494
-nv set interface bond49s5 bond member swp49s5
-nv set interface bond49s5 evpn multihoming segment local-id 495
-
-# OOB role - 1 ports, 6 bonds
-nv set interface bond49s0,bond49s1,bond49s2,bond49s3,bond49s4,bond49s5 evpn multihoming segment state enabled
-nv set interface bond49s0,bond49s1,bond49s2,bond49s3,bond49s4,bond49s5 evpn multihoming segment mac-address 44:38:39:FF:00:AA
-nv set interface bond49s0,bond49s1,bond49s2,bond49s3,bond49s4,bond49s5 type bond
-nv set interface bond49s0,bond49s1,bond49s2,bond49s3,bond49s4,bond49s5 bridge domain br_default access 200
-
 nv set interface bond49s6 bond member swp49s6
 nv set interface bond49s6 evpn multihoming segment local-id 496
+nv set interface bond49s6 description storage-01
 nv set interface bond49s7 bond member swp49s7
 nv set interface bond49s7 evpn multihoming segment local-id 497
+nv set interface bond49s7 description storage-02
 
 nv set interface bond51s0 bond member swp51s0
 nv set interface bond51s0 evpn multihoming segment local-id 510
+nv set interface bond51s0 description storage-01
 nv set interface bond51s1 bond member swp51s1
 nv set interface bond51s1 evpn multihoming segment local-id 511
+nv set interface bond51s1 description storage-02
 nv set interface bond51s2 bond member swp51s2
 nv set interface bond51s2 evpn multihoming segment local-id 512
+nv set interface bond51s2 description storage-01
 nv set interface bond51s3 bond member swp51s3
 nv set interface bond51s3 evpn multihoming segment local-id 513
+nv set interface bond51s3 description storage-02
 nv set interface bond51s4 bond member swp51s4
 nv set interface bond51s4 evpn multihoming segment local-id 514
+nv set interface bond51s4 description storage-01
 nv set interface bond51s5 bond member swp51s5
 nv set interface bond51s5 evpn multihoming segment local-id 515
+nv set interface bond51s5 description storage-02
 nv set interface bond51s6 bond member swp51s6
 nv set interface bond51s6 evpn multihoming segment local-id 516
+nv set interface bond51s6 description storage-01
 nv set interface bond51s7 bond member swp51s7
 nv set interface bond51s7 evpn multihoming segment local-id 517
+nv set interface bond51s7 description storage-02
 
 # STORAGE role - 2 ports, 10 bonds
 nv set interface bond49s6,bond49s7,bond51s0,bond51s1,bond51s2,bond51s3,bond51s4,bond51s5,bond51s6,bond51s7 evpn multihoming segment state enabled
@@ -175,7 +179,6 @@ nv set interface lo type loopback
 #============================================================================
 # Physical Interfaces - State Up
 #============================================================================
-nv set interface swp1,6-9,26-47,49,51,59,61,63 link state up
 
 #============================================================================
 # Direct Interfaces (Non-Bonded) - GPU, ISL, Edge
@@ -194,31 +197,28 @@ nv set interface swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1
 nv set interface swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 description 'Edge uplinks'
 nv set interface swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 vrf EXIT
 
+# OOB role - direct L3 uplinks
+nv set interface swp49s0,swp49s1,swp49s2 description 'OOB uplinks'
+
 #============================================================================
 # Disabled Interfaces / Link State Down
 #============================================================================
-nv set interface swp2-5,10-25,48,50,52-58,60,62 link state down
 
 #============================================================================
 # All Switch Ports Type and Telemetry
 #============================================================================
 
-nv set interface swp1-64,swp1s0,swp1s1,swp1s2,swp1s3,swp2s0,swp2s1,swp2s2,swp2s3,swp3s0,swp3s1,swp3s2,swp3s3,swp4s0,swp4s1,swp4s2,swp4s3,swp5s0,swp5s1,swp5s2,swp5s3,swp26s0,swp26s1,swp26s2,swp26s3,swp27s0,swp27s1,swp27s2,swp27s3,swp49s0,swp49s1,swp49s2,swp49s3,swp49s4,swp49s5,swp49s6,swp49s7,swp51s0,swp51s1,swp51s2,swp51s3,swp51s4,swp51s5,swp51s6,swp51s7,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 type swp
+nv set interface swp48,swp53,swp54,swp55,swp56,swp57,swp58,swp1s0,swp1s1,swp1s2,swp1s3,swp2s0,swp2s1,swp2s2,swp2s3,swp3s0,swp3s1,swp3s2,swp3s3,swp4s0,swp4s1,swp4s2,swp4s3,swp5s0,swp5s1,swp5s2,swp5s3,swp26s0,swp26s1,swp26s2,swp26s3,swp27s0,swp27s1,swp27s2,swp27s3,swp49s6,swp49s7,swp51s0,swp51s1,swp51s2,swp51s3,swp51s4,swp51s5,swp51s6,swp51s7,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp49s0,swp49s1,swp49s2,swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 type swp
 
-nv set interface swp1s0,swp1s1,swp1s2,swp1s3,swp2s0,swp2s1,swp2s2,swp2s3,swp3s0,swp3s1,swp3s2,swp3s3,swp4s0,swp4s1,swp4s2,swp4s3,swp5s0,swp5s1,swp5s2,swp5s3,swp26s0,swp26s1,swp26s2,swp26s3,swp27s0,swp27s1,swp27s2,swp27s3,swp49s0,swp49s1,swp49s2,swp49s3,swp49s4,swp49s5,swp49s6,swp49s7,swp51s0,swp51s1,swp51s2,swp51s3,swp51s4,swp51s5,swp51s6,swp51s7,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 telemetry histogram counter counter-type rx-packet
-nv set interface swp1s0,swp1s1,swp1s2,swp1s3,swp2s0,swp2s1,swp2s2,swp2s3,swp3s0,swp3s1,swp3s2,swp3s3,swp4s0,swp4s1,swp4s2,swp4s3,swp5s0,swp5s1,swp5s2,swp5s3,swp26s0,swp26s1,swp26s2,swp26s3,swp27s0,swp27s1,swp27s2,swp27s3,swp49s0,swp49s1,swp49s2,swp49s3,swp49s4,swp49s5,swp49s6,swp49s7,swp51s0,swp51s1,swp51s2,swp51s3,swp51s4,swp51s5,swp51s6,swp51s7,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 telemetry histogram counter counter-type tx-packet
-nv set interface swp1s0,swp1s1,swp1s2,swp1s3,swp2s0,swp2s1,swp2s2,swp2s3,swp3s0,swp3s1,swp3s2,swp3s3,swp4s0,swp4s1,swp4s2,swp4s3,swp5s0,swp5s1,swp5s2,swp5s3,swp26s0,swp26s1,swp26s2,swp26s3,swp27s0,swp27s1,swp27s2,swp27s3,swp49s0,swp49s1,swp49s2,swp49s3,swp49s4,swp49s5,swp49s6,swp49s7,swp51s0,swp51s1,swp51s2,swp51s3,swp51s4,swp51s5,swp51s6,swp51s7,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 telemetry histogram egress-buffer traffic-class 0
-nv set interface swp1s0,swp1s1,swp1s2,swp1s3,swp2s0,swp2s1,swp2s2,swp2s3,swp3s0,swp3s1,swp3s2,swp3s3,swp4s0,swp4s1,swp4s2,swp4s3,swp5s0,swp5s1,swp5s2,swp5s3,swp26s0,swp26s1,swp26s2,swp26s3,swp27s0,swp27s1,swp27s2,swp27s3,swp49s0,swp49s1,swp49s2,swp49s3,swp49s4,swp49s5,swp49s6,swp49s7,swp51s0,swp51s1,swp51s2,swp51s3,swp51s4,swp51s5,swp51s6,swp51s7,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 telemetry histogram ingress-buffer priority-group 0
-nv set interface swp1s0,swp1s1,swp1s2,swp1s3,swp2s0,swp2s1,swp2s2,swp2s3,swp3s0,swp3s1,swp3s2,swp3s3,swp4s0,swp4s1,swp4s2,swp4s3,swp5s0,swp5s1,swp5s2,swp5s3,swp26s0,swp26s1,swp26s2,swp26s3,swp27s0,swp27s1,swp27s2,swp27s3,swp49s0,swp49s1,swp49s2,swp49s3,swp49s4,swp49s5,swp49s6,swp49s7,swp51s0,swp51s1,swp51s2,swp51s3,swp51s4,swp51s5,swp51s6,swp51s7,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 telemetry histogram ingress-buffer priority-group 1
+nv set interface swp1s0,swp1s1,swp1s2,swp1s3,swp2s0,swp2s1,swp2s2,swp2s3,swp3s0,swp3s1,swp3s2,swp3s3,swp4s0,swp4s1,swp4s2,swp4s3,swp5s0,swp5s1,swp5s2,swp5s3,swp26s0,swp26s1,swp26s2,swp26s3,swp27s0,swp27s1,swp27s2,swp27s3,swp49s6,swp49s7,swp51s0,swp51s1,swp51s2,swp51s3,swp51s4,swp51s5,swp51s6,swp51s7,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp49s0,swp49s1,swp49s2,swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 telemetry histogram counter counter-type rx-packet
+nv set interface swp1s0,swp1s1,swp1s2,swp1s3,swp2s0,swp2s1,swp2s2,swp2s3,swp3s0,swp3s1,swp3s2,swp3s3,swp4s0,swp4s1,swp4s2,swp4s3,swp5s0,swp5s1,swp5s2,swp5s3,swp26s0,swp26s1,swp26s2,swp26s3,swp27s0,swp27s1,swp27s2,swp27s3,swp49s6,swp49s7,swp51s0,swp51s1,swp51s2,swp51s3,swp51s4,swp51s5,swp51s6,swp51s7,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp49s0,swp49s1,swp49s2,swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 telemetry histogram counter counter-type tx-packet
+nv set interface swp1s0,swp1s1,swp1s2,swp1s3,swp2s0,swp2s1,swp2s2,swp2s3,swp3s0,swp3s1,swp3s2,swp3s3,swp4s0,swp4s1,swp4s2,swp4s3,swp5s0,swp5s1,swp5s2,swp5s3,swp26s0,swp26s1,swp26s2,swp26s3,swp27s0,swp27s1,swp27s2,swp27s3,swp49s6,swp49s7,swp51s0,swp51s1,swp51s2,swp51s3,swp51s4,swp51s5,swp51s6,swp51s7,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp49s0,swp49s1,swp49s2,swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 telemetry histogram egress-buffer traffic-class 0
+nv set interface swp1s0,swp1s1,swp1s2,swp1s3,swp2s0,swp2s1,swp2s2,swp2s3,swp3s0,swp3s1,swp3s2,swp3s3,swp4s0,swp4s1,swp4s2,swp4s3,swp5s0,swp5s1,swp5s2,swp5s3,swp26s0,swp26s1,swp26s2,swp26s3,swp27s0,swp27s1,swp27s2,swp27s3,swp49s6,swp49s7,swp51s0,swp51s1,swp51s2,swp51s3,swp51s4,swp51s5,swp51s6,swp51s7,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp49s0,swp49s1,swp49s2,swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 telemetry histogram ingress-buffer priority-group 0
+nv set interface swp1s0,swp1s1,swp1s2,swp1s3,swp2s0,swp2s1,swp2s2,swp2s3,swp3s0,swp3s1,swp3s2,swp3s3,swp4s0,swp4s1,swp4s2,swp4s3,swp5s0,swp5s1,swp5s2,swp5s3,swp26s0,swp26s1,swp26s2,swp26s3,swp27s0,swp27s1,swp27s2,swp27s3,swp49s6,swp49s7,swp51s0,swp51s1,swp51s2,swp51s3,swp51s4,swp51s5,swp51s6,swp51s7,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp49s0,swp49s1,swp49s2,swp59s0,swp59s1,swp59s2,swp59s3,swp59s4,swp59s5,swp61s0,swp61s1,swp61s2,swp61s3,swp61s4,swp61s5,swp63s0,swp63s1,swp63s2,swp63s3,swp63s4,swp63s5 telemetry histogram ingress-buffer priority-group 1
 
 #============================================================================
 # VLAN SVIs (from host_vars)
 #============================================================================
-nv set interface vlan200 ipv4 address 172.16.177.3/24
-nv set interface vlan200 ipv4 vrr address 172.16.177.1/24
-nv set interface vlan200 ipv4 vrr state enabled
-nv set interface vlan200 ipv4 vrr vrr-state up
-nv set interface vlan200 type svi
 nv set interface vlan200 vlan 200
 nv set interface vlan200 vrf OOB
 nv set interface vlan300 ipv4 address 172.16.178.3/24
@@ -253,6 +253,7 @@ nv set interface vlan900 vrf GPU
 #============================================================================
 # NVE / VXLAN
 #============================================================================
+nv set nve vxlan arp-nd-suppress enabled
 nv set nve vxlan decapsulation dscp action preserve
 nv set nve vxlan state enabled
 nv set nve vxlan encapsulation dscp action copy
@@ -271,6 +272,9 @@ nv set router bfd state enabled
 nv set router bfd profile default detect-multiplier 3
 nv set router bfd profile default min-rx-interval 300
 nv set router bfd profile default min-tx-interval 300
+nv set router bfd profile overlay detect-multiplier 3
+nv set router bfd profile overlay min-rx-interval 1000
+nv set router bfd profile overlay min-tx-interval 1000
 nv set router bfd offload enabled
 
 nv set vrf default router bgp path-selection multipath aspath-ignore enabled
@@ -300,6 +304,8 @@ nv set router policy prefix-list ERA_PREFIXES rule 10 action permit
 nv set router policy prefix-list ERA_PREFIXES rule 10 match 172.16.176.0/21 max-prefix-len 24
 nv set router policy prefix-list ERA_PREFIXES rule 20 action permit
 nv set router policy prefix-list ERA_PREFIXES rule 20 match 172.16.176.0/24 max-prefix-len 32
+nv set router policy prefix-list ERA_PREFIXES rule 30 action permit
+nv set router policy prefix-list ERA_PREFIXES rule 30 match 192.168.200.0/24 max-prefix-len 32
 nv set router policy prefix-list LOCAL_OOB_LOOPBACK rule 10 action permit
 nv set router policy prefix-list LOCAL_OOB_LOOPBACK rule 10 match 172.16.176.2/32 max-prefix-len 32
 nv set router policy prefix-list OOB_LOCAL_IF rule 10 action permit
@@ -376,17 +382,49 @@ nv set vrf EXIT router bgp address-family l2vpn-evpn state enabled
 nv set vrf EXIT router bgp autonomous-system 4260394788
 nv set vrf EXIT router bgp state enabled
 
-nv set vrf EXIT router bgp neighbor swp59s0-5,swp61s0-5,swp63s0-5 peer-group underlay-esl-external
-nv set vrf EXIT router bgp neighbor swp59s0-5,swp61s0-5,swp63s0-5 type unnumbered
-nv set vrf EXIT router bgp neighbor swp59s0-5,swp61s0-5,swp63s0-5 update-source 172.16.176.12
+nv set vrf EXIT router bgp neighbor swp59s0 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp59s0 type unnumbered
+nv set vrf EXIT router bgp neighbor swp59s1 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp59s1 type unnumbered
+nv set vrf EXIT router bgp neighbor swp59s2 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp59s2 type unnumbered
+nv set vrf EXIT router bgp neighbor swp59s3 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp59s3 type unnumbered
+nv set vrf EXIT router bgp neighbor swp59s4 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp59s4 type unnumbered
+nv set vrf EXIT router bgp neighbor swp59s5 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp59s5 type unnumbered
+nv set vrf EXIT router bgp neighbor swp61s0 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp61s0 type unnumbered
+nv set vrf EXIT router bgp neighbor swp61s1 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp61s1 type unnumbered
+nv set vrf EXIT router bgp neighbor swp61s2 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp61s2 type unnumbered
+nv set vrf EXIT router bgp neighbor swp61s3 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp61s3 type unnumbered
+nv set vrf EXIT router bgp neighbor swp61s4 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp61s4 type unnumbered
+nv set vrf EXIT router bgp neighbor swp61s5 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp61s5 type unnumbered
+nv set vrf EXIT router bgp neighbor swp63s0 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp63s0 type unnumbered
+nv set vrf EXIT router bgp neighbor swp63s1 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp63s1 type unnumbered
+nv set vrf EXIT router bgp neighbor swp63s2 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp63s2 type unnumbered
+nv set vrf EXIT router bgp neighbor swp63s3 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp63s3 type unnumbered
+nv set vrf EXIT router bgp neighbor swp63s4 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp63s4 type unnumbered
+nv set vrf EXIT router bgp neighbor swp63s5 peer-group underlay-esl-external
+nv set vrf EXIT router bgp neighbor swp63s5 type unnumbered
 
 nv set vrf EXIT router bgp peer-group underlay-esl-external address-family ipv4-unicast state enabled
 nv set vrf EXIT router bgp peer-group underlay-esl-external address-family ipv4-unicast policy outbound route-map OUTBOUND_ERA_PREFIXES
 nv set vrf EXIT router bgp peer-group underlay-esl-external remote-as external
 
-nv set vrf EXIT router bgp rd 172.16.176.12:5004
 nv set vrf EXIT router bgp route-export
-nv set vrf EXIT router bgp router-id 172.16.176.12
+nv set vrf EXIT router bgp router-id 172.16.176.6
 
 nv set vrf INBAND evpn state enabled
 nv set vrf INBAND evpn vlan 3002
@@ -405,10 +443,9 @@ nv set vrf INBAND router bgp address-family l2vpn-evpn state enabled
 nv set vrf INBAND router bgp autonomous-system 4260394788
 nv set vrf INBAND router bgp state enabled
 
-nv set vrf INBAND router bgp rd 172.16.176.12:5002
 nv set vrf INBAND router bgp route-export
 nv set vrf INBAND router bgp route-import
-nv set vrf INBAND router bgp router-id 172.16.176.12
+nv set vrf INBAND router bgp router-id 172.16.176.4
 
 nv set vrf GPU evpn state enabled
 nv set vrf GPU evpn vlan 3003
@@ -424,8 +461,7 @@ nv set vrf GPU router bgp address-family l2vpn-evpn state enabled
 nv set vrf GPU router bgp autonomous-system 4260394788
 nv set vrf GPU router bgp state enabled
 
-nv set vrf GPU router bgp rd 172.16.176.12:5003
-nv set vrf GPU router bgp router-id 172.16.176.12
+nv set vrf GPU router bgp router-id 192.168.110.6
 
 nv set vrf OOB evpn state enabled
 nv set vrf OOB evpn vlan 3001
@@ -444,8 +480,7 @@ nv set vrf OOB router bgp address-family l2vpn-evpn state enabled
 nv set vrf OOB router bgp autonomous-system 4260394788
 nv set vrf OOB router bgp state enabled
 
-nv set vrf OOB router bgp rd 172.16.176.12:5001
-nv set vrf OOB router bgp router-id 172.16.176.12
+nv set vrf OOB router bgp router-id 172.16.176.2
 
 #============================================================================
 # Default VRF BGP (ISL Underlay)
@@ -456,52 +491,127 @@ nv set vrf default router bgp address-family l2vpn-evpn state enabled
 
 nv set vrf default router bgp state enabled
 
-nv set vrf default router bgp neighbor swp28s0-1,swp29s0-1,swp30s0-1,swp31s0-1,swp32s0-1,swp33s0-1,swp34s0-1,swp35s0-1,swp36s0-1,swp37s0-1,swp38s0-1,swp39s0-1,swp40s0-1,swp41s0-1,swp42s0-1,swp43s0-1,swp44s0-1,swp45s0-1,swp46s0-1,swp47s0-1 peer-group underlay
-nv set vrf default router bgp neighbor swp28s0-1,swp29s0-1,swp30s0-1,swp31s0-1,swp32s0-1,swp33s0-1,swp34s0-1,swp35s0-1,swp36s0-1,swp37s0-1,swp38s0-1,swp39s0-1,swp40s0-1,swp41s0-1,swp42s0-1,swp43s0-1,swp44s0-1,swp45s0-1,swp46s0-1,swp47s0-1 ttl-security hops 1
-nv set vrf default router bgp neighbor swp28s0-1,swp29s0-1,swp30s0-1,swp31s0-1,swp32s0-1,swp33s0-1,swp34s0-1,swp35s0-1,swp36s0-1,swp37s0-1,swp38s0-1,swp39s0-1,swp40s0-1,swp41s0-1,swp42s0-1,swp43s0-1,swp44s0-1,swp45s0-1,swp46s0-1,swp47s0-1 type unnumbered
-nv set vrf default router bgp neighbor swp28s0-1,swp29s0-1,swp30s0-1,swp31s0-1,swp32s0-1,swp33s0-1,swp34s0-1,swp35s0-1,swp36s0-1,swp37s0-1,swp38s0-1,swp39s0-1,swp40s0-1,swp41s0-1,swp42s0-1,swp43s0-1,swp44s0-1,swp45s0-1,swp46s0-1,swp47s0-1 update-source 172.16.176.12
+nv set vrf default router bgp neighbor swp28s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp28s0 type unnumbered
+nv set vrf default router bgp neighbor swp28s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp28s1 type unnumbered
+nv set vrf default router bgp neighbor swp29s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp29s0 type unnumbered
+nv set vrf default router bgp neighbor swp29s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp29s1 type unnumbered
+nv set vrf default router bgp neighbor swp30s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp30s0 type unnumbered
+nv set vrf default router bgp neighbor swp30s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp30s1 type unnumbered
+nv set vrf default router bgp neighbor swp31s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp31s0 type unnumbered
+nv set vrf default router bgp neighbor swp31s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp31s1 type unnumbered
+nv set vrf default router bgp neighbor swp32s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp32s0 type unnumbered
+nv set vrf default router bgp neighbor swp32s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp32s1 type unnumbered
+nv set vrf default router bgp neighbor swp33s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp33s0 type unnumbered
+nv set vrf default router bgp neighbor swp33s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp33s1 type unnumbered
+nv set vrf default router bgp neighbor swp34s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp34s0 type unnumbered
+nv set vrf default router bgp neighbor swp34s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp34s1 type unnumbered
+nv set vrf default router bgp neighbor swp35s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp35s0 type unnumbered
+nv set vrf default router bgp neighbor swp35s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp35s1 type unnumbered
+nv set vrf default router bgp neighbor swp36s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp36s0 type unnumbered
+nv set vrf default router bgp neighbor swp36s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp36s1 type unnumbered
+nv set vrf default router bgp neighbor swp37s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp37s0 type unnumbered
+nv set vrf default router bgp neighbor swp37s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp37s1 type unnumbered
+nv set vrf default router bgp neighbor swp38s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp38s0 type unnumbered
+nv set vrf default router bgp neighbor swp38s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp38s1 type unnumbered
+nv set vrf default router bgp neighbor swp39s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp39s0 type unnumbered
+nv set vrf default router bgp neighbor swp39s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp39s1 type unnumbered
+nv set vrf default router bgp neighbor swp40s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp40s0 type unnumbered
+nv set vrf default router bgp neighbor swp40s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp40s1 type unnumbered
+nv set vrf default router bgp neighbor swp41s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp41s0 type unnumbered
+nv set vrf default router bgp neighbor swp41s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp41s1 type unnumbered
+nv set vrf default router bgp neighbor swp42s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp42s0 type unnumbered
+nv set vrf default router bgp neighbor swp42s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp42s1 type unnumbered
+nv set vrf default router bgp neighbor swp43s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp43s0 type unnumbered
+nv set vrf default router bgp neighbor swp43s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp43s1 type unnumbered
+nv set vrf default router bgp neighbor swp44s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp44s0 type unnumbered
+nv set vrf default router bgp neighbor swp44s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp44s1 type unnumbered
+nv set vrf default router bgp neighbor swp45s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp45s0 type unnumbered
+nv set vrf default router bgp neighbor swp45s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp45s1 type unnumbered
+nv set vrf default router bgp neighbor swp46s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp46s0 type unnumbered
+nv set vrf default router bgp neighbor swp46s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp46s1 type unnumbered
+nv set vrf default router bgp neighbor swp47s0 peer-group internal-isl
+nv set vrf default router bgp neighbor swp47s0 type unnumbered
+nv set vrf default router bgp neighbor swp47s1 peer-group internal-isl
+nv set vrf default router bgp neighbor swp47s1 type unnumbered
+nv set vrf default router bgp neighbor swp49s0 peer-group underlay
+nv set vrf default router bgp neighbor swp49s0 type unnumbered
+nv set vrf default router bgp neighbor swp49s1 peer-group underlay
+nv set vrf default router bgp neighbor swp49s1 type unnumbered
+nv set vrf default router bgp neighbor swp49s2 peer-group underlay
+nv set vrf default router bgp neighbor swp49s2 type unnumbered
+nv set vrf default router bgp neighbor 172.16.176.21 peer-group overlay
+nv set vrf default router bgp neighbor 172.16.176.21 type numbered
+nv set vrf default router bgp neighbor 172.16.176.22 peer-group overlay
+nv set vrf default router bgp neighbor 172.16.176.22 type numbered
+nv set vrf default router bgp neighbor 172.16.176.23 peer-group overlay
+nv set vrf default router bgp neighbor 172.16.176.23 type numbered
 
-nv set vrf default router bgp peer-group underlay address-family l2vpn-evpn state enabled
+nv set vrf default router bgp peer-group internal-isl address-family ipv4-unicast state enabled
+nv set vrf default router bgp peer-group internal-isl address-family l2vpn-evpn state enabled
+nv set vrf default router bgp peer-group internal-isl bfd profile default
+nv set vrf default router bgp peer-group internal-isl description internal_isl_interconnect
+nv set vrf default router bgp peer-group internal-isl remote-as internal
+nv set vrf default router bgp peer-group underlay address-family ipv4-unicast state enabled
 nv set vrf default router bgp peer-group underlay bfd profile default
-nv set vrf default router bgp peer-group underlay description underlay_switch_interconnect
-nv set vrf default router bgp peer-group underlay remote-as internal
-nv set vrf default router bgp peer-group underlay-esl-external address-family ipv4-unicast state enabled
-nv set vrf default router bgp peer-group underlay-esl-external address-family ipv4-unicast policy outbound route-map OUTBOUND_ERA_PREFIXES
-nv set vrf default router bgp peer-group underlay-esl-external bfd profile default
-nv set vrf default router bgp peer-group underlay-esl-external description underlay_esl_external_interconnect
-nv set vrf default router bgp peer-group underlay-esl-external remote-as external
+nv set vrf default router bgp peer-group underlay description oob_underlay_interconnect
+nv set vrf default router bgp peer-group underlay remote-as external
+nv set vrf default router bgp peer-group overlay address-family ipv4-unicast state disabled
+nv set vrf default router bgp peer-group overlay address-family l2vpn-evpn state enabled
+nv set vrf default router bgp peer-group overlay bfd profile overlay
+nv set vrf default router bgp peer-group overlay update-source lo
+nv set vrf default router bgp peer-group overlay multihop-ttl 2
+nv set vrf default router bgp peer-group overlay description oob_overlay_interconnect
+nv set vrf default router bgp peer-group overlay remote-as external
 
 #============================================================================
-# DHCP Relay
+# DHCP Relay (VRF-aware, Excel-driven)
 #============================================================================
-nv set service dhcp-relay EXIT server-group exit-servers server 192.168.210.41
-nv set service dhcp-relay EXIT server-group exit-servers server 192.168.220.42
-nv set service dhcp-relay EXIT server-group exit-servers upstream-interface vlan3004_l3
-nv set service dhcp-relay EXIT downstream-interface swp59s0 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp59s1 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp59s2 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp59s3 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp59s4 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp59s5 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp61s0 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp61s1 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp61s2 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp61s3 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp61s4 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp61s5 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp63s0 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp63s1 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp63s2 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp63s3 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp63s4 server-group-name exit-servers
-nv set service dhcp-relay EXIT downstream-interface swp63s5 server-group-name exit-servers
-nv set service dhcp-relay EXIT gateway-interface vlan3004_l3
-nv set service dhcp-relay OOB server-group oob-servers server 192.168.200.2
-nv set service dhcp-relay OOB server-group oob-servers server 192.168.200.3
-nv set service dhcp-relay OOB server-group oob-servers server 192.168.200.4
-nv set service dhcp-relay OOB server-group oob-servers upstream-interface vlan3001_l3
-nv set service dhcp-relay OOB downstream-interface vlan200 server-group-name oob-servers
-nv set service dhcp-relay OOB gateway-interface vlan3001_l3
+nv set service dhcp-relay OOB server-group oob-dhcp-servers server 192.168.200.78
+nv set service dhcp-relay OOB server-group oob-dhcp-servers upstream-interface vlan3001_l3
+nv set service dhcp-relay OOB downstream-interface vlan200 server-group-name oob-dhcp-servers
+nv set service dhcp-relay OOB source-ip giaddress
+nv set service dhcp-relay EXIT server-group exit-dhcp-servers server 10.88.88.88
+nv set service dhcp-relay EXIT server-group exit-dhcp-servers upstream-interface vlan3004_l3
+nv set service dhcp-relay EXIT downstream-interface vlan400 server-group-name exit-dhcp-servers
+nv set service dhcp-relay EXIT source-ip giaddress
 
 #============================================================================
 # QoS / RoCE Configuration
@@ -545,18 +655,12 @@ nv set system control-plane acl acl-default-dos inbound
 nv set system control-plane acl acl-default-whitelist inbound
 nv set system global anycast-mac 44:38:39:FF:00:FF
 nv set system hostname core-02
-nv set system message post-login '#####################################################################################
-#                     You are successfully logged in to: core-02                    #
-#####################################################################################
-'
-nv set system message pre-login '#####################################################################################
-#  Welcome to NVIDIA Cumulus VX (TM)                                                #
-#  NVIDIA Cumulus VX (TM) is a community supported virtual appliance designed       #
-#  for experiencing, testing and prototyping NVIDIA Cumulus'"'"' latest technology. #
-#  For any questions or technical support, visit our community site at:             #
-#  https://www.nvidia.com/en-us/support                                             #
-#####################################################################################
-'
+nv set system message pre-login '##############################################################################
+#      You are accessing an Information System (IS) that is provided for authorized use only.
+##############################################################################'
+nv set system message post-login '####################################################################
+#       You are successfully logged in to: core-02 - site: default / arch: 2-8-5-200
+####################################################################'
 nv set system ssh-server state enabled
 nv set system telemetry state enabled
 nv set system telemetry histogram counter bin-min-boundary 3552

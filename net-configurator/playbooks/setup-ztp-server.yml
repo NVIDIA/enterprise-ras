@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: MIT
 
 - name: Setup ZTP Server for Switch Auto-Provisioning
-  hosts: "{{ ztp_server_host | default('dhcp-oob') }}"
+  hosts: dhcp
   become: yes
   gather_facts: yes
-  
+
   # Variables are loaded from inventories/group_vars/all/ztp.yml
   # DO NOT override ztp_server_ip here - it needs to match the interface where switches connect!
   vars:
@@ -14,7 +14,7 @@
     configure_dhcp: true
     dhcp_domain_name: "era.local"
     timezone: "Etc/UTC"
-    
+
   pre_tasks:
     - name: Display ZTP setup information
       debug:
@@ -24,7 +24,7 @@
           - "=================================================="
           - "Server: {{ inventory_hostname }}"
           - "IP: {{ ztp_server_ip }}"
-          - "Switches to configure: {{ (groups['core'] | default([]) + groups['oob'] | default([])) | length }}"
+          - "Switches to configure: {{ groups['switches'] | default([]) | length }}"
           - ""
           - "This will:"
           - "  1. Install nginx web server"
@@ -33,12 +33,12 @@
           - "  4. Copy switch configurations"
           - "  5. Set up SSH key distribution"
           - ""
-    
+
     - name: Confirm setup
       pause:
         prompt: "Press Enter to continue with ZTP setup, or Ctrl+C to cancel"
       when: prompt_before_setup | default(false)
-    
+
   roles:
     - role: ztp-server
 
@@ -57,7 +57,7 @@
         chdir: "{{ playbook_dir }}"
       run_once: true
       when: generate_configs | default(true)
-      
+
     - name: Display completion message
       debug:
         msg:
@@ -86,7 +86,7 @@
           - ""
 
 - name: Update DHCP server configuration
-  hosts: "{{ dhcp_server_host | default('dhcp-oob') }}"
+  hosts: dhcp
   become: yes
   gather_facts: yes
   tasks:
@@ -100,5 +100,4 @@
           - "If you have a separate DHCP server, copy the"
           - "ZTP configuration to it and restart DHCP service."
           - ""
-      when: inventory_hostname != ztp_server_host | default('dhcp-oob')
-
+      when: inventory_hostname != ztp_server_host | default(groups['dhcp'][0])

@@ -6,10 +6,19 @@ mac_address: 48:b0:2d:ee:61:ba
 ip_assignment_mode: dhcp
 svi_ip: 192.168.200.2/24
 default_gateway: 192.168.200.1
-access_ports: swp1-32,swp41-42
-uplink_ports: swp1-32,swp41-42,swp49-52
+access_ports: swp1-48
+uplink_ports: swp1-49,swp51
 spine_bond_members:
 - swp49
-- swp50
 - swp51
-- swp52
+lo_ip: 172.16.176.21/32
+router_id: 172.16.176.21
+bgp_asn: 4260394789
+vrr_ip: 192.168.200.1/24
+oob_vni: 4200
+oob_vrf_vni: 5001
+oob_vrf_vlan: 3001
+oob_vrf_loopback: 172.16.176.31/32
+overlay_peers:
+- 172.16.176.11
+- 172.16.176.12

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import openpyxl
 import pytest
+import yaml
 
 # Add scripts/ to path so we can import the modules
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
@@ -29,7 +30,26 @@ from excel_parser import (
     build_devices,
     classify_host_role,
     _build_wiremap_row_list,
+    generate_group_vars,
 )
+
+
+def _expand_port_range(range_str):
+    """Expand a port range string like 'swp1-3,swp5' into a set of port names."""
+    ports = set()
+    for token in (range_str or "").split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "-" in token:
+            prefix = token.split("-")[0].rstrip("0123456789")
+            start = int(token.split("-")[0][len(prefix):])
+            end = int(token.split("-")[1])
+            for n in range(start, end + 1):
+                ports.add(f"{prefix}{n}")
+        else:
+            ports.add(token)
+    return ports
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +254,112 @@ class TestParseNodes:
         result = parse_nodes(ws)
         assert len(result) == 1
         assert result[0]["role"] == "core-01"
+
+
+class TestGenerateGroupVars:
+    """Tests for generated group_vars behavior across source-inventory merges."""
+
+    def test_source_inventory_link_state_is_not_inherited(self, tmp_path):
+        """Source inventory must not silently inject link-state defaults."""
+        settings = {"architecture": "2-8-5-200"}
+        vlans = [
+            {
+                "id": 200,
+                "name": "OOB",
+                "subnet": "192.168.200.0/24",
+                "vrf": "OOB",
+                "vni": 4200,
+            },
+            {
+                "id": 300,
+                "name": "CPU/In-Band",
+                "subnet": "172.16.178.0/24",
+                "vrf": "INBAND",
+                "vni": 4300,
+            },
+        ]
+        vrfs = {
+            "OOB": {"name": "OOB", "l3_vni": 5001},
+            "INBAND": {"name": "INBAND", "l3_vni": 5002},
+        }
+        output_dir = tmp_path / "inventory"
+        output_dir.mkdir()
+
+        generate_group_vars(
+            settings=settings,
+            vlans=vlans,
+            vrfs=vrfs,
+            output_dir=output_dir,
+            arch="2-8-5-200",
+        )
+
+        core_vars = yaml.safe_load((output_dir / "group_vars" / "core.yml").read_text())
+        assert "interfaces_up" not in core_vars
+        assert "interfaces_down" not in core_vars
+
+    def test_l3_oob_uplink_mode_rewrites_default_vrf_bgp(self, tmp_path):
+        """L3 OOB mode should emit direct uplink intent, not bond-based OOB defaults."""
+        settings = {
+            "architecture": "2-8-9-800",
+            "oob_uplink_mode": "L3",
+        }
+        vlans = [
+            {"id": 200, "name": "OOB", "subnet": "10.187.5.0/25", "vrf": "OOB", "vni": 289200},
+            {"id": 300, "name": "CPU/In-Band", "subnet": "10.187.5.128/25", "vrf": "INBAND", "vni": 289300},
+            {"id": 400, "name": "Support", "subnet": "10.187.4.0/27", "vrf": "INBAND", "vni": 289400},
+        ]
+        vrfs = {
+            "OOB": {"name": "OOB", "l3_vni": 289001},
+            "INBAND": {"name": "INBAND", "l3_vni": 289002},
+            "EXIT": {"name": "EXIT", "l3_vni": 289004},
+        }
+        port_config = {
+            "oob_uplink_interfaces": {
+                "ports": [59],
+                "breakout": 8,
+                "lanes": 1,
+                "port_overrides": {59: {"subports": [0, 1]}},
+            },
+            "isl_interfaces": {
+                "ports": [56, 57, 58],
+                "breakout": 2,
+                "lanes": 4,
+                "port_overrides": {58: {"subports": [0]}},
+            },
+        }
+        nodes = [
+            {"role": "oob-switch", "name": "mg-01"},
+            {"role": "oob-switch", "name": "mg-02"},
+        ]
+        loopback_overrides = {
+            "mg-01": {"lo": "10.187.4.35/32"},
+            "mg-02": {"lo": "10.187.4.36/32"},
+        }
+        output_dir = tmp_path / "inventory"
+        output_dir.mkdir()
+
+        generate_group_vars(
+            settings=settings,
+            vlans=vlans,
+            vrfs=vrfs,
+            output_dir=output_dir,
+            arch="2-8-9-800",
+            nodes=nodes,
+            port_config=port_config,
+            loopback_overrides=loopback_overrides,
+        )
+
+        core_vars = yaml.safe_load((output_dir / "group_vars" / "core.yml").read_text())
+        assert "oob_uplink_interfaces" in core_vars
+        neighbors = core_vars["default_vrf_bgp"]["neighbors"]
+        peer_groups = {pg["id"]: pg for pg in core_vars["default_vrf_bgp"]["peer_groups"]}
+        assert any(n["interfaces"] == "isl" and n["peer_group"] == "internal-isl" for n in neighbors)
+        assert any(n["interfaces"] == "oob_uplink" and n["peer_group"] == "underlay" for n in neighbors)
+        assert any(n["interfaces"] == ["10.187.4.35", "10.187.4.36"] and n["peer_group"] == "overlay"
+                   for n in neighbors)
+        assert peer_groups["internal-isl"]["remote_as"] == "internal"
+        assert peer_groups["underlay"]["remote_as"] == "external"
+        assert peer_groups["overlay"]["update_source"] == "lo"
 
     def test_default_prefix(self):
         """Missing prefix defaults to 24."""
@@ -507,8 +633,8 @@ class TestParseOobSwitchConfigs:
         result = parse_oob_switch_configs(ws)
         assert "oob-switch-01" in result
         cfg = result["oob-switch-01"]
-        assert "swp1" in cfg["access_ports"]
-        assert "swp49" in cfg["uplink_ports"]
+        assert "swp1" in _expand_port_range(cfg["access_ports"])
+        assert "swp49" in _expand_port_range(cfg["uplink_ports"])
         assert "swp49" in cfg["spine_bond_members"]
 
     def test_core_eth0_is_access(self):
@@ -522,7 +648,10 @@ class TestParseOobSwitchConfigs:
 
         result = parse_oob_switch_configs(ws)
         cfg = result["oob-switch-01"]
-        assert "swp2" in cfg["access_ports"]
+        # access_ports is a range string (e.g. "swp1-2") that includes both
+        # the explicitly-wired port (swp2) and the auto-allocated air-oob
+        # backdoor (first unused port, here swp1). Expand and check membership.
+        assert "swp2" in _expand_port_range(cfg["access_ports"])
         assert cfg["spine_bond_members"] == []
 
     def test_dhcp_oob_port_tracked(self):
@@ -646,3 +775,195 @@ class TestClassifyHostRoleEdgeCases:
     def test_k8s_not_switch(self):
         """k8s nodes are not switches."""
         assert classify_host_role("k8s-01") == "k8s"
+
+
+# ---------------------------------------------------------------------------
+# parse_dhcp_relay_table + parse_vlans DHCP Relay Client column
+# ---------------------------------------------------------------------------
+
+from excel_parser import parse_dhcp_relay_table
+
+
+def _make_vlans_profiles_with_dhcp(wb, vlans=None, dhcp_relay_rows=None,
+                                   add_relay_client_col=True):
+    """Build a minimal VLANs & Profiles sheet with optional DHCP Relay table
+    and per-VLAN DHCP Relay Client column.
+
+    vlans: list of (id, name, purpose, subnet, gateway, vrf, vni, relay_client).
+    dhcp_relay_rows: list of (server_ip_raw, vrf, upstream_interface).
+    """
+    ws = wb.create_sheet("VLANs & Profiles")
+    ws.append(["VLANs"])
+    header = ["VLAN ID", "Name", "Purpose", "Subnet", "Gateway", "VRF", "VNI"]
+    if add_relay_client_col:
+        header.append("DHCP Relay Client")
+    ws.append(header)
+    for v in (vlans or []):
+        ws.append(list(v))
+    # Empty row gap
+    ws.append([])
+    if dhcp_relay_rows is not None:
+        ws.append(["DHCP Relay"])
+        ws.append(["Server IP", "VRF", "Upstream Interface"])
+        for row in dhcp_relay_rows:
+            ws.append(list(row))
+    return ws
+
+
+class TestParseDhcpRelayTable:
+    """parse_dhcp_relay_table() reads the DHCP Relay table from VLANs & Profiles."""
+
+    def test_no_section(self):
+        wb = openpyxl.Workbook()
+        ws = _make_vlans_profiles_with_dhcp(wb, dhcp_relay_rows=None)
+        assert parse_dhcp_relay_table(ws) == []
+
+    def test_empty_table(self):
+        wb = openpyxl.Workbook()
+        ws = _make_vlans_profiles_with_dhcp(wb, dhcp_relay_rows=[])
+        assert parse_dhcp_relay_table(ws) == []
+
+    def test_single_row(self):
+        wb = openpyxl.Workbook()
+        ws = _make_vlans_profiles_with_dhcp(
+            wb, dhcp_relay_rows=[("192.168.200.252", "OOB", "vlan200")])
+        result = parse_dhcp_relay_table(ws)
+        assert result == [{
+            'servers': ['192.168.200.252'],
+            'vrf': 'OOB',
+            'upstream_interfaces': ['vlan200'],
+        }]
+
+    def test_comma_separated_servers(self):
+        wb = openpyxl.Workbook()
+        ws = _make_vlans_profiles_with_dhcp(
+            wb,
+            dhcp_relay_rows=[("192.168.200.252,192.168.200.253", "OOB", "vlan200")],
+        )
+        result = parse_dhcp_relay_table(ws)
+        assert result[0]['servers'] == ['192.168.200.252', '192.168.200.253']
+
+    def test_comma_separated_upstream_interfaces(self):
+        """NVUE supports multiple upstream-interface entries per server-group
+        (deck slide 16); operator declares them comma-separated."""
+        wb = openpyxl.Workbook()
+        ws = _make_vlans_profiles_with_dhcp(
+            wb,
+            dhcp_relay_rows=[("192.168.200.252", "OOB", "swp64s0,swp64s1")],
+        )
+        result = parse_dhcp_relay_table(ws)
+        assert result[0]['upstream_interfaces'] == ['swp64s0', 'swp64s1']
+
+    def test_multiple_rows(self):
+        wb = openpyxl.Workbook()
+        ws = _make_vlans_profiles_with_dhcp(
+            wb,
+            dhcp_relay_rows=[
+                ("192.168.200.252", "OOB", "vlan200"),
+                ("10.0.0.100", "EXIT", "swp61s0"),
+            ],
+        )
+        result = parse_dhcp_relay_table(ws)
+        assert len(result) == 2
+        assert result[0]['vrf'] == 'OOB'
+        assert result[1]['vrf'] == 'EXIT'
+        assert result[1]['upstream_interfaces'] == ['swp61s0']
+
+    def test_vrf_normalized_uppercase(self):
+        wb = openpyxl.Workbook()
+        ws = _make_vlans_profiles_with_dhcp(
+            wb, dhcp_relay_rows=[("192.168.200.252", "oob", "vlan200")])
+        result = parse_dhcp_relay_table(ws)
+        assert result[0]['vrf'] == 'OOB'
+
+
+class TestParseVlansDhcpRelayClient:
+    """parse_vlans() reads the new DHCP Relay Client column."""
+
+    def test_column_present_with_no_values(self):
+        wb = openpyxl.Workbook()
+        ws = _make_vlans_profiles_with_dhcp(
+            wb,
+            vlans=[(300, 'inband', 'CPU', '192.168.45.0/24',
+                    '192.168.45.1', 'INBAND', 4300, 'No')],
+        )
+        vlans = parse_vlans(ws)
+        assert vlans[0]['dhcp_relay_client'] == 'No'
+
+    def test_column_present_with_oob_value(self):
+        wb = openpyxl.Workbook()
+        ws = _make_vlans_profiles_with_dhcp(
+            wb,
+            vlans=[(300, 'inband', 'CPU', '192.168.45.0/24',
+                    '192.168.45.1', 'INBAND', 4300, 'OOB')],
+        )
+        vlans = parse_vlans(ws)
+        assert vlans[0]['dhcp_relay_client'] == 'OOB'
+
+    def test_column_absent(self):
+        """Backward-compat: VLANs sheet without the column → blank value."""
+        wb = openpyxl.Workbook()
+        ws = _make_vlans_profiles_with_dhcp(
+            wb,
+            vlans=[(300, 'inband', 'CPU', '192.168.45.0/24',
+                    '192.168.45.1', 'INBAND', 4300)],
+            add_relay_client_col=False,
+        )
+        vlans = parse_vlans(ws)
+        assert vlans[0]['dhcp_relay_client'] == ''
+
+
+# ---------------------------------------------------------------------------
+# Per-rail-per-plane GPU VLAN mode
+# ---------------------------------------------------------------------------
+
+class TestPerRailPerPlaneParser:
+    """build_devices() recognizes gpu_rail<R>_plane<P> VLAN rows and
+    "GPU Rail R Plane P" Wire Map profiles when gpu_vlan_mode = per_rail_per_plane."""
+
+    def _make_test_vlans(self):
+        """Standard 2 rails × 2 planes VLAN set + CPU/OOB."""
+        return [
+            {'id': 200, 'name': 'oob',  'subnet': '192.168.200.0/24', 'vrf': 'OOB'},
+            {'id': 300, 'name': 'CPU',  'subnet': '172.16.178.0/24',  'vrf': 'INBAND'},
+            # Reused VLAN IDs across planes (operator's choice)
+            {'id': 901, 'name': 'gpu_rail1_plane1', 'subnet': '192.168.0.0/24',  'gateway': '192.168.0.1',  'vrf': 'GPU'},
+            {'id': 902, 'name': 'gpu_rail2_plane1', 'subnet': '192.168.1.0/24',  'gateway': '192.168.1.1',  'vrf': 'GPU'},
+            {'id': 901, 'name': 'gpu_rail1_plane2', 'subnet': '192.168.16.0/24', 'gateway': '192.168.16.1', 'vrf': 'GPU'},
+            {'id': 902, 'name': 'gpu_rail2_plane2', 'subnet': '192.168.17.0/24', 'gateway': '192.168.17.1', 'vrf': 'GPU'},
+        ]
+
+    def _make_test_wiremap(self, host='gpu-01'):
+        """Wire map with 4 GPU NICs — 2 in plane 1, 2 in plane 2."""
+        return [
+            {'sys_role': host, 'sys_name': host, 'nic_port': 'eth3',
+             'network_profile': 'GPU Rail 1 Plane 1',
+             'sw_role': 'gsl-plane1', 'sw_name': 'gsl-plane1-01', 'sw_port': 'swp1s0'},
+            {'sys_role': host, 'sys_name': host, 'nic_port': 'eth4',
+             'network_profile': 'GPU Rail 2 Plane 1',
+             'sw_role': 'gsl-plane1', 'sw_name': 'gsl-plane1-01', 'sw_port': 'swp2s0'},
+            {'sys_role': host, 'sys_name': host, 'nic_port': 'eth5',
+             'network_profile': 'GPU Rail 1 Plane 2',
+             'sw_role': 'gsl-plane2', 'sw_name': 'gsl-plane2-01', 'sw_port': 'swp1s0'},
+            {'sys_role': host, 'sys_name': host, 'nic_port': 'eth6',
+             'network_profile': 'GPU Rail 2 Plane 2',
+             'sw_role': 'gsl-plane2', 'sw_name': 'gsl-plane2-01', 'sw_port': 'swp2s0'},
+        ]
+
+    # NOTE: full end-to-end tests for IP allocation per (rail, plane) require a
+    # built wiremap_rows list shaped by _build_wiremap_row_list (with system_role,
+    # nic_port, network_profile, dst_switch, etc. populated correctly). Hand-rolled
+    # dicts don't suffice. End-to-end verification is covered by smoke-running a
+    # synthetic 2-8-9-800-derived Excel through `make generate` — see
+    # docs/plans/2026-05-18-gpu-plane-per-rail.md.
+
+    def test_mode_single_ignores_per_rail_plane_rows(self):
+        """When mode is single, gpu_rail*_plane* rows shouldn't get used for IP allocation."""
+        nodes = [{'name': 'gpu-01', 'role': 'gpu', 'mac': '', 'mgmt_ip': '192.168.200.10', 'enabled': True}]
+        vlans = self._make_test_vlans()
+        wiremap = self._make_test_wiremap()
+        result = build_devices(nodes, vlans, [], wiremap_rows=wiremap,
+                               gpu_vlan_mode='single')
+        # No gpu_interfaces emitted since the per-rail-per-plane path is gated off
+        gpus = result.get('gpu-01', {}).get('gpu_interfaces', [])
+        assert gpus == []

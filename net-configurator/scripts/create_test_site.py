@@ -17,12 +17,13 @@ from pathlib import Path
 import openpyxl
 
 SITE_NAME = "testabc"
-ARCHS = ["2-4-3-200", "2-8-5-200", "2-8-9-400"]
+ARCHS = ["2-4-3-200", "2-8-5-200", "2-8-9-400", "2-8-9-800"]
 
 # IP remapping: shift the major octets to a test range
 # 192.168.200.x -> 10.100.200.x, 192.168.210.x -> 10.100.210.x, etc.
 # 172.16.17x.x  -> 10.200.17x.x
 # 192.168.110.x -> 10.100.110.x
+
 
 def remap_ip(ip_str):
     """Remap an IP address to the test range."""
@@ -102,9 +103,9 @@ def modify_settings(ws):
         elif key_lower == 'exit_dhcp_servers' and val:
             new_val = remap_csv_subnets(val)
         elif key_lower == 'mh_mac':
-            new_val = '44:38:39:FF:00:BB'
+            new_val = '44:38:39:ff:00:bb'
         elif key_lower == 'anycast_mac':
-            new_val = '44:38:39:FF:00:EE'
+            new_val = '44:38:39:ff:00:ee'
         elif key_lower == 'ntp_servers':
             new_val = '0.pool.ntp.org\n1.pool.ntp.org\n2.pool.ntp.org\n3.pool.ntp.org'
 

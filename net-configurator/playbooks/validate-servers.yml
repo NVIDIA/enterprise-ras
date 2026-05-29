@@ -11,7 +11,7 @@
 #   ansible-playbook playbooks/validate-servers.yml -i <inventory>/hosts
 
 - name: Validate server architecture
-  hosts: dhcp-oob
+  hosts: jump
   gather_facts: false
   vars:
     server_groups: "{{ groups.get('nodes', []) + groups.get('storage', []) + groups.get('support', []) }}"
@@ -56,32 +56,63 @@
 
         # ── Determine expected VLAN gateway and source IP based on node role ──
         {% set src_dev = devices.get(item, {}) %}
-        {% set src_is_compute = item.startswith('su-') or item.startswith('node-') %}
+        {# `gpu-` naming is the 2-8-9-800 convention; `su-NN-node-MM` / `node-`
+           cover the older archs (2-4-3-200, 2-8-5-200, 2-8-9-400). Same
+           three prefixes used in validate-ping-matrix.yml so behavior stays
+           consistent across validation playbooks. #}
+        {% set src_is_compute = item.startswith('su-') or item.startswith('node-') or item.startswith('gpu-') %}
         {% set src_inband_ip = (src_dev.get('bond_ip', '') if src_is_compute else src_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
-        EXPECTED_GW=""
         SRC_IP="{{ src_inband_ip }}"
+        EXPECTED_GW=""
         ROLE="unknown"
-        case "$NAME" in
-          su-*|node-*)  EXPECTED_GW="{{ common.cpu_gateway }}" ; ROLE="compute" ;;
-          storage-*)    EXPECTED_GW="{{ common.storage_gateway }}" ; ROLE="storage" ;;
-          support-*)    EXPECTED_GW="{{ common.support_gateway }}" ; ROLE="support" ;;
-        esac
+        {% if item in groups.get('storage', []) %}
+        EXPECTED_GW="{{ common.storage_gateway | default('') }}"
+        ROLE="storage"
+        {% endif %}
+        {% if item in groups.get('support', []) %}
+        EXPECTED_GW="{{ common.support_gateway | default('') }}"
+        ROLE="support"
+        {% endif %}
+        {% if src_dev.get('gpu_interfaces') or src_dev.get('gpu_ips') %}
+        EXPECTED_GW="{{ common.cpu_gateway | default('') }}"
+        ROLE="gpu"
+        {% endif %}
+        {% if item in groups.get('nodes', []) and not (src_dev.get('gpu_interfaces') or src_dev.get('gpu_ips')) %}
+        EXPECTED_GW="{{ common.cpu_gateway | default('') }}"
+        ROLE="compute"
+        {% endif %}
 
         # ── Gateway ping test (use source IP for PBR compatibility) ──
+        # The data-plane VRR/anycast gateway is reached over an EVPN-MH bond
+        # whose convergence can lag the server's boot by 10-30s. The naive
+        # warm-up-then-measure pattern poisons the kernel's neighbor cache
+        # to FAILED when fabric isn't ready yet (subsequent pings then return
+        # DHU instantly without re-trying ARP). Three mitigations here:
+        #   1. Longer warm-up timeout (-W 10) — covers more of the kernel's
+        #      mcast_solicit budget so ARP has a chance to resolve.
+        #   2. Targeted neighbor-cache flush between warm-up and measure —
+        #      removes any FAILED entry the warm-up may have created so the
+        #      measure ping does a fresh resolution with its own budget.
+        #   3. Retry the whole sequence up to 3× with 10s backoff — absorbs
+        #      multi-second fabric convergence (EVPN type-2 propagation,
+        #      VRR-DF election, FDB sync).
         GW_PING="SKIP"
         if [ -n "$EXPECTED_GW" ] && [ -n "$SRC_IP" ]; then
-          PING_RESULT=$($SSH_CMD "ping -c 2 -W 5 $EXPECTED_GW -I $SRC_IP 2>&1" 2>/dev/null)
-          if echo "$PING_RESULT" | grep -q "bytes from"; then
-            GW_PING="PASS"
-          else
+          for _attempt in 1 2 3; do
+            PING_RESULT=$($SSH_CMD "IFACE=\$(ip -o route get $EXPECTED_GW from $SRC_IP 2>/dev/null | grep -oP 'dev \\K\\S+' | head -1); ping -c 1 -W 10 $EXPECTED_GW -I $SRC_IP >/dev/null 2>&1; sudo -n ip neigh del $EXPECTED_GW dev \$IFACE 2>/dev/null || true; ping -c 2 -W 5 $EXPECTED_GW -I $SRC_IP 2>&1" 2>/dev/null)
+            if echo "$PING_RESULT" | grep -q "bytes from"; then
+              GW_PING="PASS"
+              break
+            fi
             GW_PING="FAIL"
-          fi
+            [ $_attempt -lt 3 ] && sleep 10
+          done
         fi
 
         # ── OOB gateway ping (192.168.200.1 via eth0) ──
         OOB_PING="SKIP"
         if [ -n "$ETH0_IP" ]; then
-          OOB_RESULT=$($SSH_CMD 'ping -c 2 -W 5 192.168.200.1 -I eth0 2>&1' 2>/dev/null)
+          OOB_RESULT=$($SSH_CMD 'ping -c 1 -W 3 192.168.200.1 -I eth0 >/dev/null 2>&1; ping -c 2 -W 5 192.168.200.1 -I eth0 2>&1' 2>/dev/null)
           if echo "$OOB_RESULT" | grep -q "bytes from"; then
             OOB_PING="PASS"
           else
@@ -92,7 +123,7 @@
         # ── Internet ping (8.8.8.8 via eth0) ──
         INET_PING="SKIP"
         if [ "$OOB_PING" = "PASS" ]; then
-          INET_RESULT=$($SSH_CMD 'ping -c 2 -W 5 8.8.8.8 -I eth0 2>&1' 2>/dev/null)
+          INET_RESULT=$($SSH_CMD 'ping -c 1 -W 3 8.8.8.8 -I eth0 >/dev/null 2>&1; ping -c 2 -W 5 8.8.8.8 -I eth0 2>&1' 2>/dev/null)
           if echo "$INET_RESULT" | grep -q "bytes from"; then
             INET_PING="PASS"
           else
@@ -101,6 +132,26 @@
         fi
 
         echo "RESULT|$NAME|OK|$HOST|$HOSTNAME|$ETH0_IP|$BOND_MODE|$BOND_ACTIVE|$VLAN_IFACES|$LLDPD|$GW_PING|$OOB_PING|$INET_PING|$ROLE|$ALL_IPS"
+
+        # ── RAW COMMAND OUTPUT for OEM hand-off ──
+        $SSH_CMD '
+        echo "---RAW:ip_brief---"
+        ip -br a 2>/dev/null
+        echo "---RAW:ip_full---"
+        ip -4 a 2>/dev/null
+        echo "---RAW:routes---"
+        ip route show table all 2>/dev/null
+        echo "---RAW:bond---"
+        for f in /proc/net/bonding/*; do [ -e "$f" ] && echo "=== $f ===" && cat "$f" 2>/dev/null; done
+        echo "---RAW:lldp---"
+        command -v lldpctl >/dev/null 2>&1 && lldpctl 2>/dev/null || echo "(lldpctl not installed)"
+        ' 2>/dev/null
+        echo "---RAW:ping_gw---"
+        echo "${PING_RESULT:-(not run - no source IP or no gateway)}"
+        echo "---RAW:ping_oob---"
+        echo "${OOB_RESULT:-(not run - no eth0 IP)}"
+        echo "---RAW:ping_inet---"
+        echo "${INET_RESULT:-(not run - OOB ping did not pass)}"
       loop: "{{ server_groups }}"
       register: validation_results
       changed_when: false
@@ -108,22 +159,29 @@
 
     - name: Parse and display results
       set_fact:
+        # Use ONLY the RESULT line for splitting — every field of the per-server
+        # SSH-emitted RESULT is delimited by '|', but the final field (all_ips)
+        # has no trailing '|', so splitting item.stdout would let the appended
+        # `---RAW:...` blocks bleed into it. Selecting the RESULT line first
+        # keeps the split bounded.
         server_results: >-
+          {%- set _line = item.stdout_lines | select('match', '^RESULT\\|') | list | first | default('') -%}
+          {%- set _f = _line.split('|') -%}
           {{ server_results | default([]) + [{
-            'name': item.stdout.split('|')[1],
-            'status': item.stdout.split('|')[2],
-            'ip': item.stdout.split('|')[3],
-            'hostname': item.stdout.split('|')[4] | default(''),
-            'eth0_ip': item.stdout.split('|')[5] | default(''),
-            'bond_mode': item.stdout.split('|')[6] | default(''),
-            'bond_active': item.stdout.split('|')[7] | default(''),
-            'vlan_ifaces': item.stdout.split('|')[8] | default(''),
-            'lldpd': item.stdout.split('|')[9] | default(''),
-            'gw_ping': item.stdout.split('|')[10] | default(''),
-            'oob_ping': item.stdout.split('|')[11] | default(''),
-            'inet_ping': item.stdout.split('|')[12] | default(''),
-            'role': item.stdout.split('|')[13] | default(''),
-            'all_ips': item.stdout.split('|')[14] | default(''),
+            'name': _f[1] | default(''),
+            'status': _f[2] | default(''),
+            'ip': _f[3] | default(''),
+            'hostname': _f[4] | default(''),
+            'eth0_ip': _f[5] | default(''),
+            'bond_mode': _f[6] | default(''),
+            'bond_active': _f[7] | default(''),
+            'vlan_ifaces': _f[8] | default(''),
+            'lldpd': _f[9] | default(''),
+            'gw_ping': _f[10] | default(''),
+            'oob_ping': _f[11] | default(''),
+            'inet_ping': _f[12] | default(''),
+            'role': _f[13] | default(''),
+            'all_ips': _f[14] | default(''),
           }] }}
       loop: "{{ validation_results.results }}"
       when: item.stdout is defined and 'RESULT|' in item.stdout
@@ -165,12 +223,14 @@
           exit 0
         fi
 
-        RESULT=$($SSH_CMD "ping -c 2 -W 5 $TO_IP -I $SRC_IP 2>&1" 2>/dev/null)
+        RESULT=$($SSH_CMD "ping -c 1 -W 3 $TO_IP -I $SRC_IP >/dev/null 2>&1; ping -c 2 -W 5 $TO_IP -I $SRC_IP 2>&1" 2>/dev/null)
         if echo "$RESULT" | grep -q "bytes from"; then
           echo "XPING|$LABEL|PASS|{{ item.from }}|{{ item.to }}|$TO_IP"
         else
           echo "XPING|$LABEL|FAIL|{{ item.from }}|{{ item.to }}|$TO_IP"
         fi
+        echo "---XPING_RAW---"
+        echo "$RESULT"
       loop: "{{ cross_pings | from_json }}"
       register: xping_results
       changed_when: false
@@ -198,7 +258,7 @@
           ║               ERA Server Architecture Validation Report              ║
           ╚══════════════════════════════════════════════════════════════════════╝
 
-          Timestamp: {{ ansible_date_time.iso8601 | default('N/A') }}
+          Timestamp: {{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}
           Servers checked: {{ server_results | length }}
 
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -254,10 +314,12 @@
           ❌ Some checks failed — review the details above.
           {% endif %}
 
-          NOTE: Gateway pings may fail on the first run due to EVPN-MH bond
-          convergence (first-ARP takes a few seconds). If only gateway pings
-          failed while OOB and internet pass, re-run the validation:
+          NOTE: Each ping is preceded by a discarded warm-up + neighbor
+          flush to absorb first-ARP and EVPN-MH bond-convergence latency.
+          Per-server raw command output (ip / route / bond / lldp / ping
+          replies) lives in {{ report_file | dirname }}/raw/.
 
+          Re-run the validation if anything flaked:
             make validate-servers ARCH=<arch>
         mode: '0644'
 
@@ -266,6 +328,73 @@
         src: /tmp/era-server-validation-report.txt
         dest: "{{ report_file | default('/tmp/server-validation.txt') }}"
         flat: yes
+
+    # ── Per-server / per-pair raw output → reports/raw/ (audit detail) ──
+    - name: Compute raw output directory
+      set_fact:
+        raw_report_dir: "{{ report_file | dirname }}/raw"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Ensure raw output directory exists
+      file:
+        path: "{{ raw_report_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
+
+    - name: Write per-server raw output files
+      copy:
+        dest: "{{ raw_report_dir }}/server-{{ item.item }}.txt"
+        mode: '0644'
+        content: |
+          {{ item.item }}  ({{ hostvars[item.item].ansible_host }})
+          Captured during validate-servers, {{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}
+
+          {% for line in item.stdout_lines %}
+          {% if line.startswith('---RAW:') %}
+
+          === {{ line | replace('---RAW:', '') | replace('---', '') }} ===
+          {% elif not line.startswith('RESULT|') %}
+          {{ line }}
+          {% endif %}
+          {% endfor %}
+      loop: "{{ validation_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when:
+        - item.stdout is defined
+        - "'RESULT|' in item.stdout"
+        - "'UNREACHABLE' not in item.stdout"
+      delegate_to: localhost
+
+    - name: Write combined cross-ping raw output file
+      copy:
+        dest: "{{ raw_report_dir }}/cross-pings.txt"
+        mode: '0644'
+        content: |
+          Cross-ping raw output
+          Captured during validate-servers, {{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}
+
+          {% for item in xping_results.results | default([]) %}
+          {% if item.stdout is defined and 'XPING|' in item.stdout %}
+
+          === {{ item.item.label }} ===
+          From: {{ item.item.from }} ({{ item.item.src_ip }})
+          To:   {{ item.item.to }} ({{ item.item.to_ip }})
+
+          {% set raw_started = namespace(on=False) %}
+          {% for line in item.stdout_lines %}
+          {% if line == '---XPING_RAW---' %}{% set raw_started.on = True %}
+          {% elif raw_started.on %}
+          {{ line }}
+          {% endif %}
+          {% endfor %}
+          {% endif %}
+          {% endfor %}
+      delegate_to: localhost
+      run_once: true
 
     - name: Fail if any server unreachable, failing checks, or cross-ping failures
       vars:

@@ -1,0 +1,4 @@
+---
+# Host variables for gpu-03 (Generated from Excel)
+ansible_host: 192.168.200.32
+hostname: gpu-03

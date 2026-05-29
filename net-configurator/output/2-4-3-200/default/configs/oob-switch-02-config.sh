@@ -2,13 +2,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for oob-switch-02
-# Generated: 2026-04-22T18:42:39Z
+# Generated: 2026-05-28T18:03:00Z
 # Format: NVUE CLI commands
 
 #============================================================================
 # Bridge and VLAN
 #============================================================================
-nv set bridge domain br_default vlan 200
+nv set bridge domain br_default vlan 200 vni 4200
+
+#============================================================================
+# EVPN
+#============================================================================
+nv set evpn state enabled
+nv set evpn multihoming state enabled
 
 #============================================================================
 # Management Interface
@@ -17,27 +23,57 @@ nv set interface eth0 type eth
 nv set interface eth0 vrf mgmt
 
 #============================================================================
-# Access Ports (1G, VLAN 200)
+# Loopback
 #============================================================================
-nv set interface swp1-46 bridge domain br_default access 200
-nv set interface swp1-46 link speed 1G
-nv set interface swp1-46,swp49,swp51 type swp
+nv set interface lo ipv4 address 172.16.176.22/32
+nv set interface lo type loopback
 
 #============================================================================
-# Spine Bond (L2 uplink to core)
+# Access Ports (1G, VLAN 200)
 #============================================================================
-nv set interface spine_bond bond member swp49,swp51
-nv set interface spine_bond type bond
-nv set interface spine_bond bridge domain br_default access 200
-nv set interface spine_bond link state down
-nv set interface swp49,swp51 link state down
+nv set interface swp1-48 bridge domain br_default access 200
+nv set interface swp1-48 link speed 1G
+nv set interface swp1-48,swp49,swp51 type swp
 
 #============================================================================
 # VLAN SVI
 #============================================================================
 nv set interface vlan200 ipv4 address 192.168.200.3/24
+nv set interface vlan200 ipv4 vrr address 192.168.200.1/24
+nv set interface vlan200 ipv4 vrr state enabled
+nv set interface vlan200 ipv4 vrr vrr-state up
+nv set interface vlan200 vrf OOB
 nv set interface vlan200 type svi
 nv set interface vlan200 vlan 200
+
+#============================================================================
+# NVE / VXLAN
+#============================================================================
+nv set nve vxlan arp-nd-suppress enabled
+nv set nve vxlan state enabled
+nv set nve vxlan flooding state enabled
+nv set nve vxlan flooding head-end-replication evpn
+nv set nve vxlan source address 172.16.176.22
+
+#============================================================================
+# Router / BGP global
+#============================================================================
+nv set router bfd state enabled
+nv set router bfd profile default detect-multiplier 3
+nv set router bfd profile default min-rx-interval 300
+nv set router bfd profile default min-tx-interval 300
+nv set router bfd profile overlay detect-multiplier 3
+nv set router bfd profile overlay min-rx-interval 1000
+nv set router bfd profile overlay min-tx-interval 1000
+nv set router bgp autonomous-system 4260394790
+nv set router bgp state enabled
+nv set router bgp router-id 172.16.176.22
+nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
+nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
+nv set router policy route-map WEIGHTED_ECMP rule 10 action permit
+nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths
+nv set router vrr state enabled
 
 #============================================================================
 # NTP (servers from Settings ntp_servers comma-separated, or default)
@@ -71,18 +107,12 @@ nv set system config auto-save state enabled
 nv set system control-plane acl acl-default-dos inbound
 nv set system control-plane acl acl-default-whitelist inbound
 nv set system hostname oob-switch-02
-nv set system message post-login '#####################################################################################
-#                     You are successfully logged in to: oob-switch-02              #
-#####################################################################################
-'
-nv set system message pre-login '#####################################################################################
-#  Welcome to NVIDIA Cumulus VX (TM)                                                #
-#  NVIDIA Cumulus VX (TM) is a community supported virtual appliance designed       #
-#  for experiencing, testing and prototyping NVIDIA Cumulus'"'"' latest technology. #
-#  For any questions or technical support, visit our community site at:             #
-#  https://www.nvidia.com/en-us/support                                             #
-#####################################################################################
-'
+nv set system message pre-login '##############################################################################
+#      You are accessing an Information System (IS) that is provided for authorized use only.
+##############################################################################'
+nv set system message post-login '####################################################################
+#       You are successfully logged in to: oob-switch-02 - site: default / arch: 2-4-3-200
+####################################################################'
 nv set system ssh-server state enabled
 nv set system date-time timezone Etc/Zulu
 nv set system wjh channel forwarding trigger l2
@@ -91,8 +121,54 @@ nv set system wjh channel forwarding trigger tunnel
 nv set system wjh state enabled
 
 #============================================================================
-# Default Route
+# VRF OOB
 #============================================================================
-nv set vrf default router static 0.0.0.0/0 address-family ipv4-unicast
-nv set vrf default router static 0.0.0.0/0 via 192.168.200.1 type ipv4-address
+nv set vrf OOB evpn state enabled
+nv set vrf OOB evpn vlan 3001
+nv set vrf OOB evpn vni 5001
+nv set vrf OOB loopback ip address 172.16.176.32/32
+nv set vrf OOB router bgp address-family ipv4-unicast state enabled
+nv set vrf OOB router bgp address-family ipv4-unicast redistribute connected state enabled
+nv set vrf OOB router bgp address-family ipv4-unicast route-export to-evpn state enabled
+nv set vrf OOB router bgp address-family l2vpn-evpn state enabled
+nv set vrf OOB router bgp autonomous-system 4260394790
+nv set vrf OOB router bgp state enabled
+nv set vrf OOB router bgp router-id 172.16.176.32
+
+#============================================================================
+# Default VRF BGP
+#============================================================================
+nv set vrf default router bgp address-family ipv4-unicast state enabled
+nv set vrf default router bgp address-family ipv4-unicast redistribute connected state enabled
+nv set vrf default router bgp address-family ipv4-unicast redistribute connected route-map LOOPBACK_BGP
+nv set vrf default router bgp address-family l2vpn-evpn state enabled
+nv set vrf default router bgp state enabled
+
+# Overlay peers — numbered EVPN to CSL loopbacks
+nv set vrf default router bgp neighbor 172.16.176.11 peer-group overlay
+nv set vrf default router bgp neighbor 172.16.176.11 type numbered
+nv set vrf default router bgp neighbor 172.16.176.12 peer-group overlay
+nv set vrf default router bgp neighbor 172.16.176.12 type numbered
+
+# Underlay peers — unnumbered eBGP to CSLs
+nv set vrf default router bgp neighbor swp49 peer-group underlay
+nv set vrf default router bgp neighbor swp49 type unnumbered
+nv set vrf default router bgp neighbor swp51 peer-group underlay
+nv set vrf default router bgp neighbor swp51 type unnumbered
+
+nv set vrf default router bgp path-selection multipath aspath-ignore enabled
+
+# Peer-group: overlay
+nv set vrf default router bgp peer-group overlay address-family ipv4-unicast state disabled
+nv set vrf default router bgp peer-group overlay address-family l2vpn-evpn state enabled
+nv set vrf default router bgp peer-group overlay bfd profile overlay
+nv set vrf default router bgp peer-group overlay multihop-ttl 2
+nv set vrf default router bgp peer-group overlay remote-as external
+nv set vrf default router bgp peer-group overlay update-source lo
+
+# Peer-group: underlay
+nv set vrf default router bgp peer-group underlay address-family ipv4-unicast state enabled
+nv set vrf default router bgp peer-group underlay address-family ipv4-unicast policy outbound route-map WEIGHTED_ECMP
+nv set vrf default router bgp peer-group underlay bfd profile default
+nv set vrf default router bgp peer-group underlay remote-as external
 

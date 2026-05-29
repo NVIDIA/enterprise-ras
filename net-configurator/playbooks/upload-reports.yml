@@ -2,21 +2,31 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 
-- name: Upload validation reports to ZTP server
-  hosts: "{{ ztp_server_host | default('dhcp-oob') }}"
+- name: Upload validation reports to status-page server
+  # Target the [jump] group, not [dhcp]. In L2 mode both resolve to
+  # the same host (dhcp-oob is in both groups), so this is a no-op
+  # change there. In L3 mode [dhcp]=external-dhcp but [jump]=utility,
+  # and the status page (with /var/www/ztp/reports/ served by nginx)
+  # lives on utility — see _l3_oob_metadata.status_page_host. Without
+  # this switch, the per-host raw reports land on the wrong host in
+  # L3 mode and never show up at the status page URL.
+  hosts: jump
   become: yes
   gather_facts: no
 
   tasks:
-    - name: Ensure reports directory exists
+    - name: Ensure reports directories exist
       file:
-        path: /var/www/ztp/reports
+        path: "{{ item }}"
         state: directory
         mode: '0755'
         owner: www-data
         group: www-data
+      loop:
+        - /var/www/ztp/reports
+        - /var/www/ztp/reports/raw
 
-    - name: Upload report files
+    - name: Upload top-level summary report files
       copy:
         src: "{{ item }}"
         dest: /var/www/ztp/reports/
@@ -25,3 +35,13 @@
         group: www-data
       with_fileglob:
         - "{{ reports_dir }}/*"
+
+    - name: Upload per-host raw output files
+      copy:
+        src: "{{ item }}"
+        dest: /var/www/ztp/reports/raw/
+        mode: '0644'
+        owner: www-data
+        group: www-data
+      with_fileglob:
+        - "{{ reports_dir }}/raw/*"

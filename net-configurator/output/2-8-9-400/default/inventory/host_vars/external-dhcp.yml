@@ -1,0 +1,5 @@
+---
+ansible_host: CHANGE_ME
+hostname: external-dhcp
+ansible_port: 12855
+ansible_user: ubuntu

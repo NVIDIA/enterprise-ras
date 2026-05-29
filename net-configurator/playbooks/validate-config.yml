@@ -10,7 +10,7 @@
 #   config_output_dir  - path to generated config files (e.g., ../output/2-8-5-200/default/configs)
 
 - name: Validate Running Config vs Generated Config via ZTP Server
-  hosts: dhcp-oob
+  hosts: jump
   gather_facts: false
 
   tasks:
@@ -42,7 +42,9 @@
 
     - name: Get list of switches from inventory
       set_fact:
-        switch_list: "{{ groups['oob'] + groups['core'] }}"
+        # Use the 'switches' parent group (children: core, csl, gsl, oob)
+        # so this works for both collapsed and dedicated_gpu architectures.
+        switch_list: "{{ groups['switches'] | default([]) }}"
       delegate_to: localhost
       run_once: true
 
@@ -128,8 +130,13 @@
         # Lines in running but not in generated (EXTRA on switch)
         comm -13 /tmp/gen_norm_${SWITCH}.txt /tmp/run_norm_${SWITCH}.txt > /tmp/extra_raw_${SWITCH}.txt
 
-        # Filter out known NVUE defaults/system-managed lines and hashed secrets from extras
-        grep -v -E '(dhcp-client|hashed-password|system docker|association-type server|system ntp vrf|ldap secret|ldap bind-password)' \
+        # Filter out known NVUE defaults/system-managed lines and hashed secrets from extras.
+        # eth0 ipv4 address is the runtime mgmt IP, set by DHCP in ZTP mode or
+        # by the deferred-apply NI in NOZTP mode -- never in the rendered config.
+        # `interface swpN type swp` is the implicit per-port default that
+        # Cumulus 5.16+ materializes in the running config; our generator
+        # doesn't emit it because it's the schema default.
+        grep -v -E '(dhcp-client|interface eth0 ipv4 address|hashed-password|system docker|association-type server|system ntp vrf|ldap secret|ldap bind-password|nv set interface swp[0-9]+(s[0-9]+)? type swp$)' \
           /tmp/extra_raw_${SWITCH}.txt > /tmp/extra_${SWITCH}.txt || true
         extra_count=$(wc -l < /tmp/extra_${SWITCH}.txt)
         ignored_count=$(( $(wc -l < /tmp/extra_raw_${SWITCH}.txt) + $(wc -l < /tmp/missing_raw_${SWITCH}.txt) - extra_count - missing_count ))
@@ -201,6 +208,84 @@
           - "Connection Failed:     {{ fail_count }}"
           - "=========================================="
       run_once: true
+
+    - name: Write structured config validation report (summary)
+      copy:
+        content: |
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║       ERA Switch Config Validation Report                            ║
+          ║       (running NVUE config vs generated)                             ║
+          ╚══════════════════════════════════════════════════════════════════════╝
+
+          Switches checked: {{ total_switches }}
+
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+          {% for item in diff_results.results %}
+          {% set switch = item.item.item %}
+          {% set lines = item.stdout_lines | default([]) %}
+          {% set result_line = (lines | select('match', '^RESULT:') | list | first | default('RESULT:UNKNOWN')) %}
+          {% set result = result_line | replace('RESULT:', '') %}
+          {% set gen   = (lines | select('match', '^Generated commands:') | list | first | default('') | regex_search('\d+')) | default('?') %}
+          {% set run   = (lines | select('match', '^Running commands:')   | list | first | default('') | regex_search('\d+')) | default('?') %}
+          {% set miss  = (lines | select('match', '^Missing on switch:')  | list | first | default('') | regex_search('\d+')) | default('?') %}
+          {% set extra = (lines | select('match', '^Extra on switch:')    | list | first | default('') | regex_search('\d+')) | default('?') %}
+          {% if result == 'MATCH' %}{% set marker = '✅' %}{% elif result == 'MISMATCH' %}{% set marker = '❌' %}{% else %}{% set marker = '⚠️ ' %}{% endif %}
+          {{ marker }} {{ "%-15s" | format(switch) }} {{ "%-9s" | format(result) }}  generated={{ gen }}  running={{ run }}  missing={{ miss }}  extra={{ extra }}
+          {% endfor %}
+
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+          SUMMARY:
+            Total Switches:    {{ total_switches }}
+            Config Match:      {{ match_count }}
+            Config Mismatch:   {{ mismatch_count }}
+            Connection Failed: {{ fail_count }}
+
+          {% if (mismatch_count | int + fail_count | int) == 0 %}
+          ✅ ALL SWITCHES PASSED CONFIG VALIDATION
+          {% else %}
+          ❌ {{ mismatch_count }} mismatch(es), {{ fail_count }} unreachable
+          {% endif %}
+
+          Per-switch diff details (full Missing / Extra command lists when
+          a switch MISMATCHes) live in {{ report_file | dirname }}/raw/.
+        dest: "{{ report_file | default('/tmp/era-config-validation-report.txt') }}"
+        mode: '0644'
+      delegate_to: localhost
+      run_once: true
+
+    # ── Per-switch raw diff details → reports/raw/ (audit detail) ──
+    - name: Compute raw output directory
+      set_fact:
+        raw_report_dir: "{{ report_file | dirname }}/raw"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Ensure raw output directory exists
+      file:
+        path: "{{ raw_report_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
+
+    - name: Write per-switch raw config diff files
+      copy:
+        dest: "{{ raw_report_dir }}/config-{{ item.item.item }}.txt"
+        mode: '0644'
+        content: |
+          {{ item.item.item }}
+          Captured during validate-config
+
+          {% for line in item.stdout_lines %}
+          {{ line }}
+          {% endfor %}
+      loop: "{{ diff_results.results }}"
+      loop_control:
+        label: "{{ item.item.item }}"
+      when: item.stdout_lines is defined
+      delegate_to: localhost
 
     - name: Fail if any mismatch or failure
       fail:

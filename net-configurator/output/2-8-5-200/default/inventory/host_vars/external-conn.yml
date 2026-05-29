@@ -1,0 +1,5 @@
+---
+ansible_host: CHANGE_ME
+hostname: external-conn
+ansible_port: 20939
+ansible_user: ubuntu

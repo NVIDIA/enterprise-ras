@@ -22,6 +22,16 @@ interface={{ iface.name }}  # {{ iface.purpose }} - {{ iface.network }}
 interface={{ dnsmasq_interface | default('eth0') }}
 {% endif %}
 
+{% if inter_vrf_dhcp_listen_iface is defined %}
+# EXIT-VRF inter-VRF DHCP relay: bind dnsmasq to the customer-DC-side
+# leg so relayed DISCOVERs arriving from the cores' EXIT VRF are
+# accepted. Without this, `bind-interfaces` limits dnsmasq to the
+# ZTP-side interface(s) only and inter-VRF packets get dropped before
+# they reach the daemon. See
+# docs/plans/2026-05-27-l3-oob-exit-dhcp-relay.md.
+interface={{ inter_vrf_dhcp_listen_iface }}
+{% endif %}
+
 # Don't read /etc/resolv.conf or any other file
 no-resolv
 
@@ -57,6 +67,24 @@ dhcp-range={{ dhcp_range_start | default('192.168.200.100') }},{{ dhcp_range_end
 
 # Gateway
 dhcp-option=3,{{ dhcp_gateway | default('192.168.200.1') }}
+{% endif %}
+
+{% if inter_vrf_dhcp_scopes is defined and inter_vrf_dhcp_scopes | length > 0 %}
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# EXIT-VRF INTER-VRF DHCP RELAY SCOPES
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# One scope per client VLAN whose `DHCP Relay Client = EXIT` in the
+# Excel VLANs & Profiles sheet. Cores' EXIT-VRF dhcrelay4 sets giaddr
+# to the core's VLAN SVI primary (in the client subnet); dnsmasq
+# matches the giaddr against each scope's network and offers from
+# the .150-.199 range with the VLAN's gateway as default route.
+{% for scope in inter_vrf_dhcp_scopes %}
+{% set _net_octets = scope.subnet.split('/')[0].split('.') %}
+{% set net_base = _net_octets[0] ~ '.' ~ _net_octets[1] ~ '.' ~ _net_octets[2] %}
+# VLAN {{ scope.vlan_id }} ({{ scope.name }}) — {{ scope.subnet }}
+dhcp-range=set:vlan{{ scope.vlan_id }},{{ net_base }}.150,{{ net_base }}.199,255.255.255.0,12h
+dhcp-option=tag:vlan{{ scope.vlan_id }},3,{{ scope.gateway.split('/')[0] }}
+{% endfor %}
 {% endif %}
 
 # DNS servers (all interfaces)

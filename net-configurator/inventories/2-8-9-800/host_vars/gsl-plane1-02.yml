@@ -1,0 +1,20 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+# ============================================================================
+# GSL-PLANE1-02 Host-Specific Variables - 2-8-9-800 Deployment
+# ============================================================================
+ansible_host: 192.168.200.212
+mac_address: 48:b0:2d:5d:21:c2
+ip_assignment_mode: dhcp
+
+hostname: gsl-plane1-02
+plane: 1
+lo_ip: 10.1.1.2/32
+
+vlan900_ip: 192.168.0.3/20
+
+vrf_gpu_loopback: 10.1.1.12/32
+
+plane_mate_lo_ip: 10.1.1.1

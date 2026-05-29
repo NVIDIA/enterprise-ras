@@ -199,25 +199,6 @@ Credentials live in `.era-secrets/air-secrets.yml` at the repo root (vault-encry
 
 ---
 
-## compare_excel_inventory_and_configs.py
-
-Compares generated switch configs against source-of-truth reference configs.
-
-### Usage
-
-```bash
-python3 scripts/compare_excel_inventory_and_configs.py [--no-generate] [--enterprise-ras PATH]
-```
-
-### What It Does
-
-- Runs the full generation pipeline (Excel → inventory → configs)
-- Normalizes NVUE commands (range expansion, port sorting)
-- Diffs generated configs against `enterprise-ras` reference configs
-- Reports missing, extra, and different lines per switch
-
----
-
 ## validate_excel.py
 
 Validates an ERA Excel configuration file before import or generate.
@@ -241,6 +222,45 @@ python3 scripts/validate_excel.py input/2-8-5-200/default/2-8-5-200.xlsx
 - Checks VLANs for valid IDs, duplicate names, overlapping subnets
 - Detects duplicate switch port assignments in Wire Map (two systems on same port)
 - Cross-validates: gateway within subnet, node IPs within mgmt_subnets, VLAN gateway within VLAN subnet
+- Flags deployments exceeding the architecture's single-tier max SU count (per `arch_scaling.py`)
+- Warns when an active server has more than one Display=Yes OOB row (Air's plain Ubuntu can't bond two OOB links — CRA rule)
+
+---
+
+## arch_scaling.py
+
+Single-tier scaling tables for each ERA architecture, derived from the ERA-000{08,10,11,16} architecture PDFs. Maps SU count → expected OOB switch count + tier notes. Helpers: `max_single_tier_su(arch)`, `get_tier(arch, su_count)`, `node_name_to_su(name)`.
+
+Used by `validate_excel.py` (single-tier cap warning) and `scale_sample_excel.py` (over-cap refusal).
+
+---
+
+## scale_sample_excel.py
+
+Generates pre-sized sample Excel files from the default for an arch, scaled to N SUs with the CRA OOB strategy applied (delete LOM2 rows, demote LOM1/iLO/XCC to Display=No, promote one BMC per node to Display=Yes with port allocated, flip Display=Yes on activated nodes' data-plane Wire Map rows).
+
+### Usage
+
+```bash
+# Default output path: input/<arch>/sample-su-<N>/<arch>.xlsx
+python3 scripts/scale_sample_excel.py --arch 2-4-3-200 --sus 4
+
+# Custom path
+python3 scripts/scale_sample_excel.py --arch 2-8-5-200 --sus 5 --output /tmp/foo.xlsx
+
+# Force past the single-tier max (validator will warn; not advised)
+python3 scripts/scale_sample_excel.py --arch 2-4-3-200 --sus 9 --force-multi-tier
+```
+
+### What It Does
+
+- Enables SU 1..N in the Nodes tab, disables SUs > N
+- Flips Display=Yes on each active server's non-OOB Wire Map rows (data-plane)
+- Deletes 2nd LOM rows from the Wire Map for every active server
+- Demotes 1st LOM, iLO, iDRAC, XCC rows on every active server to Display=No
+- Promotes one BMC row per active server to Display=Yes — walks all BMC rows on the node, picks the first whose templated oob-switch still has a free port (handles dual-BMC chassis/DPU servers)
+- Preserves any pre-existing non-BMC Display=Yes OOB row (e.g. the 2-8-9-800 default's `eth0` Air management convention)
+- Refuses to generate if SU count exceeds single-tier max unless `--force-multi-tier` is passed
 
 ---
 
@@ -259,29 +279,6 @@ Used by `playbooks/validate-config.yml` to compare running config against genera
 
 ---
 
-## validate_requirements.py
-
-Validates generated configurations against architecture requirements extracted from PDFs.
-
-### Usage
-
-```bash
-make validate-requirements ARCH=2-8-5-200
-```
-
----
-
-## extract_requirements.py
-
-Extracts configuration requirements from architecture reference PDFs into draft YAML files for review.
-
-### Usage
-
-```bash
-make extract-requirements
-```
-
----
 
 ## create_test_site.py
 
@@ -301,11 +298,8 @@ Creates test Excel files in `/tmp/` for all 3 architectures with remapped IPs (`
 
 | Script | Purpose |
 |--------|---------|
-| `verify-ztp-server.sh` | Validate ZTP server health (nginx, dnsmasq, configs) |
 | `debug-dnsmasq.sh` | Check dnsmasq configuration and logs |
-| `debug-ztp-hostname.sh` | Test hostname detection from DHCP |
 | `detect-interface.sh` | Identify network interfaces |
-| `fix-dns.sh` | Repair DNS configuration issues |
 
 ---
 

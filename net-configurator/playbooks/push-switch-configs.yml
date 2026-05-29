@@ -17,16 +17,16 @@
 #     -e "config_output_dir=../output/<arch>/<site>/configs"
 
 - name: Push config and apply (with confirm)
-  hosts: core:oob
+  hosts: switches
   gather_facts: false
   vars:
     config_output_dir: "../exported-configurations-cli"
-    remote_config_path: "/tmp/{{ inventory_hostname }}-config.sh"
+    remote_config_path: "/tmp/{{ hostname }}-config.sh"
 
   tasks:
     - name: Copy config script to switch
       copy:
-        src: "{{ config_output_dir }}/{{ inventory_hostname }}-config.sh"
+        src: "{{ config_output_dir }}/{{ hostname }}-config.sh"
         dest: "{{ remote_config_path }}"
         mode: '0755'
 
@@ -44,12 +44,12 @@
         msg: "{{ inventory_hostname }}: {{ apply_result.stdout_lines | default([apply_result.stdout | default('ok')]) }}"
 
 - name: Confirm apply (new SSH session)
-  hosts: core:oob
+  hosts: switches
   gather_facts: false
 
   tasks:
     - name: Apply to confirm
-      shell: nv config apply
+      shell: nv config apply --confirm-yes
       register: confirm_result
       changed_when: true
 

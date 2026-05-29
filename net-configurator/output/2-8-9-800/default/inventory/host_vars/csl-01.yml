@@ -1,0 +1,160 @@
+---
+# Host variables for csl-01 (Generated from Excel)
+ansible_host: 172.20.0.201
+hostname: csl-01
+mac_address: 48:b0:2d:5b:32:38
+ip_assignment_mode: dhcp
+lo_ip: 172.16.176.11/32
+router_id: 172.16.176.11
+vlan_interfaces:
+- id: vlan200
+  vlan: '200'
+  vrf: OOB
+  no_svi_type: true
+- id: vlan300
+  ip: 172.16.178.2/24
+  vrr: 172.16.178.1/24
+  vlan: '300'
+  vrf: INBAND
+- id: vlan400
+  ip: 172.16.179.2/24
+  vrr: 172.16.179.1/24
+  vlan: '400'
+  vrf: INBAND
+- id: vlan500
+  ip: 172.16.180.2/24
+  vrr: 172.16.180.1/24
+  vlan: '500'
+  vrf: STORAGE
+vrf_loopbacks:
+  EXIT: 172.16.176.5/32
+  INBAND: 172.16.176.3/32
+  OOB: 172.16.176.1/32
+  STORAGE: 172.16.176.7/32
+prefix_list:
+- id: ALL_PREFIXES
+  rule:
+  - id: '10'
+    match: 0.0.0.0/0
+    max_len: '32'
+- id: EXIT_LOCAL_IF
+  rule:
+  - id: '10'
+    match: 172.16.176.5/32
+    max_len: '32'
+- id: INBAND_LOCAL_IF
+  rule:
+  - id: '10'
+    match: 172.16.176.3/32
+    max_len: '32'
+  - id: '20'
+    match: 172.16.178.2/32
+    max_len: '32'
+  - id: '30'
+    match: 172.16.179.2/32
+    max_len: '32'
+- id: INBAND_PREFIXES
+  rule:
+  - id: '10'
+    match: 172.16.178.0/24
+    max_len: '32'
+  - id: '20'
+    match: 172.16.179.0/24
+    max_len: '32'
+  - id: '30'
+    match: 172.16.176.3/32
+    max_len: '32'
+- id: ERA_PREFIXES
+  rule:
+  - id: '10'
+    match: 172.16.176.0/21
+    max_len: '24'
+  - id: '20'
+    match: 172.16.176.0/24
+    max_len: '32'
+  - id: '30'
+    match: 192.168.200.0/24
+    max_len: '32'
+- id: LOCAL_OOB_LOOPBACK
+  rule:
+  - id: '10'
+    match: 172.16.176.1/32
+    max_len: '32'
+- id: OOB_LOCAL_IF
+  rule:
+  - id: '10'
+    match: 172.16.176.1/32
+    max_len: '32'
+  - id: '20'
+    match: 172.16.177.2/32
+    max_len: '32'
+- id: OOB_PREFIXES
+  rule:
+  - id: '10'
+    match: 172.16.177.0/24
+    max_len: '32'
+  - id: '20'
+    match: 172.16.176.1/32
+    max_len: '32'
+- id: VTEP_PREFIXES
+  rule:
+  - id: '5'
+    match: 172.16.176.8/29
+    max_len: '32'
+interfaces_disabled:
+- 60
+bond_descriptions:
+  bond1s0: gpu-01
+  bond1s1: gpu-02
+  bond2s0: gpu-03
+  bond2s1: gpu-04
+  bond3s0: gpu-05
+  bond3s1: gpu-06
+  bond4s0: gpu-07
+  bond4s1: gpu-08
+  bond5s0: bcm-01
+  bond5s1: bcm-02
+  bond5s2: k8s-01
+  bond5s3: k8s-02
+  bond6s0: k8s-03
+  bond6s1: slurm-01
+  bond6s2: slurm-02
+  bond63s0: ext-storage-01
+  bond63s1: ext-storage-02
+storage_interfaces:
+  ports:
+  - 63
+  breakout: 8
+  lanes: 1
+  vrf: STORAGE
+  subports: &id001
+  - swp63s0
+  - swp63s1
+vrf_config_extra:
+- id: STORAGE
+  vni: '5005'
+  route_export: true
+  table_auto: true
+  bgp:
+    address_family:
+      ipv4_unicast:
+        enable: true
+        redistribute_connected: true
+        route_export_to_evpn: true
+      l2vpn_evpn:
+        enable: true
+    neighbors:
+    - interfaces: *id001
+      peer_group: underlay-era-storage
+      type: unnumbered
+    peer_groups:
+    - id: underlay-era-storage
+      remote_as: external
+      bfd_enable: true
+      description: underlay_era_storage_interconnect
+      address_family:
+        ipv4_unicast:
+          enable: true
+        l2vpn_evpn:
+          enable: true
+  vlan: 500

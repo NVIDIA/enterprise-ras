@@ -187,7 +187,7 @@
         <p style="margin-top: 15px;"><strong>Method 2:</strong> Apply configuration directly (if ZTP already ran):</p>
         <code>bash /var/www/ztp/configs/&lt;switch-name&gt;-config.sh</code>
         
-        {% set example_switch = (groups['core'] | default([]))[0] | default('core-01') %}
+        {% set example_switch = ((groups['core'] | default([])) + (groups['csl'] | default([])))[0] | default('core-01') %}
         {% set example_hostname = hostvars[example_switch].hostname | default(example_switch) if example_switch in hostvars else 'core-01' %}
         <p style="margin-top: 10px;">Example for {{ example_hostname }}:</p>
         <code>curl http://{{ ztp_local_ip }}/configs/{{ example_hostname }}-config.sh | bash</code>
@@ -195,7 +195,7 @@
 
     <h2>📊 Configured Switches</h2>
     
-    {% set all_switches = groups['core'] | default([]) + groups['oob'] | default([]) %}
+    {% set all_switches = groups['switches'] | default([]) %}
     {% if all_switches | length > 0 %}
     <table>
         <tr>

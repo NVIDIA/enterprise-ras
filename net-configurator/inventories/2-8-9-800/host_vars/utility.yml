@@ -1,0 +1,8 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+ansible_host: CHANGE_ME
+hostname: utility
+ansible_port: 22
+ansible_user: ubuntu

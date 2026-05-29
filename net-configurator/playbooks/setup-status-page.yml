@@ -1,0 +1,141 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Status-page setup — installs nginx + the ERA dashboard + report directory
+# on the status-page host (jump host in both OOB modes). Runs independently
+# of the ZTP server setup so NOZTP=1 deploys still get an operator-visible
+# status page and a place for validate-* reports to land.
+#
+# Targets:
+#   L2 OOB mode: [jump] = dhcp-oob (same node as [dhcp]; in non-NOZTP mode
+#     the ztp-server role on [dhcp] already does this — harmless overlap
+#     since the templates render identical content)
+#   L3 OOB mode: [jump] = utility (a different node from [dhcp]=external-dhcp;
+#     the ztp-server role doesn't touch this host, so this playbook is the
+#     only thing that installs the status page in L3)
+#
+# Required variable:
+#   config_output_dir  - path to generated switch configs (so they land
+#                        in /var/www/ztp/configs/ for the dashboard's
+#                        per-switch links)
+
+- name: Install operator status page on the jump host
+  hosts: jump
+  become: yes
+  gather_facts: yes
+  vars:
+    # On utility (L3), the customer-facing OOB IP is the "ZTP server"
+    # address to display on the page. external-dhcp serves switch ZTP in
+    # L3 mode, but the status page lives here.
+    # On dhcp-oob (L2), the ztp-server role passes ztp_server_ip from
+    # group_vars; the fallback below catches NOZTP=1 + L2 case where the
+    # role never ran.
+    ztp_server_ip: "{{ ztp_server_ip | default('192.168.200.78') }}"
+
+  tasks:
+    - name: Wait for dpkg lock to be released
+      shell: while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done
+      changed_when: false
+      timeout: 180
+
+    - name: Install nginx
+      # update_cache + retries: first-boot apt index goes stale fast as
+      # Ubuntu rotates security archives, so plain `state: present` 404s
+      # on the .deb URLs. Same pattern as the ztp-server role.
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+      retries: 5
+      delay: 15
+      register: apt_result
+      until: apt_result is success
+
+    - name: Create ZTP web directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+      loop:
+        - /var/www/ztp
+        - /var/www/ztp/configs
+        - /var/www/ztp/reports
+        - /var/www/ztp/scripts
+        - /var/www/ztp/topology
+        - /var/www/ztp/licenses
+        - /var/www/ztp/images
+
+    - name: Deploy nginx ZTP site config
+      template:
+        src: ../roles/ztp-server/templates/nginx-ztp.conf.j2
+        dest: /etc/nginx/sites-available/ztp
+        mode: '0644'
+      notify: restart nginx
+
+    - name: Enable nginx ZTP site
+      file:
+        src: /etc/nginx/sites-available/ztp
+        dest: /etc/nginx/sites-enabled/ztp
+        state: link
+      notify: restart nginx
+
+    - name: Remove default nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: restart nginx
+
+    - name: Render status page
+      template:
+        src: ../roles/ztp-server/templates/ztp-status.html.j2
+        dest: /var/www/ztp/index.html
+        mode: '0644'
+        owner: www-data
+        group: www-data
+
+    - name: Copy generated switch configs to web root
+      # Operator-facing convenience — same files served from /var/www/ztp/
+      # configs/ on dhcp-oob in L2. In L3, switches actually ZTP from
+      # external-dhcp, but having the configs reachable from the status
+      # page matches operator expectations.
+      copy:
+        src: "{{ config_output_dir }}/{{ hostvars[item].hostname | default(item) }}-config.sh"
+        dest: "/var/www/ztp/configs/{{ hostvars[item].hostname | default(item) }}-config.sh"
+        mode: '0644'
+        owner: www-data
+        group: www-data
+      loop: "{{ groups['switches'] | default([]) }}"
+      failed_when: false
+
+    - name: Set up basic auth (if status_page_enabled)
+      shell: |
+        python3 -c "
+        import crypt, os
+        salt = crypt.mksalt(crypt.METHOD_SHA256)
+        hashed = crypt.crypt(os.environ['HTPASSWD_PASS'], salt)
+        print(os.environ['HTPASSWD_USER'] + ':' + hashed)
+        " > /etc/nginx/.htpasswd
+        chmod 640 /etc/nginx/.htpasswd
+        chown root:www-data /etc/nginx/.htpasswd
+      environment:
+        HTPASSWD_PASS: "{{ status_page_password | default(switch_password | default('nvidia')) }}"
+        HTPASSWD_USER: "{{ status_page_username | default('era') }}"
+      when: status_page_enabled | default(false) | bool
+      no_log: true
+      changed_when: true
+      notify: restart nginx
+
+    - name: Ensure nginx is running and enabled
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted

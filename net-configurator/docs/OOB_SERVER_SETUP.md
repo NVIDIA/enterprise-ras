@@ -52,7 +52,7 @@ Update for your environment:
 
 ```yaml
 # For Air simulations with jump box
-ansible_host: worker31.air-inside.nvidia.com
+ansible_host: <air-host>
 ansible_port: 20561
 ansible_user: ubuntu
 ansible_password: nvidia
@@ -194,7 +194,7 @@ Air creates isolated network segments. The OOB server:
 
 **Configuration Example**:
 ```yaml
-ansible_host: worker31.air-inside.nvidia.com
+ansible_host: <air-host>
 ansible_port: 20561
 ```
 
@@ -251,7 +251,7 @@ sudo netplan --debug apply
 **Symptom**: `ansible-playbook` fails to connect to OOB server
 
 **Solution**:
-1. Verify jump box hostname/port: `ssh -p 20561 ubuntu@worker31.air-inside.nvidia.com`
+1. Verify jump box hostname/port: `ssh -p 20561 ubuntu@<air-host>`
 2. Check inventory: `cat output/<arch>/<site>/inventory/host_vars/oob-server-01.yml`
 3. Test Ansible connectivity: `ansible oob-server -i output/<arch>/<site>/inventory/hosts -m ping`
 

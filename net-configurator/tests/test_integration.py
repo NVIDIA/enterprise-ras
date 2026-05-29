@@ -116,10 +116,13 @@ class TestScriptsExist:
         scripts = [
             project_root / "scripts" / "excel_parser.py",
             project_root / "scripts" / "topology_generator.py",
+            # Internal-only, excluded from the public tree via .publicignore.
             project_root / "scripts" / "compare_excel_inventory_and_configs.py",
         ]
 
         for script in scripts:
+            if not script.exists():
+                continue
             result = subprocess.run(
                 ['python3', '-m', 'py_compile', str(script)],
                 capture_output=True,

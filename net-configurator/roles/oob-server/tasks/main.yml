@@ -137,7 +137,7 @@
 - name: Manually assign IP if networkd failed
   command: ip addr add {{ item.item.ip }}/{{ item.item.netmask | default('24') }} dev {{ item.item.name }}
   loop: "{{ interface_has_ip.results }}"
-  when: 
+  when:
     - oob_server_interfaces is defined
     - item.rc != 0
   ignore_errors: yes
@@ -175,11 +175,11 @@
       ╔══════════════════════════════════════════════════════════════════════╗
       ║                   OOB SERVER CONFIGURATION SUMMARY                   ║
       ╚══════════════════════════════════════════════════════════════════════╝
-      
+
       ✅ IP Forwarding: Enabled
       ✅ IPv6: Disabled
       ✅ Network Interfaces: Configured
-      
+
       {% if oob_server_interfaces is defined %}
       Configured Interfaces:
       {% for interface in oob_server_interfaces %}
@@ -188,11 +188,10 @@
           Purpose: {{ interface.purpose | default('OOB Gateway') }}
       {% endfor %}
       {% endif %}
-      
+
       ✅ Interfaces brought up and configured
-      
+
       Verify with: ip addr show
       ══════════════════════════════════════════════════════════════════════
   tags:
     - summary
-

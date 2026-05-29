@@ -21,6 +21,7 @@ pre_login_message: '############################################################
   '
 timezone: Etc/Zulu
 oob_vlan: '200'
+oob_uplink_mode: l3
 cumulus_target_version: 5.15.1
 spine_bond_members:
 - swp49

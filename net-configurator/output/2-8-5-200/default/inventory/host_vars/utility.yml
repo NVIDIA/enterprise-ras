@@ -1,0 +1,5 @@
+---
+ansible_host: CHANGE_ME
+hostname: utility
+ansible_port: 20199
+ansible_user: ubuntu
