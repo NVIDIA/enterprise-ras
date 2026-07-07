@@ -1,0 +1,24 @@
+---
+# Host variables for gl-plane1-14 (Generated from Excel)
+ansible_host: 172.20.0.42
+hostname: gl-plane1-14
+mac_address: 48:b0:2d:8b:77:a7
+ip_assignment_mode: dhcp
+plane: 1
+lo_ip: 10.1.1.14/32
+vrf_gpu_loopback: 10.1.1.24/32
+asn: 4200101114
+overlay_peers:
+- 10.1.1.41
+- 10.1.1.42
+- 10.1.1.43
+- 10.1.1.44
+- 10.1.1.45
+- 10.1.1.46
+plane_mate_lo_ip: 10.1.1.41
+vlan900_ip: 192.168.0.15/20
+vlan900_vrr: 192.168.0.1/20
+gpu_subports: swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1
+gpu_breakout_parents: swp1,swp2,swp3,swp4,swp5,swp6,swp7,swp8,swp9,swp10,swp11,swp12,swp13,swp14,swp15,swp16,swp17,swp18
+isl_subports: swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp26s0,swp26s1,swp27s0,swp27s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1
+isl_breakout_parents: swp19,swp20,swp21,swp22,swp23,swp24,swp25,swp26,swp27,swp28,swp29,swp30,swp31,swp32,swp33,swp34,swp35,swp36

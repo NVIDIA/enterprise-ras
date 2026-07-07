@@ -3,7 +3,9 @@
 
 # Scripts Directory
 
-Utility scripts for ERA switch automation.
+Utility scripts for ERA switch automation. These are the scripts used to fill
+out an Excel, generate inventory/configs/topology, and deploy — you normally
+invoke them through `make`, but the direct invocations are documented here too.
 
 ---
 
@@ -78,9 +80,9 @@ output/<arch>/<site>/topology/<arch>-topology.json
 
 ## generate-node-instructions.py
 
-Generates three pasteable Node Instruction bash scripts for manual Air
-deployments (see `docs/MANUAL_FALLBACK_GUIDE.md`). Runs as step 4 of
-`make generate` — there is no separate make target.
+Generates pasteable Node Instruction bash scripts for manual Air deployments
+(see `docs/MANUAL_FALLBACK_GUIDE.md`). Runs as a step of `make generate` — there
+is no separate make target.
 
 ### Usage
 
@@ -94,24 +96,19 @@ python3 scripts/generate-node-instructions.py --arch 2-8-9-400 --site default
 
 ### What It Does
 
-- Reads the generated inventory (`group_vars/all/main.yml`,
-  `host_vars/oob-server-01.yml`) and topology JSON
-- Emits three bash scripts that configure `air-oob-switch` (NVUE VLAN
-  bridge), `oob-server-01` (IP forwarding + static IPs + NAT masquerade),
-  and `dhcp-oob` (static IPs + apt prerequisites)
+- Reads the generated inventory and topology JSON
+- Emits bash scripts that configure the OOB/management nodes (VLAN bridge, IP
+  forwarding + static IPs + NAT, DHCP prerequisites)
 - File writes use **base64-encoded single-line commands** — heredocs are
   unreliable through Air's shell executor, so netplan/sysctl content is
   encoded inline
-- Netplan always includes `eth0` as DHCP so `netplan apply` doesn't tear
-  down Air's management interface
+- Netplan always includes `eth0` so `netplan apply` doesn't tear down Air's
+  management interface
 
 ### Output
 
 ```
 output/<arch>/<site>/topology/node-instructions/
-├── air-oob-switch.sh
-├── oob-server-01.sh
-└── dhcp-oob.sh
 ```
 
 Paste each file's contents into the Air GUI as a Node Instruction
@@ -145,9 +142,61 @@ Shared utility functions used by both `excel_parser.py` and `topology_generator.
 ### Functions
 
 - `generate_mac(node, interface)` — deterministic MAC address generation (MD5-based)
-- `classify_node(name)` — fine-grained role classification (core, oob, edge, compute, storage, support, k8s, bcme, infra, unknown)
+- `classify_node(name)` — fine-grained role classification (core, oob, edge, compute, storage, support, infra, unknown)
 - `is_switch(name)` — check if a node is a switch
 - `is_valid_hostname(name)` — RFC1123 hostname validation
+
+---
+
+## validate_excel.py
+
+Validates an ERA Excel configuration file before import or generate.
+
+### Usage
+
+```bash
+# Via Makefile (recommended)
+make validate-excel EXCEL=/path/to/config.xlsx
+make validate-excel ARCH=2-8-5-200
+
+# Direct execution
+python3 scripts/validate_excel.py input/2-8-5-200/default/2-8-5-200.xlsx
+```
+
+### What It Does
+
+- Checks required sheets exist (Settings, Nodes, VLANs & Profiles, Wire Map)
+- Validates Settings keys, IP/CIDR formats, MAC addresses, integer fields
+- Checks Nodes for duplicate function names, duplicate management IPs, missing core switches
+- Checks VLANs for valid IDs, duplicate names, overlapping subnets
+- Detects duplicate switch port assignments in Wire Map (two systems on same port)
+- Cross-validates: gateway within subnet, node IPs within mgmt_subnets, VLAN gateway within VLAN subnet
+- Flags deployments exceeding the architecture's single-tier max SU count
+- Warns when an active server has more than one Display=Yes OOB row (Air's plain Ubuntu can't bond two OOB links — CRA rule)
+
+---
+
+## arch_scaling.py
+
+Single-tier scaling tables for each ERA architecture. Maps SU count → expected
+OOB switch count + tier notes. Helpers: `max_single_tier_su(arch)`,
+`get_tier(arch, su_count)`, `node_name_to_su(name)`. Used by `validate_excel.py`
+for the single-tier cap warning.
+
+---
+
+## normalize_nvue.py
+
+Normalizes NVUE CLI config output for comparison (expands port ranges, sorts tokens).
+
+### Usage
+
+```bash
+cat config.sh | python3 scripts/normalize_nvue.py
+nv config show -o commands | python3 scripts/normalize_nvue.py
+```
+
+Used by `playbooks/validate-config.yml` to compare running config against generated config.
 
 ---
 
@@ -165,6 +214,7 @@ Automate NVIDIA Air simulation lifecycle via REST API.
 | `air-auth-test.py` | `make air-auth-test` | Verify API credentials |
 | `air-list.py` | `make air-list` | List simulations |
 | `air-budget-check.py` | `make air-budget` | Check resource budget |
+| `air-ssh-check.py` | `make air-ssh-check` | Check / fix SSH key access to jump hosts |
 | `air-connect.py` | `make air-connect` | Manual SSH config (fallback) |
 
 ### Library (`airlib/`)
@@ -196,101 +246,6 @@ make air-show ARCH=2-8-5-200          # Show current settings
 ```
 
 Credentials live in `.era-secrets/air-secrets.yml` at the repo root (vault-encrypted, gitignored). Override per-run with `AIR_API_KEY` / `AIR_BASE_URL` / `AIR_SSH_KEY_PATH` environment variables.
-
----
-
-## validate_excel.py
-
-Validates an ERA Excel configuration file before import or generate.
-
-### Usage
-
-```bash
-# Via Makefile (recommended)
-make validate-excel EXCEL=/path/to/config.xlsx
-make validate-excel ARCH=2-8-5-200
-
-# Direct execution
-python3 scripts/validate_excel.py input/2-8-5-200/default/2-8-5-200.xlsx
-```
-
-### What It Does
-
-- Checks required sheets exist (Settings, Nodes, VLANs & Profiles, Wire Map)
-- Validates Settings keys, IP/CIDR formats, MAC addresses, integer fields
-- Checks Nodes for duplicate function names, duplicate management IPs, missing core switches
-- Checks VLANs for valid IDs, duplicate names, overlapping subnets
-- Detects duplicate switch port assignments in Wire Map (two systems on same port)
-- Cross-validates: gateway within subnet, node IPs within mgmt_subnets, VLAN gateway within VLAN subnet
-- Flags deployments exceeding the architecture's single-tier max SU count (per `arch_scaling.py`)
-- Warns when an active server has more than one Display=Yes OOB row (Air's plain Ubuntu can't bond two OOB links — CRA rule)
-
----
-
-## arch_scaling.py
-
-Single-tier scaling tables for each ERA architecture, derived from the ERA-000{08,10,11,16} architecture PDFs. Maps SU count → expected OOB switch count + tier notes. Helpers: `max_single_tier_su(arch)`, `get_tier(arch, su_count)`, `node_name_to_su(name)`.
-
-Used by `validate_excel.py` (single-tier cap warning) and `scale_sample_excel.py` (over-cap refusal).
-
----
-
-## scale_sample_excel.py
-
-Generates pre-sized sample Excel files from the default for an arch, scaled to N SUs with the CRA OOB strategy applied (delete LOM2 rows, demote LOM1/iLO/XCC to Display=No, promote one BMC per node to Display=Yes with port allocated, flip Display=Yes on activated nodes' data-plane Wire Map rows).
-
-### Usage
-
-```bash
-# Default output path: input/<arch>/sample-su-<N>/<arch>.xlsx
-python3 scripts/scale_sample_excel.py --arch 2-4-3-200 --sus 4
-
-# Custom path
-python3 scripts/scale_sample_excel.py --arch 2-8-5-200 --sus 5 --output /tmp/foo.xlsx
-
-# Force past the single-tier max (validator will warn; not advised)
-python3 scripts/scale_sample_excel.py --arch 2-4-3-200 --sus 9 --force-multi-tier
-```
-
-### What It Does
-
-- Enables SU 1..N in the Nodes tab, disables SUs > N
-- Flips Display=Yes on each active server's non-OOB Wire Map rows (data-plane)
-- Deletes 2nd LOM rows from the Wire Map for every active server
-- Demotes 1st LOM, iLO, iDRAC, XCC rows on every active server to Display=No
-- Promotes one BMC row per active server to Display=Yes — walks all BMC rows on the node, picks the first whose templated oob-switch still has a free port (handles dual-BMC chassis/DPU servers)
-- Preserves any pre-existing non-BMC Display=Yes OOB row (e.g. the 2-8-9-800 default's `eth0` Air management convention)
-- Refuses to generate if SU count exceeds single-tier max unless `--force-multi-tier` is passed
-
----
-
-## normalize_nvue.py
-
-Normalizes NVUE CLI config output for comparison (expands port ranges, sorts tokens).
-
-### Usage
-
-```bash
-cat config.sh | python3 scripts/normalize_nvue.py
-nv config show -o commands | python3 scripts/normalize_nvue.py
-```
-
-Used by `playbooks/validate-config.yml` to compare running config against generated config.
-
----
-
-
-## create_test_site.py
-
-Creates modified Excel copies for site validation testing. Remaps all IPs to a test range and sets a unique site name.
-
-### Usage
-
-```bash
-python3 scripts/create_test_site.py
-```
-
-Creates test Excel files in `/tmp/` for all 3 architectures with remapped IPs (`192.168.x.y` → `10.100.x.y`, `172.16.x.y` → `10.200.x.y`).
 
 ---
 

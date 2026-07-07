@@ -67,7 +67,13 @@ def _read_vault_file(path: Path, vault_pass_file: Path | None = None) -> dict:
 
     content = path.read_text()
     if not content.startswith("$ANSIBLE_VAULT"):
-        return yaml.safe_load(content) or {}
+        try:
+            return yaml.safe_load(content) or {}
+        except yaml.YAMLError as exc:
+            raise AirConfigError(
+                f"{path} is not valid YAML:\n{exc}\n"
+                "Fix the file or re-run `make air-setup` to recreate it."
+            ) from exc
 
     cmd = ["ansible-vault", "view", str(path)]
     if vault_pass_file is None:
@@ -81,7 +87,13 @@ def _read_vault_file(path: Path, vault_pass_file: Path | None = None) -> dict:
         result = subprocess.run(
             cmd, capture_output=True, text=True, check=True, timeout=30,
         )
-        return yaml.safe_load(result.stdout) or {}
+        try:
+            return yaml.safe_load(result.stdout) or {}
+        except yaml.YAMLError as exc:
+            raise AirConfigError(
+                f"Decrypted {path} is not valid YAML:\n{exc}\n"
+                "Re-run `make air-setup` to recreate the vault."
+            ) from exc
     except subprocess.CalledProcessError as exc:
         raise AirConfigError(
             f"Failed to decrypt {path}:\n{exc.stderr.strip()}\n"
@@ -121,10 +133,15 @@ def load_air_config(
 ) -> dict[str, str]:
     """Load Air API configuration.
 
-    Returns dict with keys: base_url, username, api_key, ssh_key_path.
+    Returns dict with keys: base_url, username, api_key, ssh_key_path, org.
+
+    ``org`` is the NGC organization id sent as the ``nv-ngc-org`` header. It is
+    OPTIONAL — empty/unset means no header (the current air-inside gateway
+    accepts bearer-only requests); set it to future-proof for a gateway that
+    requires the org.
 
     Precedence (higher wins):
-    1. Shell environment variables (AIR_BASE_URL, AIR_API_KEY, AIR_USERNAME, AIR_SSH_KEY_PATH)
+    1. Shell environment variables (AIR_BASE_URL, AIR_API_KEY, AIR_USERNAME, AIR_SSH_KEY_PATH, AIR_NGC_ORG)
     2. Shared vault at <project_root>/.era-secrets/air-secrets.yml
 
     ``arch`` and ``site`` are accepted for interface compatibility but are no
@@ -144,12 +161,15 @@ def load_air_config(
         config["username"] = str(vault["air_username"])
     if vault.get("air_ssh_key_path"):
         config["ssh_key_path"] = str(vault["air_ssh_key_path"])
+    if vault.get("air_org"):
+        config["org"] = str(vault["air_org"]).strip()
 
     for env_key, config_key in [
         ("AIR_BASE_URL", "base_url"),
         ("AIR_API_KEY", "api_key"),
         ("AIR_USERNAME", "username"),
         ("AIR_SSH_KEY_PATH", "ssh_key_path"),
+        ("AIR_NGC_ORG", "org"),
     ]:
         val = os.environ.get(env_key)
         if val:
@@ -157,6 +177,17 @@ def load_air_config(
 
     config.setdefault("username", "")
     config.setdefault("ssh_key_path", "~/.ssh/id_ed25519")
+    config.setdefault("org", "")
+
+    # Configure the NGC org header for every Air API call from the resolved
+    # config — done here (the single config chokepoint all air-* scripts call)
+    # so no individual script can forget to set it. Local import avoids a hard
+    # dependency for callers that only need config (no api/httpx).
+    try:
+        from airlib.api import set_ngc_org
+        set_ngc_org(config.get("org"))
+    except Exception:
+        pass  # api/httpx not importable in this context — header stays disabled
 
     return config
 

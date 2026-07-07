@@ -1,0 +1,133 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# OOB↔CSL BGP validation (design C1) — GATING, ISOLATED.
+#
+# On every switch in the `oob` group, assert that EVERY configured BGP neighbor
+# is Established. On an OOB switch in L3 mode all neighbors are CSL-facing
+# uplinks (unnumbered underlay + numbered overlay), so "all Established" ==
+# "OOB↔CSL BGP healthy". Unlike validate-switch-health this has NO carrier-down
+# suppression — a down uplink is always a FAIL (the gap that false-passed the
+# copper-uplink miscable).
+#
+# L3-only: the Makefile target guards on `_oob_uplink_mode == l3` (OOB switches
+# have no BGP in L2 mode). Classification runs on the jump via
+# scripts/oob_bgp_classify.py; the switch-side probe only dumps JSON.
+#
+# Usage: make validate-oob-bgp ARCH=<arch> [SITE=<site>]
+
+- name: Validate OOB↔CSL BGP (gating)
+  hosts: jump
+  gather_facts: false
+
+  tasks:
+    - name: Ensure sshpass is present on the jump
+      block:
+        - name: Check sshpass
+          command: which sshpass
+          register: sshpass_check
+          changed_when: false
+          failed_when: false
+
+        - name: Install sshpass
+          package:
+            name: sshpass
+            state: present
+          become: true
+          when: sshpass_check.rc != 0
+
+    - name: Copy the OOB BGP probe + classifier to the jump
+      copy:
+        src: "{{ playbook_dir }}/../scripts/{{ item }}"
+        dest: "/tmp/{{ item }}"
+        mode: "0755"
+      loop:
+        - oob_bgp_probe.sh
+        - oob_bgp_classify.py
+
+    - name: Build OOB switch list
+      set_fact:
+        oob_list: "{{ groups['oob'] | default([]) }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Fail early if no OOB switches in inventory
+      fail:
+        msg: "No switches found in inventory group 'oob' for {{ inventory_dir }}"
+      when: oob_list | length == 0
+      delegate_to: localhost
+      run_once: true
+
+    - name: "Progress — checking OOB↔CSL BGP in parallel"
+      debug:
+        msg: >-
+          Asserting every BGP neighbor Established on {{ oob_list | length }}
+          OOB switch(es) in parallel via the jump. Runs as ONE step and stays
+          quiet until every switch returns — silence here is expected, not a hang.
+      run_once: true
+
+    # Fan out per OOB switch: dump `show bgp vrf all summary json` from the
+    # switch, classify it on the jump. Capture the classifier's line whether it
+    # verdicts PASS or FAIL (classify exits 1 on FAIL, so do not let that flip
+    # to the "probe error" fallback).
+    - name: Run the OOB BGP probe on all OOB switches (fan-out from jump)
+      shell: |
+        export SSHPASS='{{ switch_password }}'
+        SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+        WORK=$(mktemp -d /tmp/oobbgp.XXXXXX)
+        {% for sw in oob_list %}
+        ( if timeout 15 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[sw].ansible_host }} 'echo ok' >/dev/null 2>&1; then
+            timeout 60 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[sw].ansible_host }} "bash -s -- '{{ switch_password }}'" < /tmp/oob_bgp_probe.sh > "$WORK/{{ sw }}.json" 2>/dev/null;
+            python3 /tmp/oob_bgp_classify.py < "$WORK/{{ sw }}.json" > "$WORK/{{ sw }}.out" 2>/dev/null || true;
+            [ -s "$WORK/{{ sw }}.out" ] || echo "OOB_BGP|FAIL|probe execution error" > "$WORK/{{ sw }}.out";
+          else echo "OOB_BGP|FAIL|unreachable {{ hostvars[sw].ansible_host }}" > "$WORK/{{ sw }}.out"; fi ) &
+        {% endfor %}
+        wait
+        {% for sw in oob_list %}
+        echo "-- {{ sw }} ({{ hostvars[sw].ansible_host }}) --"
+        cat "$WORK/{{ sw }}.out" 2>/dev/null || echo "OOB_BGP|FAIL|no output"
+        {% endfor %}
+        rm -rf "$WORK"
+      register: oob_bgp_all
+      changed_when: false
+      no_log: true
+
+    - name: Assemble report + FAIL tally
+      set_fact:
+        report_lines: |
+          ============================================================
+          OOB↔CSL BGP (gating)  arch={{ arch | default('?') }}  site={{ site | default('?') }}
+          ============================================================
+          {{ oob_bgp_all.stdout }}
+        fail_count: "{{ oob_bgp_all.stdout_lines | select('search', 'OOB_BGP\\|FAIL\\|') | list | length }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Print report
+      debug:
+        msg: "{{ report_lines.split('\n') }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Write report file
+      copy:
+        content: "{{ report_lines }}\n\nSUMMARY: oob_switches={{ oob_list | length }}  FAIL={{ fail_count }}\n"
+        dest: "{{ report_file | default('/tmp/oob-bgp-validation.txt') }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Summary line
+      debug:
+        msg: >-
+          OOB↔CSL BGP: oob_switches={{ oob_list | length }}
+          FAIL={{ fail_count }} -> {{ 'PASS' if (fail_count | int) == 0 else 'FAIL' }}
+      delegate_to: localhost
+      run_once: true
+
+    - name: Fail the run if any OOB switch reported FAIL
+      fail:
+        msg: "{{ fail_count }} OOB switch(es) with a down BGP neighbor — see report / {{ report_file | default('/tmp/oob-bgp-validation.txt') }}"
+      when: (fail_count | int) > 0
+      delegate_to: localhost
+      run_once: true

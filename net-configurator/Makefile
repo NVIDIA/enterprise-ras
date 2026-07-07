@@ -10,7 +10,7 @@ SHELL := /bin/bash
         help-deploy-servers deploy-servers deploy-servers-via-jump help-air \
         use show-context clear-context import \
         topology validate-topology validate validate-excel validate-ztp validate-ztp-direct \
-        validate-config validate-servers \
+        validate-config validate-servers validate-oob-bgp fix-ext-storage \
         validate-ping-matrix validate-requirements extract-requirements \
         air-setup help-air-setup air-connect air-show air-auth-test air-ssh-check air-deploy air-destroy air-list air-budget air-full-deploy deploy-exclude-servers \
         inventory status test-coverage test-fast push-switch-configs \
@@ -28,21 +28,25 @@ SHELL := /bin/bash
 #   3. Environment variable
 #   4. SITE falls back to "default" if not set anywhere
 #
-VALID_ARCHS     := 2-4-3-200 2-8-5-200 2-8-9-400 2-8-9-800
+VALID_ARCHS     := 2-4-3-200 2-4-5-800 2-8-5-200 2-8-9-400 2-8-9-800 2-8-9-400-SP
 
 # Reusable architecture description block — keeps help/error messages DRY
 define print_archs
 	@echo "  2-4-3-200   (2 CPUs, 4 GPUs, 3 NICs, 200G)"
+	@echo "  2-4-5-800   (2 CPUs, 4 GPUs, 5 NICs, 800G — GB300 NVL72)"
 	@echo "  2-8-5-200   (2 CPUs, 8 GPUs, 5 NICs, 200G)"
 	@echo "  2-8-9-400   (2 CPUs, 8 GPUs, 9 NICs, 400G)"
 	@echo "  2-8-9-800   (2 CPUs, 8 GPUs, 9 NICs, 800G — dual-plane GPU fabric)"
+	@echo "  2-8-9-400-SP (2 CPUs, 8 GPUs, 9 NICs, 400G — single-plane GPU fabric)"
 endef
 
 # Shell-context version for use inside if/for blocks (no @ prefix, with \)
 ARCHS_ECHO = echo "  • 2-4-3-200   (2 CPUs, 4 GPUs, 3 NICs, 200G)"; \
+             echo "  • 2-4-5-800   (2 CPUs, 4 GPUs, 5 NICs, 800G — GB300 NVL72)"; \
              echo "  • 2-8-5-200   (2 CPUs, 8 GPUs, 5 NICs, 200G)"; \
              echo "  • 2-8-9-400   (2 CPUs, 8 GPUs, 9 NICs, 400G)"; \
-             echo "  • 2-8-9-800   (2 CPUs, 8 GPUs, 9 NICs, 800G — dual-plane GPU fabric)";
+             echo "  • 2-8-9-800   (2 CPUs, 8 GPUs, 9 NICs, 800G — dual-plane GPU fabric)";	\
+             echo "  • 2-8-9-400-SP (2 CPUs, 8 GPUs, 9 NICs, 400G — single-plane GPU fabric)";
 
 # Read from .era-context if not already set on command line.
 #
@@ -149,6 +153,13 @@ import:  ## Import a filled-out Excel file — auto-detects arch/site from the f
 		echo ""; \
 		exit 1; \
 	fi
+	@# Validate before importing so a poisoned workbook is rejected at ingest
+	@# (security review #6): import is the documented first step and several Excel-sourced
+	@# fields reach root-executed configs. IMPORT_SKIP_VALIDATE=1 escapes it.
+	@if [ "$(IMPORT_SKIP_VALIDATE)" != "1" ]; then \
+		python3 scripts/validate_excel.py "$(EXCEL)" || \
+			{ echo "❌ Excel validation failed — not importing. Fix the issues above (or IMPORT_SKIP_VALIDATE=1 to override)."; exit 1; }; \
+	fi
 	@if [ -n "$(IMPORT_SITE)" ]; then \
 		python3 scripts/import-excel.py "$(EXCEL)" --site "$(IMPORT_SITE)" || \
 			{ echo "❌ Import failed. Check the Excel file and try again."; exit 1; }; \
@@ -234,7 +245,7 @@ help:  ## Show this help message
 		echo "No context set. Use: make use ARCH=<type> [SITE=<name>]"; \
 		echo ""; \
 	fi
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Architectures (CPUs-GPUs-NICs-Speed):"
 	$(print_archs)
@@ -300,7 +311,7 @@ help-switch-ztp-deploy:  ## Show detailed help for switch-ztp-deploy
 	@echo "  Sets up OOB server, generates configs, and configures ZTP server."
 	@echo ""
 	@echo "REQUIRED:"
-	@echo "  ARCH=<type>    Architecture type (2-4-3-200, 2-8-5-200, 2-8-9-400, 2-8-9-800)"
+	@echo "  ARCH=<type>    Architecture type (2-4-3-200, 2-4-5-800, 2-8-5-200, 2-8-9-400, 2-8-9-800, 2-8-9-400-SP)"
 	@echo ""
 	@echo "OPTIONAL:"
 	@echo "  SITE=<name>    Site name (default: 'default')"
@@ -411,7 +422,7 @@ help-deploy-servers:  ## Show detailed help for deploy-servers
 	@echo "    (~3 parallel connections)."
 	@echo ""
 	@echo "REQUIRED:"
-	@echo "  ARCH=<type>    Architecture type (2-4-3-200, 2-8-5-200, 2-8-9-400, 2-8-9-800)"
+	@echo "  ARCH=<type>    Architecture type (2-4-3-200, 2-4-5-800, 2-8-5-200, 2-8-9-400, 2-8-9-800, 2-8-9-400-SP)"
 	@echo ""
 	@echo "OPTIONAL:"
 	@echo "  SITE=<name>    Site name (default: 'default')"
@@ -517,15 +528,47 @@ generate:  ## Generate inventory + switch configs + Air topology - requires ARCH
 	@echo "✅ CLI configurations generated in $(CONFIG_OUTPUT_DIR)/"
 	@echo ""
 	@echo "Step 3: Generating Air topology..."
-	python3 scripts/topology_generator.py generate --arch $(ARCH) --site $(SITE)
+	python3 scripts/topology_generator.py generate --arch $(ARCH) --site $(SITE) $(if $(SWITCHES_ONLY),--switches-only,)
+	@if [ -n "$(SWITCHES_ONLY)" ]; then touch "output/$(ARCH)/$(SITE)/.switches-only"; \
+	 else rm -f "output/$(ARCH)/$(SITE)/.switches-only"; fi
+ifdef SWITCHES_ONLY
+	@echo "  SWITCHES_ONLY: server VMs omitted; switch configs unchanged (server-facing ports kept as unconnected stubs)."
+	@echo "  SWITCHES_ONLY: patching breakout parents -> sub-port stubs..."
+	@python3 scripts/patch-air-breakout-stubs.py --arch $(ARCH) --site $(SITE)
+endif
+ifdef AIR_SWITCHES_ONLY
+	@echo "  AIR_SWITCHES_ONLY: patching OOB to L3 mode..."
+	@sed -i 's/oob_uplink_mode: l2/oob_uplink_mode: l3/' $(INVENTORY_DIR)/group_vars/oob.yml $(INVENTORY_DIR)/group_vars/all/main.yml 2>/dev/null || true
+	@for f in $(INVENTORY_DIR)/host_vars/leaf*smn*ipp6.yml; do \
+		src="inventories/$(ARCH)/host_vars/$$(basename $$f .yml | sed 's/-ipp6//').yml"; \
+		if [ -f "$$src" ] && ! grep -q "^lo_ip:" "$$f"; then \
+			lo=$$(grep "^lo_ip:" "$$src" | awk '{print $$2}'); \
+			asn=$$(grep "^asn:" "$$src" | awk '{print $$2}'); \
+			rid=$$(echo $$lo | cut -d/ -f1); \
+			echo "lo_ip: $$lo" >> "$$f"; \
+			echo "router_id: $$rid" >> "$$f"; \
+			echo "bgp_asn: $$asn" >> "$$f"; \
+		fi; \
+	done
+	@ansible-playbook playbooks/generate-cli-configs.yml \
+		-i $(INVENTORY_DIR) \
+		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)" \
+		--limit "oob" > /dev/null 2>&1
+	@echo "  AIR_SWITCHES_ONLY: patching topology with breakout sub-port stubs..."
+	@python3 scripts/patch-air-breakout-stubs.py --arch $(ARCH) --site $(SITE)
+endif
 	@echo "✅ Air topology generated"
 	@echo ""
 	@echo "Step 4: Generating Node Instruction scripts..."
 	python3 scripts/generate-node-instructions.py --arch $(ARCH) --site $(SITE)
 	@echo "✅ Node Instructions generated"
 	@echo ""
+ifdef SWITCHES_ONLY
+	@echo "Step 5: Skipping netplan ↔ topology eth-check (SWITCHES_ONLY: no server VMs)."
+else
 	@echo "Step 5: Cross-check netplan ↔ topology eth-numbering..."
 	@python3 scripts/check-eth-consistency.py --arch $(ARCH) --site $(SITE)
+endif
 
 topology:  ## Generate Air topology only - requires ARCH, optional SITE
 	$(call check_arch,$@)
@@ -545,7 +588,7 @@ validate-excel:  ## Validate Excel file before import/generate - requires EXCEL=
 validate-topology:  ## Validate Air topology against wiremap - requires ARCH, optional SITE
 	$(call check_arch,$@)
 	@echo "Validating Air topology for arch=$(ARCH) site=$(SITE)..."
-	python3 scripts/topology_generator.py validate --arch $(ARCH) --site $(SITE)
+	python3 scripts/topology_generator.py validate --arch $(ARCH) --site $(SITE) $(if $(wildcard output/$(ARCH)/$(SITE)/.switches-only),--switches-only,)
 
 push-switch-configs:  ## Push and apply generated NVUE configs to core + OOB switches - requires ARCH, optional SITE
 	$(call check_arch,$@)
@@ -629,6 +672,16 @@ air-deploy:  ## Create Air simulation, configure SSH, and connect - requires ARC
 air-deploy-retry:  ## Same as air-deploy but retries on capacity errors - RETRIES=3 RETRY_DELAY=300 by default
 	$(call check_arch,$@)
 	@python3 scripts/air-deploy.py --arch $(ARCH) --site $(SITE) $(if $(SERVER_CONFIG),--server-config,) $(if $(NOZTP),--no-ztp,) --retry-on-capacity $(or $(RETRIES),3) --retry-delay $(or $(RETRY_DELAY),300)
+
+air-deploy-switches-only:  ## Deploy a switches-only, no-ZTP Air sim (no server VMs; full switch config + unconnected stubs) - requires ARCH
+	$(call check_arch,$@)
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  Switches-only / no-ZTP deploy  arch=$(ARCH)  site=$(SITE)"
+	@echo "  (server VMs omitted; switch configs unchanged; server-facing ports"
+	@echo "   kept as unconnected stubs. Validate with: make validate-switch-health)"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@$(MAKE) --no-print-directory generate ARCH=$(ARCH) SITE=$(SITE) SWITCHES_ONLY=1 AIR_SWITCHES_ONLY=1
+	@python3 scripts/air-deploy.py --arch $(ARCH) --site $(SITE) --no-ztp $(if $(RETRIES),--retry-on-capacity $(RETRIES),) $(if $(RETRY_DELAY),--retry-delay $(RETRY_DELAY),)
 
 air-destroy:  ## Destroy Air simulation and clean up - requires ARCH
 	$(call check_arch,$@)
@@ -864,6 +917,43 @@ air-full-deploy:  ## Full pipeline: generate + air-deploy + switch-ztp-deploy - 
 	$(MAKE) air-deploy ARCH=$(ARCH) SITE=$(SITE) && \
 	$(MAKE) switch-ztp-deploy ARCH=$(ARCH) SITE=$(SITE)
 
+deploy-switches-only:  ## EXCEL-driven switches-only no-ZTP pipeline: import + generate (switches-only) + air-deploy --no-ztp - requires EXCEL
+	@if [ -z "$(EXCEL)" ]; then \
+		echo "❌ ERROR: EXCEL not specified"; \
+		echo ""; \
+		echo "Usage: make deploy-switches-only EXCEL=/path/to/your-config.xlsx"; \
+		echo "       make deploy-switches-only EXCEL=/path/to/your-config.xlsx IMPORT_SITE=my-lab"; \
+		echo ""; \
+		echo "Switches-only / no-ZTP one-command pipeline (mirrors 'make deploy'):"; \
+		echo "  1. Validate + import Excel (auto-detects arch/site, sets context)"; \
+		echo "  2. Generate inventory + configs + SWITCHES-ONLY topology"; \
+		echo "  3. Create Air sim (NOZTP, server VMs omitted; server-facing ports"; \
+		echo "     kept as unconnected stubs so the full switch config still applies)"; \
+		echo ""; \
+		echo "Then validate (Servers auto-detected as N/A):"; \
+		echo "  make validate-all SKIP_UPLOAD=1"; \
+		echo "  make validate-switch-health    # targeted fabric-health layer"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  Switches-only / no-ZTP pipeline   EXCEL=$(EXCEL)"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@python3 scripts/validate_excel.py "$(EXCEL)" || \
+		{ echo ""; echo "❌ Excel validation failed. Fix the issues above and try again."; exit 1; }
+	@if [ -n "$(IMPORT_SITE)" ]; then \
+		python3 scripts/import-excel.py "$(EXCEL)" --site "$(IMPORT_SITE)" --yes || { echo "❌ Import failed."; exit 1; }; \
+	else \
+		python3 scripts/import-excel.py "$(EXCEL)" --yes || { echo "❌ Import failed."; exit 1; }; \
+	fi
+	@set -e; eval "$$(python3 scripts/_excel_context.py '$(EXCEL)')"; \
+	_DEPLOY_SITE="$(IMPORT_SITE)"; \
+	[ -n "$$_DEPLOY_SITE" ] || _DEPLOY_SITE="$$_SITE"; \
+	echo ""; \
+	echo "  arch=$$_ARCH  site=$$_DEPLOY_SITE  — deploying switches-only (no server VMs, no ZTP)"; \
+	$(MAKE) air-deploy-switches-only ARCH=$$_ARCH SITE=$$_DEPLOY_SITE
+
 deploy-exclude-servers:  ## Deploy switches only (no server config) - requires EXCEL
 	@if [ -z "$(EXCEL)" ]; then \
 		echo "❌ ERROR: EXCEL not specified"; \
@@ -1045,16 +1135,49 @@ validate-ztp-direct:  ## Validate ZTP by SSHing directly to each switch (on-prem
 	$(call check_arch,$@)
 	@mkdir -p $(REPORT_DIR)
 	@echo "Validating ZTP configuration (direct SSH) for arch=$(ARCH) site=$(SITE)..."
-	@ANSIBLE_STDOUT_CALLBACK=minimal ansible-playbook -i $(INVENTORY_DIR)/hosts \
+	@ANSIBLE_STDOUT_CALLBACK=minimal PYTHONUNBUFFERED=1 ansible-playbook -i $(INVENTORY_DIR)/hosts \
 		playbooks/validate-ztp-direct.yml \
 		-e '{"report_file": "$(CURDIR)/$(REPORT_DIR)/ztp-validation.txt"}' 2>&1 | \
-		grep -v '^\[WARNING\]' | grep -v 'Callback dispatch' | grep -v '^$$'
+		grep --line-buffered -v '^\[WARNING\]' | grep --line-buffered -v 'Callback dispatch' | grep --line-buffered -v '^$$'
 	@echo ""
 	@if [ -f $(REPORT_DIR)/ztp-validation.txt ]; then \
 		sed '/RAW COMMAND OUTPUT/,$$d' $(REPORT_DIR)/ztp-validation.txt; \
 		echo ""; \
 		echo "📄 Full report with raw command output: $(REPORT_DIR)/ztp-validation.txt"; \
 	fi
+
+validate-switch-health:  ## Tier-1 switch operational-health checks (apply/BGP/EVPN-ES/VNI/intf) via jump - requires ARCH, optional SITE
+	$(call check_arch,$@)
+	@mkdir -p $(REPORT_DIR)
+	@echo ""
+	@echo "========================================"
+	@echo "Switch Health (Tier 1)  arch=$(ARCH)  site=$(SITE)"
+	@echo "========================================"
+	@ANSIBLE_STDOUT_CALLBACK=minimal PYTHONUNBUFFERED=1 ansible-playbook -i $(INVENTORY_DIR)/hosts \
+		playbooks/validate-switch-health.yml \
+		-e "arch=$(ARCH) site=$(SITE)" \
+		-e '{"report_file": "$(CURDIR)/$(REPORT_DIR)/switch-health.txt"}'
+
+validate-oob-bgp:  ## Gating OOB↔CSL BGP check (L3 OOB only; N/A otherwise) via jump - requires ARCH, optional SITE
+	$(call check_arch,$@)
+	@mkdir -p $(REPORT_DIR)
+	@_MODE=$$(python3 scripts/_show_oob_mode.py output/$(ARCH)/$(SITE)/topology/$(ARCH)-topology.json 2>/dev/null); \
+	if [ "$$_MODE" != "l3" ]; then \
+		echo "  ⏭️  OOB↔CSL BGP check N/A (OOB uplink mode = $${_MODE:-l2}, not l3)"; \
+		exit 0; \
+	fi; \
+	echo ""; \
+	echo "========================================"; \
+	echo "OOB↔CSL BGP (gating)  arch=$(ARCH)  site=$(SITE)"; \
+	echo "========================================"; \
+	ANSIBLE_STDOUT_CALLBACK=minimal PYTHONUNBUFFERED=1 ansible-playbook -i $(INVENTORY_DIR)/hosts \
+		playbooks/validate-oob-bgp.yml \
+		-e "arch=$(ARCH) site=$(SITE)" \
+		-e '{"report_file": "$(CURDIR)/$(REPORT_DIR)/oob-bgp-validation.txt"}'
+
+fix-ext-storage:  ## Auto-remediate ext-storage nodes missing/inactive FRR via the jump (idempotent) - requires ARCH, optional SITE
+	$(call check_arch,$@)
+	python3 scripts/fix-ext-storage-frr.py --arch $(ARCH) --site $(SITE)
 
 validate-ztp:  ## Validate ZTP via dhcp-oob bastion (works from laptop or inside Air) - requires ARCH, optional SITE
 	$(call check_arch,$@)
@@ -1063,10 +1186,10 @@ validate-ztp:  ## Validate ZTP via dhcp-oob bastion (works from laptop or inside
 	@echo "========================================"
 	@echo "ZTP Validation  arch=$(ARCH)  site=$(SITE)"
 	@echo "========================================"
-	@ANSIBLE_STDOUT_CALLBACK=minimal ansible-playbook -i $(INVENTORY_DIR)/hosts \
+	@ANSIBLE_STDOUT_CALLBACK=minimal PYTHONUNBUFFERED=1 ansible-playbook -i $(INVENTORY_DIR)/hosts \
 		playbooks/validate-ztp.yml \
 		-e '{"report_file": "$(CURDIR)/$(REPORT_DIR)/ztp-validation.txt"}' 2>&1 | \
-		grep -v '^\[WARNING\]' | grep -v 'Callback dispatch' | grep -v '^$$'; \
+		grep --line-buffered -v '^\[WARNING\]' | grep --line-buffered -v 'Callback dispatch' | grep --line-buffered -v '^$$'; \
 		_STATUS=$${PIPESTATUS[0]}; \
 		echo ""; \
 		if [ -f $(REPORT_DIR)/ztp-validation.txt ]; then \
@@ -1083,6 +1206,7 @@ validate-ztp:  ## Validate ZTP via dhcp-oob bastion (works from laptop or inside
 				echo "  ✅ Report uploaded to status page" || \
 				echo "  ⚠️  Report upload failed (non-critical)"; \
 		fi; \
+		if ! $(MAKE) --no-print-directory validate-oob-bgp ARCH=$(ARCH) SITE=$(SITE); then _STATUS=1; fi; \
 		exit $$_STATUS
 
 validate-config:  ## Compare running config vs generated config (runs on dhcp-oob) - requires ARCH, optional SITE
@@ -1191,7 +1315,7 @@ validate-ping-matrix:  ## Run full server-to-server ping matrix (all VLANs) - re
 			echo "  ⚠️  Report upload failed (non-critical)"; \
 	fi
 
-validate-all:  ## Run all validations: topology + config (canary) + ZTP + servers - requires ARCH
+validate-all:  ## Run all 5 validations: topology + config (canary) + ZTP + switch-health + servers (Servers N/A for switches-only) - requires ARCH
 	$(call check_arch,$@)
 	@mkdir -p $(REPORT_DIR)
 	@if ls $(REPORT_DIR)/*.txt 1>/dev/null 2>&1; then \
@@ -1209,9 +1333,11 @@ validate-all:  ## Run all validations: topology + config (canary) + ZTP + server
 	@echo "╚════════════════════════════════════════════════════════════════════╝"
 	@echo ""
 	@set -o pipefail; \
-	_TOPO=PASS; _CFG=PASS; _ZTP=PASS; _SRV=PASS; \
+	_TOPO=PASS; _CFG=PASS; _ZTP=PASS; _SWH=PASS; _SRV=PASS; \
+	_SWONLY=$$([ -f output/$(ARCH)/$(SITE)/.switches-only ] && echo 1 || echo 0); \
+	[ "$$_SWONLY" = "1" ] && echo "  (switches-only sim — server data-plane validation will be N/A; switch-health is the fabric gate)" && echo ""; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	echo "  1/4: Validating topology against wiremap..."; \
+	echo "  1/5: Validating topology against wiremap..."; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	{ echo "Report generated: $$(date '+%Y-%m-%d %H:%M:%S')"; echo ""; \
 	$(MAKE) validate-topology ARCH=$(ARCH) SITE=$(SITE) SKIP_UPLOAD=1 2>&1; } | tee $(REPORT_DIR)/topology-validation.txt && \
@@ -1219,7 +1345,7 @@ validate-all:  ## Run all validations: topology + config (canary) + ZTP + server
 		{ echo "  ❌ Topology validation failed"; _TOPO=FAIL; }; \
 	echo ""; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	echo "  2/4: Comparing running config vs generated config (root canary)..."; \
+	echo "  2/5: Comparing running config vs generated config (root canary)..."; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	_CFG_OK=0; \
 	for _i in 1 2 3; do \
@@ -1239,7 +1365,7 @@ validate-all:  ## Run all validations: topology + config (canary) + ZTP + server
 	fi; \
 	echo ""; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	echo "  3/4: Validating ZTP on switches..."; \
+	echo "  3/5: Validating ZTP on switches..."; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	if [ "$$_CFG" = "FAIL" ]; then \
 		echo "  ⏭️  Skipped — config validation failed (downstream tests would be noise)"; _ZTP=SKIP; \
@@ -1250,9 +1376,22 @@ validate-all:  ## Run all validations: topology + config (canary) + ZTP + server
 	fi; \
 	echo ""; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	echo "  4/4: Validating server architecture..."; \
+	echo "  4/5: Validating switch operational health (apply/BGP/EVPN)..."; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	if [ "$$_CFG" = "FAIL" ]; then \
+		echo "  ⏭️  Skipped — config validation failed (downstream tests would be noise)"; _SWH=SKIP; \
+	elif $(MAKE) validate-switch-health ARCH=$(ARCH) SITE=$(SITE); then \
+		echo "  ✅ Switch health passed"; \
+	else \
+		echo "  ❌ Switch health failed"; _SWH=FAIL; \
+	fi; \
+	echo ""; \
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+	echo "  5/5: Validating server architecture..."; \
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+	if [ "$$_SWONLY" = "1" ]; then \
+		echo "  ⏭️  N/A — switches-only sim (no server VMs deployed)"; _SRV=NA; \
+	elif [ "$$_CFG" = "FAIL" ]; then \
 		echo "  ⏭️  Skipped — config validation failed (downstream tests would be noise)"; _SRV=SKIP; \
 	elif $(MAKE) validate-servers ARCH=$(ARCH) SITE=$(SITE) SKIP_UPLOAD=1; then \
 		echo "  ✅ Server validation passed"; \
@@ -1271,17 +1410,18 @@ validate-all:  ## Run all validations: topology + config (canary) + ZTP + server
 			echo "  ⚠️  Report upload failed (non-critical)"; \
 		echo ""; \
 	fi; \
-	_mark() { case "$$1" in PASS) echo "✅ passed";; FAIL) echo "❌ failed";; SKIP) echo "⏭️  skipped (config canary failed)";; esac; }; \
+	_mark() { case "$$1" in PASS) echo "✅ passed";; FAIL) echo "❌ failed";; SKIP) echo "⏭️  skipped (config canary failed)";; NA) echo "➖ n/a (switches-only)";; esac; }; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	echo "                      Validation Summary"; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	printf "  1/4  Topology            %s\n" "$$(_mark $$_TOPO)"; \
-	printf "  2/4  Config Comparison   %s\n" "$$(_mark $$_CFG)"; \
-	printf "  3/4  ZTP                 %s\n" "$$(_mark $$_ZTP)"; \
-	printf "  4/4  Servers             %s\n" "$$(_mark $$_SRV)"; \
+	printf "  1/5  Topology            %s\n" "$$(_mark $$_TOPO)"; \
+	printf "  2/5  Config Comparison   %s\n" "$$(_mark $$_CFG)"; \
+	printf "  3/5  ZTP                 %s\n" "$$(_mark $$_ZTP)"; \
+	printf "  4/5  Switch Health       %s\n" "$$(_mark $$_SWH)"; \
+	printf "  5/5  Servers             %s\n" "$$(_mark $$_SRV)"; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	echo ""; \
-	if [ "$$_TOPO" = "FAIL" ] || [ "$$_ZTP" = "FAIL" ] || [ "$$_CFG" = "FAIL" ] || [ "$$_SRV" = "FAIL" ]; then \
+	if [ "$$_TOPO" = "FAIL" ] || [ "$$_ZTP" = "FAIL" ] || [ "$$_CFG" = "FAIL" ] || [ "$$_SWH" = "FAIL" ] || [ "$$_SRV" = "FAIL" ]; then \
 		echo "╔════════════════════════════════════════════════════════════════════╗"; \
 		echo "║  ⚠️  Some validations failed — review the output above            ║"; \
 		echo "╚════════════════════════════════════════════════════════════════════╝"; \
@@ -1386,6 +1526,13 @@ switch-ztp-deploy:  ## Complete ZTP deployment - requires ARCH, optional SITE LD
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  STEP 3/6: Generate Inventory from Excel"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@# Validate before parsing configs onto hardware (security review #6): this is the
+	@# documented `make import && make switch-ztp-deploy` path, which otherwise
+	@# never runs the validator. DEPLOY_SKIP_VALIDATE=1 escapes it.
+	@if [ "$(DEPLOY_SKIP_VALIDATE)" != "1" ]; then \
+		python3 scripts/validate_excel.py input/$(ARCH)/$(SITE)/$(ARCH).xlsx || \
+			{ echo "❌ Excel validation failed — aborting deploy. Fix the issues above (or DEPLOY_SKIP_VALIDATE=1 to override)."; exit 1; }; \
+	fi
 	python3 scripts/excel_parser.py --arch $(ARCH) --site $(SITE) --skip-validate
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1463,13 +1610,15 @@ lint:  ## Lint YAML and Python files
 	@if command -v yamllint >/dev/null 2>&1; then \
 		yamllint -c .yamllint playbooks/ roles/; \
 	else \
-		echo "⚠️  yamllint not installed. Run: pip install yamllint"; \
+		echo "❌ yamllint not installed — cannot lint. Run: pip install yamllint (or: make setup)"; \
+		exit 1; \
 	fi
 	@echo "Linting Python files..."
 	@if command -v flake8 >/dev/null 2>&1; then \
 		flake8 scripts/ --max-line-length=120; \
 	else \
-		echo "⚠️  flake8 not installed. Run: pip install flake8"; \
+		echo "❌ flake8 not installed — cannot lint. Run: pip install flake8 (or: make setup)"; \
+		exit 1; \
 	fi
 
 clean:  ## Clean caches and temp files
@@ -1551,3 +1700,7 @@ docs:  ## Show documentation links
 	@echo "  - docs/AIR_DEPLOYMENT_GUIDE.md         NVIDIA Air deployment guide"
 
 .DEFAULT_GOAL := help
+
+# Internal-only targets. The leading dash means a checkout without this file
+# (e.g. a public release) silently skips it.
+-include Makefile.internal

@@ -12,6 +12,5 @@ httpx>=0.27.0,<0.29       # Air API HTTP client (scripts/airlib/)
 openpyxl>=3.1.0,<4        # Excel file parsing (scripts/excel_parser.py, topology_generator.py)
 pyyaml>=6.0,<7            # YAML reading/writing
 rich>=13.0.0,<15          # Console output for Air scripts
-paramiko>=4.0.0,<5
 jinja2>=3.0.0,<4          # Transitive dep of ansible-core; pinned here to keep the test suite's direct import (tests/test_templates.py) on a matched version
 

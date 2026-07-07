@@ -25,7 +25,7 @@ support-[01:02]
 [dhcp]
 dhcp-oob
 
-[oob-server]
+[oob_server]
 oob-server-01
 
 [switches:children]
@@ -42,7 +42,7 @@ nodes
 storage
 support
 dhcp
-oob-server
+oob_server
 
 [servers:vars]
 ansible_user=ubuntu

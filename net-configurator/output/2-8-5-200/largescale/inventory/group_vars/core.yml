@@ -1,0 +1,439 @@
+---
+# Core Switch Configuration (Generated from Excel + Source Inventory - 2-8-5-200)
+
+timezone: Etc/Zulu
+pre_login_message: '#####################################################################################
+
+  #  Welcome to NVIDIA Cumulus VX (TM)                                                #
+
+  #  NVIDIA Cumulus VX (TM) is a community supported virtual appliance designed       #
+
+  #  for experiencing, testing and prototyping NVIDIA Cumulus'' latest technology.
+  #
+
+  #  For any questions or technical support, visit our community site at:             #
+
+  #  https://www.nvidia.com/en-us/support                                             #
+
+  #####################################################################################
+
+  '
+mh_mac: 44:38:39:FF:00:AA
+anycast_mac: 44:38:39:ff:00:ff
+bgp_asn: 4260394788
+cumulus_target_version: 5.16.1
+ntp_servers:
+- 0.cumulusnetworks.pool.ntp.org
+- 1.cumulusnetworks.pool.ntp.org
+- 2.cumulusnetworks.pool.ntp.org
+- 3.cumulusnetworks.pool.ntp.org
+vlans:
+- 200
+- 300
+- 400
+- 500
+- 900
+vnis:
+  200: 4200
+  300: 4300
+  400: 4400
+  500: 4500
+  900: 4900
+vrf_vnis:
+  OOB: 5001
+  INBAND: 5002
+  GPU: 5003
+  EXIT: 5004
+interfaces_disabled:
+- 50
+- 52
+- 60
+- 62
+- 64
+num_physical_ports: 64
+network_roles:
+  cpu:
+    ports:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 25
+    breakout: 4
+    lanes: 2
+    vlan: 300,400
+    lacp_bypass: true
+    port_overrides:
+      25:
+        subports:
+        - 0
+        - 1
+    bond_overrides: {}
+    vlan_untagged: 300
+  storage:
+    ports:
+    - 49
+    - 51
+    breakout: 4
+    lanes: 2
+    vlan: 400,500
+    lacp_bypass: true
+    port_overrides:
+      49:
+        subports:
+        - 6
+        - 7
+      51:
+        subports:
+        - 0
+        - 1
+    bond_overrides: {}
+    vlan_untagged: 300
+isl_interfaces:
+  ports:
+  - 27
+  - 28
+  - 29
+  - 30
+  - 31
+  - 32
+  - 33
+  - 34
+  - 35
+  breakout: 2
+  lanes: 4
+  port_overrides: {}
+  vrf: default
+edge_interfaces:
+  ports:
+  - 59
+  breakout: 8
+  lanes: 1
+  port_overrides: {}
+  vrf: EXIT
+oob_uplink_interfaces:
+  ports:
+  - 49
+  breakout: 8
+  lanes: 1
+  port_overrides:
+    49:
+      subports:
+      - 0
+      - 1
+dhcp_relay:
+- vrf: OOB
+  server_group: oob-dhcp-servers
+  servers:
+  - 192.168.200.78
+  upstream_interfaces:
+  - vlan3001_l3
+  downstream_interfaces:
+  - vlan200
+- vrf: EXIT
+  server_group: exit-dhcp-servers
+  servers:
+  - 10.88.88.88
+  upstream_interfaces:
+  - vlan3004_l3
+  downstream_interfaces:
+  - vlan400
+telemetry:
+  enabled: true
+  histogram:
+    counter:
+      bin_min_boundary: 3552
+      histogram_size: 55008
+      sample_interval: 1024
+    egress_buffer:
+      bin_min_boundary: 960
+      histogram_size: 9830400
+      sample_interval: 1024
+    ingress_buffer:
+      bin_min_boundary: 960
+      histogram_size: 2457600
+      sample_interval: 1024
+  snapshot_file:
+    count: 120
+    name: /var/run/cumulus/histogram_stats
+  snapshot_interval: 10
+gpu_interfaces:
+  ports:
+  - 6
+  - 7
+  - 8
+  - 9
+  - 10
+  - 11
+  - 12
+  - 13
+  - 14
+  - 15
+  - 16
+  - 17
+  - 18
+  - 19
+  - 20
+  - 21
+  - 22
+  - 23
+  - 24
+  - 25
+  breakout: 2
+  lanes: 4
+  vlan: 900
+  state: up
+  port_overrides: {}
+default_vrf_bgp:
+  address_family:
+    ipv4_unicast:
+      enable: true
+      redistribute_connected: true
+    l2vpn_evpn:
+      enable: true
+  neighbors:
+  - interfaces: isl
+    peer_group: internal-isl
+    type: unnumbered
+  - interfaces: oob_uplink
+    peer_group: underlay
+    type: unnumbered
+  - interfaces:
+    - 172.16.176.101
+    - 172.16.176.102
+    - 172.16.176.103
+    - 172.16.176.104
+    peer_group: overlay
+    type: numbered
+  peer_groups:
+  - id: internal-isl
+    remote_as: internal
+    bfd_enable: true
+    description: internal_isl_interconnect
+    address_family:
+      ipv4_unicast:
+        enable: true
+      l2vpn_evpn:
+        enable: true
+  - id: underlay
+    remote_as: external
+    bfd_enable: true
+    description: oob_underlay_interconnect
+    address_family:
+      ipv4_unicast:
+        enable: true
+        policy_outbound_route_map: WEIGHTED_ECMP
+  - id: overlay
+    remote_as: external
+    bfd_enable: true
+    bfd_profile: overlay
+    description: oob_overlay_interconnect
+    multihop_ttl: 2
+    update_source: lo
+    address_family:
+      ipv4_unicast:
+        enable: false
+      l2vpn_evpn:
+        enable: true
+nve_vxlan:
+  her: evpn
+  flooding_enable: true
+  decap_dscp: preserve
+  encap_dscp: copy
+community_list:
+- id: '11'
+  rule:
+  - id: '100'
+    action: permit
+    community: '11:11'
+route_map:
+- id: BLOCK_VTEPS
+  rule:
+  - id: '10'
+    action: deny
+    match:
+    - type: ip-prefix-list
+      value: VTEP_PREFIXES
+    - type: type
+      value: ipv4
+  - id: '20'
+    action: permit
+    match:
+    - type: ip-prefix-list
+      value: ALL_PREFIXES
+    - type: type
+      value: ipv4
+- id: EXIT_FILTER
+  rule:
+  - id: '10'
+    action: deny
+    match:
+    - type: ip-prefix-list
+      value: EXIT_LOCAL_IF
+    - type: type
+      value: ipv4
+  - id: '20'
+    action: permit
+    set:
+    - type: community
+      value: '11:11'
+- id: INBAND_FILTER
+  rule:
+  - id: '5'
+    action: deny
+    match:
+    - type: community-list
+      value: '11'
+  - id: '10'
+    action: deny
+    match:
+    - type: ip-prefix-list
+      value: OOB_PREFIXES
+    - type: type
+      value: ipv4
+  - id: '15'
+    action: deny
+    match:
+    - type: ip-prefix-list
+      value: INBAND_LOCAL_IF
+    - type: type
+      value: ipv4
+  - id: '20'
+    action: permit
+    match:
+    - type: ip-prefix-list
+      value: ALL_PREFIXES
+    - type: type
+      value: ipv4
+- id: OOB_FILTER
+  rule:
+  - id: '5'
+    action: deny
+    match:
+    - type: community-list
+      value: '11'
+  - id: '10'
+    action: deny
+    match:
+    - type: ip-prefix-list
+      value: INBAND_PREFIXES
+    - type: type
+      value: ipv4
+  - id: '15'
+    action: deny
+    match:
+    - type: ip-prefix-list
+      value: OOB_LOCAL_IF
+    - type: type
+      value: ipv4
+  - id: '20'
+    action: permit
+    match:
+    - type: ip-prefix-list
+      value: ALL_PREFIXES
+    - type: type
+      value: ipv4
+- id: OUTBOUND_ERA_PREFIXES
+  rule:
+  - id: '10'
+    action: permit
+    match:
+    - type: ip-prefix-list
+      value: ERA_PREFIXES
+    - type: type
+      value: ipv4
+- id: WEIGHTED_ECMP
+  rule:
+  - id: '10'
+    action: permit
+    set:
+    - type: ext-community-bw
+      value: multipaths
+vrf_config:
+- id: EXIT
+  vlan: 3004
+  vni: '5004'
+  route_export: true
+  bgp:
+    address_family:
+      ipv4_unicast:
+        enable: true
+        redistribute_connected: true
+        route_export_to_evpn: true
+        route_import_from_vrf:
+          enable: true
+          list:
+          - INBAND
+          - OOB
+          route_map: EXIT_FILTER
+      l2vpn_evpn:
+        enable: true
+    neighbors:
+    - interfaces:
+      - swp59s0
+      - swp59s1
+      - swp59s2
+      - swp59s3
+      - swp59s4
+      - swp59s5
+      - swp59s6
+      - swp59s7
+      peer_group: underlay-esl-external
+      type: unnumbered
+    peer_groups:
+    - id: underlay-esl-external
+      remote_as: external
+      address_family:
+        ipv4_unicast:
+          enable: true
+          policy:
+            outbound_route_map: OUTBOUND_ERA_PREFIXES
+- id: INBAND
+  vlan: 3002
+  vni: '5002'
+  route_export: true
+  route_import: true
+  bgp:
+    address_family:
+      ipv4_unicast:
+        enable: true
+        redistribute_connected: true
+        route_export_to_evpn: true
+        route_import_from_vrf:
+          enable: true
+          list:
+          - EXIT
+          route_map: INBAND_FILTER
+      l2vpn_evpn:
+        enable: true
+- id: GPU
+  vlan: 3003
+  vni: '5003'
+  bgp:
+    address_family:
+      ipv4_unicast:
+        enable: true
+        redistribute_connected: true
+        route_export_to_evpn: true
+      l2vpn_evpn:
+        enable: true
+- id: OOB
+  vlan: 3001
+  vni: '5001'
+  bgp:
+    address_family:
+      ipv4_unicast:
+        enable: true
+        redistribute_connected: true
+        route_export_to_evpn: true
+        route_import_from_vrf:
+          enable: true
+          list:
+          - EXIT
+          route_map: OOB_FILTER
+      l2vpn_evpn:
+        enable: true

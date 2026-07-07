@@ -15,7 +15,7 @@
 #   ansible-playbook playbooks/setup-oob-server.yml -i inventories/hosts
 
 - name: Configure OOB Server for Air/Lab Environment
-  hosts: oob-server
+  hosts: oob_server
   become: yes
   gather_facts: yes
 

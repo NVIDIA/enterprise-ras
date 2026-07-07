@@ -11,7 +11,6 @@ that needs new role definitions in the parser and topology generator,
 and is deferred to a follow-on release.
 
 Used by:
-  - scripts/scale_sample_excel.py — generates pre-sized sample Excels
   - scripts/validate_excel.py     — flags over-max SU configurations
 """
 
@@ -53,14 +52,23 @@ ARCH_SCALING = {
                     notes="4th OOB switch added; ISL ports active"),
     ],
     "2-8-5-200": [
-        # ERA-00016-001 v03, Table 13 (p32). Collapsed; SU>=6 requires
-        # a dedicated E/W spine — excluded as multi-tier.
+        # ERA-00016-001 (v03 on file). SU6-8 single-tier split modeled here;
+        # the Table 13/14 reference was attributed to a draft v04 that is not on
+        # file — treat the split as modeled, pending spec-table confirmation.
+        # SU1-SU5 are converged/collapsed; SU6-SU8 remain single-tier but
+        # split into a dedicated E/W GSL pair and a dedicated N/S CSL pair.
         ScalingTier(min_su=1, max_su=4, core_or_csl_leaves=2,
                     gsl_leaves_per_plane=None, oob_switches=2,
-                    notes="Collapsed"),
+                    notes="Converged collapsed core"),
         ScalingTier(min_su=5, max_su=5, core_or_csl_leaves=2,
                     gsl_leaves_per_plane=None, oob_switches=3,
-                    notes="3rd OOB switch at 17-20 nodes"),
+                    notes="Converged collapsed core; 3rd OOB switch at 17-20 nodes"),
+        ScalingTier(min_su=6, max_su=6, core_or_csl_leaves=2,
+                    gsl_leaves_per_plane=2, oob_switches=3,
+                    notes="Split single-tier: CSL N/S pair + GSL plane-1 E/W pair"),
+        ScalingTier(min_su=7, max_su=8, core_or_csl_leaves=2,
+                    gsl_leaves_per_plane=2, oob_switches=4,
+                    notes="Split single-tier: CSL N/S pair + GSL plane-1 E/W pair"),
     ],
     "2-8-9-400": [
         # ERA-00010-001 v03, Table 10 (p28) + narrative p29. Narrative
@@ -81,8 +89,7 @@ ARCH_SCALING = {
         # only enough GSL fan-out for SU<=2 (the two plane-02 leaves'
         # high-port range is consumed by plane1↔plane2 ISLs). Scaling
         # past SU=2 in practice requires either rebalancing the ISL
-        # allocation or adding more GSL leaves — see the
-        # scale_sample_excel.py NOTE for context. The validator's
+        # allocation or adding more GSL leaves. The validator's
         # tier-mismatch warning surfaces this gap to operators.
         ScalingTier(min_su=1, max_su=4, core_or_csl_leaves=2,
                     gsl_leaves_per_plane=2, oob_switches=2,
@@ -118,6 +125,25 @@ def is_supported_single_tier(arch: str, su_count: int) -> bool:
     """True iff the SU count fits this arch's single-tier max."""
     cap = max_single_tier_su(arch)
     return cap is not None and 1 <= su_count <= cap
+
+
+# Largest SU count validated/shipped per architecture, single- OR multi-tier.
+# Used to accept the shipped largescale example workbooks when the internal
+# generator models (scripts/models/) aren't present — i.e. in the public
+# distribution. Matches the "largescale" column in docs/ARCH_SUPPORT_MATRIX.md.
+MAX_SUPPORTED_SU = {
+    '2-4-3-200': 8,
+    '2-8-5-200': 8,
+    '2-8-9-400': 16,
+    '2-4-5-800': 8,
+    '2-8-9-800': 32,
+    '2-8-9-400-SP': 32,
+}
+
+
+def max_supported_su(arch: str) -> Optional[int]:
+    """Largest SU count validated/shipped for `arch` (single- or multi-tier)."""
+    return MAX_SUPPORTED_SU.get(arch)
 
 
 def node_name_to_su(name: str) -> Optional[int]:

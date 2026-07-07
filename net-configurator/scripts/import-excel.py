@@ -16,22 +16,22 @@ Usage:
 """
 
 import argparse
+import datetime
 import re
 import shutil
 import sys
 from pathlib import Path
-
-import openpyxl
 
 # Reuse parse_settings from excel_parser (same repo) to avoid duplication
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 from excel_parser import parse_settings as _parse_settings
+from excel_parser import load_workbook_safe
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INPUT_DIR = BASE_DIR / "input"
-VALID_ARCHS = ("2-4-3-200", "2-8-5-200", "2-8-9-400", "2-8-9-800")
+VALID_ARCHS = ("2-4-3-200", "2-4-5-800", "2-8-5-200", "2-8-9-400", "2-8-9-800", "2-8-9-400-SP")
 
 # Characters not allowed in site directory names
 _INVALID_SITE_CHARS = re.compile(r'[^\w\-]')
@@ -44,15 +44,47 @@ def _safe_site_name(raw: str) -> str:
     return sanitized or "default"
 
 
+def _path_derived_site(xlsx_path: Path, arch: str) -> str | None:
+    """If xlsx_path already lives under input/<arch>/<site>/, return <site>.
+
+    Returns None when the file is outside input/<arch>/ or sits directly in
+    input/<arch>/ with no site subdirectory — in those cases there is no folder
+    to infer from and the caller falls back to the Excel site_name cell. (#33)
+    """
+    try:
+        rel = xlsx_path.resolve().relative_to((INPUT_DIR / arch).resolve())
+    except ValueError:
+        return None
+    parts = rel.parts
+    # Normal layout: ("<site>", "<arch>.xlsx"); a bare ("<arch>.xlsx",) → no site.
+    if len(parts) >= 2:
+        return _safe_site_name(parts[0])
+    return None
+
+
 def read_excel_settings(xlsx_path: Path) -> dict:
     """Return a dict of key→value from the Settings sheet (snake_case keys)."""
-    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    wb = load_workbook_safe(xlsx_path, data_only=True)
     if 'Settings' not in wb.sheetnames:
         wb.close()
         return {}
     settings = _parse_settings(wb['Settings'])
     wb.close()
     return settings
+
+
+def _archive_existing_template(dest_file: Path, arch: str, site: str):
+    """Timestamped-backup an existing dest_file into archive/<date>/ before it
+    is overwritten. Returns the backup Path, or None if there was nothing to
+    back up. Honors the CLAUDE.md hard backup rule for the committed templates."""
+    if not dest_file.exists():
+        return None
+    backup_dir = BASE_DIR / "archive" / datetime.date.today().isoformat()
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%H%M%S")
+    backup = backup_dir / f"{arch}.{site}.{stamp}.xlsx.bak"
+    shutil.copy2(dest_file, backup)
+    return backup
 
 
 def import_excel(xlsx_path: Path, site_override: str | None = None,
@@ -80,14 +112,29 @@ def import_excel(xlsx_path: Path, site_override: str | None = None,
         print(f"    Valid values: {', '.join(VALID_ARCHS)}")
         sys.exit(1)
 
-    # Determine site name
+    # Determine site name. Precedence: --site override > the folder the Excel
+    # already lives in (input/<arch>/<site>/) > the Excel site_name cell. The
+    # folder wins over the cell so an Excel whose site_name says "sample" can't
+    # silently route a file the user placed in input/<arch>/customer-x/ to the
+    # wrong site (#33).
     if site_override:
         site = _safe_site_name(site_override)
         print(f"  Using site override: {site!r}")
     else:
         raw_site = str(settings.get('site_name', '') or '').strip()
-        site = _safe_site_name(raw_site) if raw_site else 'default'
-        print(f"  Site from Excel (site_name): {raw_site!r} → {site!r}")
+        excel_site = _safe_site_name(raw_site) if raw_site else ''
+        path_site = _path_derived_site(xlsx_path, arch)
+        if path_site:
+            site = path_site
+            if excel_site and excel_site != path_site:
+                print(f"⚠️  Excel site_name ({excel_site!r}) differs from the "
+                      f"folder it lives in ({path_site!r}); using the folder.")
+                print("   Pass --site <name> to choose explicitly.")
+            else:
+                print(f"  Site from path: {site!r}")
+        else:
+            site = excel_site or 'default'
+            print(f"  Site from Excel (site_name): {raw_site!r} → {site!r}")
 
     if site == 'default':
         print("⚠️  Importing to 'default' site.")
@@ -117,6 +164,12 @@ def import_excel(xlsx_path: Path, site_override: str | None = None,
     if xlsx_path.resolve() == dest_file.resolve():
         print(f"\n✓ Already at: {dest_file.relative_to(BASE_DIR)} (no copy needed)")
     else:
+        # Back up an existing template before overwriting it — importing a
+        # different Excel to a site (esp. `default`) would otherwise silently
+        # destroy the committed reference template (CLAUDE.md hard backup rule).
+        backup = _archive_existing_template(dest_file, arch, site)
+        if backup is not None:
+            print(f"  ↳ backed up existing template → {backup.relative_to(BASE_DIR)}")
         shutil.copy2(xlsx_path, dest_file)
         print(f"\n✓ Copied to: {dest_file.relative_to(BASE_DIR)}")
 

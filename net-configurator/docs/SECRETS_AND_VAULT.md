@@ -98,7 +98,7 @@ Source template: `inventories/secrets.yml.example`. Source per-arch defaults: `i
 | `switch_password` | Password configured on switches during ZTP |
 | `ldap_admin_password` | LDAP bind/admin password |
 | `ldap_user_default_password` | Default password for LDAP users |
-| `status_page_username` / `status_page_password` | ZTP status page basic auth (only if `status_page_enabled=Yes`) |
+| `status_page_username` / `status_page_password` | Basic auth for the ZTP status page **and the validation-report page** (`/reports/`), only if `status_page_enabled=Yes`. Defaults: username `era`, password `CHANGE_ME` — set a real password here; it intentionally does **not** fall back to `switch_password`. |
 
 ### Plain text (development/testing)
 

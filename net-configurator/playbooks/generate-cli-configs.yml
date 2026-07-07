@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 - name: Generate NVUE CLI Format Configurations
-  hosts: core:csl:gsl_plane1:gsl_plane2:oob
+  hosts: switches
   gather_facts: false
   connection: local
   vars:
@@ -22,26 +22,30 @@
         mode: '0755'
       run_once: true
 
-    - name: Generate Core Switch CLI Configuration
+    - name: Generate Core/CSL/CL Switch CLI Configuration
       template:
         src: "../roles/core/templates/core_nvue_cli.j2"
         dest: "{{ config_output_dir }}/{{ hostname }}-config.sh"
         mode: '0755'
-      when: "'core' in group_names"
+      when: "'core' in group_names or 'csl' in group_names or 'cl' in group_names"
 
-    - name: Generate CSL Switch CLI Configuration
+    - name: Generate GSL/GL Leaf CLI Configuration
       template:
-        src: "../roles/core/templates/core_nvue_cli.j2"
+        src: "../roles/gl/templates/gl_nvue_cli.j2"
         dest: "{{ config_output_dir }}/{{ hostname }}-config.sh"
         mode: '0755'
-      when: "'csl' in group_names"
+      when: >
+        'gsl_plane1' in group_names or 'gsl_plane2' in group_names or
+        'gl_plane1' in group_names or 'gl_plane2' in group_names
 
-    - name: Generate GSL Switch CLI Configuration
+    - name: Generate Spine (cs/gs) CLI Configuration
       template:
-        src: "../roles/gsl/templates/gsl_nvue_cli.j2"
+        src: "../roles/spine/templates/spine_nvue_cli.j2"
         dest: "{{ config_output_dir }}/{{ hostname }}-config.sh"
         mode: '0755'
-      when: "'gsl_plane1' in group_names or 'gsl_plane2' in group_names"
+      when: >
+        'cs' in group_names or
+        'gs_plane1' in group_names or 'gs_plane2' in group_names
 
     - name: Generate OOB Switch CLI Configuration
       template:

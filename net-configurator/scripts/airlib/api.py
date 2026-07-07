@@ -15,6 +15,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -51,6 +52,27 @@ def _api(base_url: str) -> str:
             return _PUBLIC_AIR_API
     # Air-Inside: ngc.<env> → api.<env>.
     return re.sub(r"^(https?://)ngc\.", r"\1api.", base_url)
+
+
+def _checked_next(base_url: str, next_url: str | None) -> str | None:
+    """Guard a paginated ``next`` URL before following it with the bearer token.
+
+    The server controls ``next``; an absolute URL pointing off-origin would make
+    the client send ``Authorization: Bearer <token>`` to an attacker host
+    (security review #4 / CWE-200). Relative ``next`` values are same-origin by definition
+    and allowed; absolute values must match the Air API scheme+host. Returns the
+    URL unchanged (or ``None``) when safe; raises ``AirAPIError`` otherwise.
+    """
+    if not next_url:
+        return next_url
+    api = urlsplit(_api(base_url))
+    nxt = urlsplit(next_url)
+    if nxt.netloc and (nxt.scheme, nxt.netloc) != (api.scheme, api.netloc):
+        raise AirAPIError(
+            f"Refusing to follow pagination to off-origin host {nxt.netloc!r} "
+            f"(expected {api.netloc!r}) — would leak the bearer token."
+        )
+    return next_url
 
 
 # ---------------------------------------------------------------------------
@@ -91,8 +113,39 @@ class UserConfig:
         )
 
 
+# Optional NGC org id sent as the `nv-ngc-org` header on every Air API call.
+# None/empty (the default) means the header is omitted — which the air-inside
+# gateway currently accepts (verified 2026-06-29). Set it via set_ngc_org()
+# from config to future-proof for a gateway that mandates the org. Sending a
+# wrong/empty value could itself 400, so we only attach it when explicitly set.
+_NGC_ORG: str | None = None
+
+
+def set_ngc_org(org: str | None) -> None:
+    """Configure the NGC org id attached as `nv-ngc-org` on all Air API calls.
+
+    Pass the value from load_air_config()['org'] once at startup. Empty/None
+    disables the header (default, historical bearer-only behavior).
+    """
+    global _NGC_ORG
+    _NGC_ORG = (org or "").strip() or None
+
+
 def _headers(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
+    # Accept-Encoding pins gzip/deflate to dodge an httpx+zstandard bug
+    # ("cannot use a decompressobj multiple times") that corrupts the second
+    # and later responses on a reused client — which silently broke paginated
+    # node lookups (page 2+ raised DecodingError), so nodes past the first
+    # page were reported "not found" and never got their Node Instructions.
+    # Set on every request so any caller's client is protected, not just the
+    # one air-deploy.py hand-patches.
+    h = {
+        "Authorization": f"Bearer {token}",
+        "Accept-Encoding": "gzip, deflate, br",
+    }
+    if _NGC_ORG:
+        h["nv-ngc-org"] = _NGC_ORG
+    return h
 
 
 def _checked_json(resp: httpx.Response) -> dict | list:
@@ -130,7 +183,7 @@ def list_simulations(
         resp = client.get(url, headers=_headers(token))
         data = _checked_json(resp)
         results.extend(Simulation.from_api(s) for s in data.get("results", []))
-        url = data.get("next")
+        url = _checked_next(base_url, data.get("next"))
     return results
 
 
@@ -310,7 +363,7 @@ def list_userconfigs(
         resp = client.get(url, headers=_headers(token))
         data = _checked_json(resp)
         results.extend(UserConfig.from_api(c) for c in data.get("results", []))
-        url = data.get("next")
+        url = _checked_next(base_url, data.get("next"))
     return results
 
 
@@ -328,6 +381,88 @@ def delete_userconfig(
     except httpx.HTTPStatusError as exc:
         raise AirAPIError(
             f"Failed to delete userconfig {config_id}: {exc.response.status_code}"
+        ) from exc
+
+
+def create_userconfig(
+    client: httpx.Client, base_url: str, token: str,
+    name: str, content: str, kind: str = "cloud-init-user-data",
+) -> UserConfig:
+    """POST /api/v3/userconfigs/ — create a cloud-init user/meta-data config.
+
+    Air delivers the config to a node at first boot (NoCloud datasource) once
+    it is attached via the node's ``cloud_init`` field (see
+    ``attach_userconfig_to_node``).  Because it lands *before*
+    systemd-networkd-wait-online, a config that masks that service in
+    ``bootcmd`` eliminates the ~5-minute first-boot stall that Node
+    Instructions (which run post-boot) cannot help.
+
+    Args:
+        name: Display name, max 64 chars (Air enforces the limit).
+        content: Plain-text cloud-init document (e.g. a ``#cloud-config``).
+        kind: ``cloud-init-user-data`` (default) or ``cloud-init-meta-data``.
+    """
+    headers = {**_headers(token), "Content-Type": "application/json"}
+    resp = client.post(
+        f"{_api(base_url)}/api/v3/userconfigs/",
+        headers=headers,
+        json={"name": name[:64], "kind": kind, "content": content},
+        timeout=60,
+    )
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = ""
+        try:
+            detail = f"\n{exc.response.json()}"
+        except (ValueError, json.JSONDecodeError):
+            detail = f"\n{exc.response.text[:500]}"
+        raise AirAPIError(
+            f"Failed to create userconfig '{name}': "
+            f"{exc.response.status_code}{detail}"
+        ) from exc
+    return UserConfig.from_api(_checked_json(resp))
+
+
+def assign_node_userconfigs(
+    client: httpx.Client, base_url: str, token: str,
+    sim_id: str, assignments: dict[str, str],
+    *, slot: str = "user_data",
+) -> None:
+    """Assign userconfigs to nodes via PATCH /simulations/nodes/bulk-assign/.
+
+    A node's ``cloud_init`` field is read-only; assignment goes through the
+    dedicated bulk-assign endpoint, which Air surfaces to the node as a NoCloud
+    datasource at first boot (before systemd-networkd-wait-online).
+
+    ``assignments`` maps node name -> userconfig id. ``slot`` is ``user_data``
+    (default) or ``meta_data``, matching the userconfig kind. The endpoint is
+    idempotent and must be called while the simulation is INACTIVE.
+    """
+    if slot not in ("user_data", "meta_data"):
+        raise ValueError(f"slot must be user_data or meta_data, got {slot!r}")
+    nodes = [
+        {"node": _find_node_id(client, base_url, token, sim_id, name), slot: uc_id}
+        for name, uc_id in assignments.items()
+    ]
+    headers = {**_headers(token), "Content-Type": "application/json"}
+    resp = client.patch(
+        f"{_api(base_url)}/api/v3/simulations/nodes/bulk-assign/",
+        headers=headers,
+        json={"simulation": sim_id, "nodes": nodes},
+        timeout=60,
+    )
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = ""
+        try:
+            detail = f"\n{exc.response.json()}"
+        except (ValueError, json.JSONDecodeError):
+            detail = f"\n{exc.response.text[:500]}"
+        raise AirAPIError(
+            f"Failed to assign userconfigs {list(assignments)}: "
+            f"{exc.response.status_code}{detail}"
         ) from exc
 
 
@@ -359,7 +494,7 @@ def check_node_errors(
     node-level status_from_worker field. Returns the first error found, or None.
     """
     try:
-        url = f"{_api(base_url)}/api/v3/simulations/nodes/?simulation={sim_id}&limit=100"
+        url = f"{_api(base_url)}/api/v3/simulations/nodes/?simulation={sim_id}&limit=500&ordering=name"
         resp = client.get(url, headers=_headers(token))
         data = _checked_json(resp)
         for node in data.get("results", []):
@@ -480,7 +615,7 @@ def create_ssh_service_for_node(
 
     # Find the target node (v3, paginated)
     node_id = None
-    url = f"{api}/api/v3/simulations/nodes/?simulation={sim_id}&limit=100"
+    url = f"{api}/api/v3/simulations/nodes/?simulation={sim_id}&limit=500&ordering=name"
     all_node_names = []
     while url:
         resp = client.get(url, headers=headers)
@@ -491,7 +626,7 @@ def create_ssh_service_for_node(
                 node_id = n["id"]
         if node_id:
             break
-        url = data.get("next")
+        url = _checked_next(base_url, data.get("next"))
 
     if not node_id:
         raise AirAPIError(
@@ -512,7 +647,7 @@ def create_ssh_service_for_node(
                 break
         if iface_id:
             break
-        url = data.get("next")
+        url = _checked_next(base_url, data.get("next"))
 
     if not iface_id:
         raise AirAPIError(
@@ -550,7 +685,7 @@ def create_service_for_node(
 
     # Find the target node
     node_id = None
-    url = f"{api}/api/v3/simulations/nodes/?simulation={sim_id}&limit=100"
+    url = f"{api}/api/v3/simulations/nodes/?simulation={sim_id}&limit=500&ordering=name"
     while url:
         resp = client.get(url, headers=headers)
         data = _checked_json(resp)
@@ -559,7 +694,7 @@ def create_service_for_node(
                 node_id = n["id"]
         if node_id:
             break
-        url = data.get("next")
+        url = _checked_next(base_url, data.get("next"))
 
     if not node_id:
         raise AirAPIError(f"Node '{node_name}' not found in simulation.")
@@ -576,7 +711,7 @@ def create_service_for_node(
                 break
         if iface_id:
             break
-        url = data.get("next")
+        url = _checked_next(base_url, data.get("next"))
 
     if not iface_id:
         raise AirAPIError(
@@ -613,12 +748,12 @@ def list_simulation_nodes(
 ) -> list[dict]:
     """List all nodes in a simulation (v3, paginated)."""
     all_nodes = []
-    url = f"{_api(base_url)}/api/v3/simulations/nodes/?simulation={sim_id}&limit=100"
+    url = f"{_api(base_url)}/api/v3/simulations/nodes/?simulation={sim_id}&limit=500&ordering=name"
     while url:
         resp = client.get(url, headers=_headers(token))
         data = _checked_json(resp)
         all_nodes.extend(data.get("results", []))
-        url = data.get("next")
+        url = _checked_next(base_url, data.get("next"))
     return all_nodes
 
 
@@ -626,23 +761,59 @@ def list_simulation_nodes(
 # Node Instructions (v3) — pre-boot configuration
 # ---------------------------------------------------------------------------
 
+# Per-simulation node name->id cache. A sim's node names/ids are fixed once it
+# is imported, so caching avoids re-fetching all nodes on every
+# create_node_instruction call — the O(N^2) blowup that dominated maxscale
+# air-deploy (~220 NI calls each paginating ~220 nodes).
+_NODE_ID_CACHE: dict[str, dict[str, str]] = {}
+
+
+def prefetch_node_ids(
+    client: httpx.Client, base_url: str, token: str, sim_id: str,
+) -> dict[str, str]:
+    """Fetch and cache the node name->id map for a simulation (one paginated GET).
+
+    Call once after the sim is INACTIVE and before bulk NI injection so every
+    subsequent _find_node_id is a dict hit. Safe to call from a single thread
+    before fanning out parallel NI POSTs (warms the cache, avoiding a fetch race).
+    """
+    url = f"{_api(base_url)}/api/v3/simulations/nodes/?simulation={sim_id}&limit=500&ordering=name"
+    mapping: dict[str, str] = {}
+    while url:
+        data = _checked_json(client.get(url, headers=_headers(token)))
+        for n in data.get("results", []):
+            name = n.get("name", "")
+            if name:
+                mapping[name] = n["id"]
+        url = _checked_next(base_url, data.get("next"))
+    _NODE_ID_CACHE[sim_id] = mapping
+    return mapping
+
+
+def clear_node_id_cache(sim_id: str | None = None) -> None:
+    """Drop the cached node map for a sim (or all sims)."""
+    if sim_id is None:
+        _NODE_ID_CACHE.clear()
+    else:
+        _NODE_ID_CACHE.pop(sim_id, None)
+
+
 def _find_node_id(
     client: httpx.Client, base_url: str, token: str,
     sim_id: str, node_name: str,
 ) -> str:
-    """Find a node's ID by name in a simulation. Raises AirAPIError if not found."""
-    url = f"{_api(base_url)}/api/v3/simulations/nodes/?simulation={sim_id}&limit=100"
-    all_names: list[str] = []
-    while url:
-        data = _checked_json(client.get(url, headers=_headers(token)))
-        for n in data.get("results", []):
-            all_names.append(n.get("name", ""))
-            if n.get("name") == node_name:
-                return n["id"]
-        url = data.get("next")
+    """Find a node's ID by name, using a per-sim cache (populated on first miss)."""
+    cached = _NODE_ID_CACHE.get(sim_id)
+    if cached is not None and node_name in cached:
+        return cached[node_name]
+    # Cache cold, or name not seen yet (e.g. a node added after the last fetch):
+    # (re)build the map once, then look up.
+    mapping = prefetch_node_ids(client, base_url, token, sim_id)
+    if node_name in mapping:
+        return mapping[node_name]
     raise AirAPIError(
         f"Node '{node_name}' not found in simulation.\n"
-        f"Available: {', '.join(sorted(all_names))}"
+        f"Available: {', '.join(sorted(mapping))}"
     )
 
 

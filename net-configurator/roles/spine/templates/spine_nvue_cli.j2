@@ -1,0 +1,220 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: MIT #}
+{#
+  Spine NVUE CLI template (compute cs and GPU gs).
+  EVPN relay only. Renders identically to legacy csl_spine
+  (weighted_ecmp=true) and gsl_spine (roce_traffic_pool=true,
+  weighted_ecmp=false) -- see tests/test_templates.py CS_CTX/GS_CTX.
+  W-ECMP is compute-spine-only by design (GPU fabric ports are uniform
+  speed/rail-symmetric, so static bandwidth weighting has little to add
+  over NVIDIA Spectrum-X's hardware-accelerated congestion-aware Adaptive
+  Routing already running there); this role is distinguished from GPU
+  spine purely by whether `plane` is defined (GS_CTX sets it, CS_CTX
+  doesn't -- same signal the header line above already uses).
+  Uses the same 'multipaths' WEIGHTED_ECMP route-map as every other
+  W-ECMP peer-group in the fabric -- confirmed the only value seen in
+  live production and in NVIDIA's own worked example for this scenario.
+#}
+#!/bin/bash
+# NVUE CLI Configuration for {{ hostname }}
+# Generated: {{ ansible_date_time.iso8601 }}
+# Format: NVUE CLI commands (Spine{% if plane is defined %}, Plane {{ plane }}{% endif %}, EVPN Relay)
+{%- set _isl_leaf_ports = isl_leaf_ports | default(isl_ports | default(isl_breakout_parents | default(''))) %}
+{%- set _isl_core_ports = isl_core_ports | default('') %}
+{%- set _smn_ports = smn_ports | default('') %}
+{%- set _smn_subports = smn_subports | default([]) %}
+{%- set _underlay_neighbors = underlay_neighbors | default((isl_subports | default('')).split(',')) %}
+{%- set _overlay_peers = overlay_peers | default([]) %}
+
+#============================================================================
+# EVPN (relay — no local VTEPs)
+#============================================================================
+nv set evpn state enabled
+
+#============================================================================
+# Interfaces - eth0 (mgmt), loopback, breakout
+#============================================================================
+nv set interface eth0 vrf mgmt
+nv set interface eth0 type eth
+
+nv set interface lo ipv4 address {{ lo_ip }}
+nv set interface lo type loopback
+
+{# Breakout level is per-arch via group_vars `isl_breakout` (default '2x'). #}
+{% set _isl_breakout = isl_breakout | default('2x') %}
+{% if _isl_leaf_ports and _isl_core_ports %}
+# Breakout {{ _isl_breakout }} on ISL ports (leaves + core)
+nv set interface {{ _isl_leaf_ports }},{{ _isl_core_ports }} link breakout {{ _isl_breakout }}
+{% elif _isl_leaf_ports %}
+# Breakout {{ _isl_breakout }} on ISL ports (leaves)
+nv set interface {{ _isl_leaf_ports }} link breakout {{ _isl_breakout }}
+{% endif %}
+
+{% if _smn_ports %}
+# Breakout 8x on OOB SN2201 uplink ports (100G)
+nv set interface {{ _smn_ports }} link breakout 8x
+{% for port in _smn_subports %}
+nv set interface {{ port }} link speed 100G
+{% endfor %}
+{% endif %}
+
+#============================================================================
+# QoS - RoCE
+#============================================================================
+nv set qos roce state enabled
+nv set qos roce mode lossless
+{% if roce_traffic_pool | default(false) %}
+nv set qos traffic-pool default-lossy memory-percent 10
+nv set qos traffic-pool roce-lossless memory-percent 90
+{% endif %}
+
+#============================================================================
+# BFD Profiles
+#============================================================================
+nv set router bfd state enabled
+nv set router bfd profile pf1 detect-multiplier 3
+nv set router bfd profile pf1 min-rx-interval 1000
+nv set router bfd profile pf1 min-tx-interval 1000
+nv set router bfd profile pf2 detect-multiplier 3
+nv set router bfd profile pf2 min-rx-interval 300
+nv set router bfd profile pf2 min-tx-interval 300
+
+#============================================================================
+# BGP Global
+#============================================================================
+nv set router bgp autonomous-system {{ asn }}
+nv set router bgp state enabled
+nv set router bgp router-id {{ lo_ip.split('/')[0] }}
+
+#============================================================================
+# Route Maps
+#============================================================================
+nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
+nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
+{% if plane is not defined %}
+{# Compute spine (cs) only -- see header comment. This role only renders
+   at all when ns_tiers > 1 (dedicated cs spine), at which point its
+   'underlay' downlink to the cl leaves below it is always eBGP -- W-ECMP
+   only works over eBGP (NVIDIA Cumulus Linux docs: "W-ECMP is only
+   supported in EBGP fabrics"), so this is unconditional once we know
+   we're on cs, same as oob_nvue_cli.j2's WEIGHTED_ECMP.
+   Uses the same 'multipaths' route-map as every other W-ECMP peer-group
+   in this fabric (core/cl/gl uplinks, MG's underlay). An earlier version
+   of this fix used a separate 'cumulative' variant for the spine's
+   downlink specifically, based on an internal Adaptive-Routing design
+   deck's Leaf(uplink)/Spine(downlink) origin/cumulative split -- but
+   NVIDIA's own Cumulus Linux docs' one fully-worked example for this
+   exact spine-to-leaf underlay scenario uses 'multipaths', and it's the
+   only value ever seen in live production (grep across all 8
+   pdx01-m3-era-289-800 switches: 4/4 occurrences are 'multipaths', zero
+   'cumulative'). 'cumulative' in NVIDIA's docs is only demonstrated for a
+   VRF-to-EVPN route-export scenario, unrelated to this peer-group.
+   Verified via a generated SU16 workbook; no live 2-tier deployment
+   exists to verify byte-for-byte. #}
+nv set router policy route-map WEIGHTED_ECMP rule 10 action permit
+nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths
+{% endif %}
+
+#============================================================================
+# NTP
+#============================================================================
+{% for server in ntp_servers | default(['0.cumulusnetworks.pool.ntp.org', '1.cumulusnetworks.pool.ntp.org', '2.cumulusnetworks.pool.ntp.org', '3.cumulusnetworks.pool.ntp.org']) %}
+nv set system ntp server {{ server | quote }} association-type server
+{% endfor %}
+nv set system ntp vrf mgmt
+
+#============================================================================
+# AAA
+#============================================================================
+nv set system aaa class nvapply action allow
+nv set system aaa class nvapply command-path / permission all
+nv set system aaa class nvshow action allow
+nv set system aaa class nvshow command-path / permission ro
+nv set system aaa class sudo action allow
+nv set system aaa class sudo command-path / permission all
+nv set system aaa role nvue-admin class nvapply
+nv set system aaa role nvue-monitor class nvshow
+nv set system aaa role system-admin class nvapply
+nv set system aaa role system-admin class sudo
+nv set system aaa user cumulus full-name cumulus,,,
+nv set system aaa user cumulus role system-admin
+nv set system aaa user cumulus state enabled
+
+#============================================================================
+# System
+#============================================================================
+nv set system api state enabled
+nv set system config auto-save state enabled
+nv set system control-plane acl acl-default-dos inbound
+nv set system control-plane acl acl-default-whitelist inbound
+nv set acl acl-default-whitelist rule 200 match ip tcp dest-port 8251
+nv set acl acl-default-whitelist type ipv4
+nv set system hostname {{ hostname }}
+{# Operator-configurable SSH login banners sourced from the Excel
+   `Settings.pre_login_message` / `post_login_message` fields — mirrors the
+   gl/core templates so spine (gs/cs) switches get the same banner. #}
+{% if common is defined and common.get('pre_login_message') %}
+nv set system message pre-login '{{ common.get('pre_login_message') | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) | replace("'", "'\\''") }}'
+{% endif %}
+{% if common is defined and common.get('post_login_message') %}
+nv set system message post-login '{{ common.get('post_login_message') | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) | replace("'", "'\\''") }}'
+{% endif %}
+nv set system ssh-server state enabled
+
+#============================================================================
+# WJH
+#============================================================================
+nv set system wjh channel forwarding trigger l2
+nv set system wjh channel forwarding trigger l3
+nv set system wjh channel forwarding trigger tunnel
+nv set system wjh state enabled
+
+#============================================================================
+# Default VRF - BGP address families
+#============================================================================
+nv set vrf default router bgp address-family ipv4-unicast state enabled
+nv set vrf default router bgp address-family ipv4-unicast redistribute connected state enabled
+nv set vrf default router bgp address-family ipv4-unicast redistribute connected route-map LOOPBACK_BGP
+nv set vrf default router bgp address-family l2vpn-evpn state enabled
+nv set vrf default router bgp state enabled
+
+#============================================================================
+# BGP Overlay Peers (numbered, loopback-to-loopback)
+#============================================================================
+{% for peer_ip in _overlay_peers %}
+nv set vrf default router bgp neighbor {{ peer_ip }} peer-group overlay
+nv set vrf default router bgp neighbor {{ peer_ip }} type numbered
+{% endfor %}
+
+#============================================================================
+# BGP Underlay Peers (unnumbered, on breakout sub-ports)
+#============================================================================
+{% for neighbor in _underlay_neighbors %}
+{% if neighbor %}
+nv set vrf default router bgp neighbor {{ neighbor }} peer-group underlay
+nv set vrf default router bgp neighbor {{ neighbor }} type unnumbered
+{% endif %}
+{% endfor %}
+
+#============================================================================
+# BGP Path Selection
+#============================================================================
+nv set vrf default router bgp path-selection multipath aspath-ignore enabled
+
+#============================================================================
+# Peer Group Definitions
+#============================================================================
+nv set vrf default router bgp peer-group overlay address-family ipv4-unicast state disabled
+nv set vrf default router bgp peer-group overlay address-family l2vpn-evpn state enabled
+nv set vrf default router bgp peer-group overlay bfd profile pf1
+nv set vrf default router bgp peer-group overlay multihop-ttl 2
+nv set vrf default router bgp peer-group overlay remote-as external
+nv set vrf default router bgp peer-group overlay update-source lo
+nv set vrf default router bgp peer-group underlay address-family ipv4-unicast state enabled
+{% if plane is not defined %}
+nv set vrf default router bgp peer-group underlay address-family ipv4-unicast policy outbound route-map WEIGHTED_ECMP
+nv set vrf default router bgp peer-group underlay bfd profile pf2
+{% endif %}
+nv set vrf default router bgp peer-group underlay remote-as external
+nv set vrf default router bgp router-id {{ lo_ip.split('/')[0] }}

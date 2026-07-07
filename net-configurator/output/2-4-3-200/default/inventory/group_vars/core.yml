@@ -19,7 +19,7 @@ pre_login_message: '############################################################
 
   '
 mh_mac: 44:38:39:FF:00:AA
-anycast_mac: 44:38:39:FF:00:FF
+anycast_mac: 44:38:39:ff:00:ff
 bgp_asn: 4260394788
 cumulus_target_version: 5.16.1
 ntp_servers:
@@ -235,6 +235,7 @@ default_vrf_bgp:
     address_family:
       ipv4_unicast:
         enable: true
+        policy_outbound_route_map: WEIGHTED_ECMP
   - id: overlay
     remote_as: external
     bfd_enable: true
@@ -354,6 +355,13 @@ route_map:
       value: ERA_PREFIXES
     - type: type
       value: ipv4
+- id: WEIGHTED_ECMP
+  rule:
+  - id: '10'
+    action: permit
+    set:
+    - type: ext-community-bw
+      value: multipaths
 vrf_config:
 - id: EXIT
   vlan: 3004

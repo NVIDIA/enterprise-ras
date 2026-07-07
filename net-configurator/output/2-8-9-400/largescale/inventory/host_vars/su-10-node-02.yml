@@ -1,0 +1,4 @@
+---
+# Host variables for su-10-node-02 (Generated from Excel)
+ansible_host: 192.168.200.84
+hostname: su-10-node-02

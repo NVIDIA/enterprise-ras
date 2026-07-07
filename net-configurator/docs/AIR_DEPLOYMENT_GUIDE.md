@@ -31,16 +31,43 @@ lives in the shared vault. You configure it once per checkout:
 # Standard deployment (switches + servers, servers auto-configured on boot)
 make deploy EXCEL=/path/to/your-config.xlsx
 
-# Or: switches only (servers configured separately afterwards)
+# Or: switches only (server VMs still in sim, configured separately afterwards)
 make deploy-exclude-servers EXCEL=/path/to/your-config.xlsx
+
+# Or: switches-ONLY / no-ZTP (server VMs omitted entirely — smaller/cheaper sim)
+make deploy-switches-only EXCEL=/path/to/your-config.xlsx
 ```
 
 `make deploy` runs the full pipeline — switches are configured via ZTP, and server
 configuration (hostname, netplan, lldp) is injected as Air Node Instructions so
 servers are fully configured on first boot. No separate server deployment step needed.
 
-`make deploy-exclude-servers` skips the server Node Instructions. Run
-`make deploy-servers-via-jump` afterwards to configure servers.
+`make deploy-exclude-servers` skips the server Node Instructions (the server VMs
+are still created). Run `make deploy-servers-via-jump` afterwards to configure them.
+
+### Switches-only / no-ZTP deployments
+
+`make deploy-switches-only EXCEL=<file>` (or, ARCH/SITE-driven,
+`make air-deploy-switches-only ARCH=<a> SITE=<s>` once the site's Excel is
+imported) builds a **switches-only** sim: the server VMs are dropped entirely, so
+the sim is far smaller and cheaper — the budget-friendly way to validate a large
+switch fabric. The **full switch configuration still applies**; each server-facing
+port is kept as an `unconnected` topology stub so the NVUE apply never rolls back
+(Air rolls back the *whole* apply if a config references a missing port).
+
+What it proves vs. omits, and how to validate:
+
+- **Validate with** `make validate-all` — the **Servers** phase is auto-reported
+  `➖ N/A (switches-only)`; Topology, Config, ZTP, and **Switch Health**
+  (clean apply + BGP Established + EVPN ES/VNI) still run.
+- Or run the targeted fabric-health layer alone: `make validate-switch-health`.
+- Server-edge data-plane (EVPN-MH bonds, server NIC/netplan) is **not** exercised
+  — that needs a full sim (`make deploy`) or bare metal.
+
+```bash
+make deploy-switches-only EXCEL=/path/to/your-config.xlsx
+make validate-all SKIP_UPLOAD=1          # Servers => N/A; everything else runs
+```
 
 The detailed steps below are for understanding the process or troubleshooting.
 
@@ -96,7 +123,7 @@ ls ~/.ssh/id_ed25519.pub
 3. Click **Generate Personal Key**
    - (For shared/CI use, choose **Generate Service Key** instead)
 4. Fill in:
-   - **Key Name**: a descriptive name (e.g., `era-automation`)
+   - **Key Name**: a descriptive name (e.g., `net-configurator`)
    - **Services Included**: select **NVIDIA Air** from the list
    - **Expiration**: set as appropriate for your use case
 5. Click **Generate**
@@ -202,8 +229,15 @@ make air-full-deploy
 1. Import the topology JSON into Air and create a simulation
 2. Install your SSH key on all nodes (ZTP for Cumulus switches, cloud-init for Ubuntu servers)
 3. Start the simulation and wait for it to boot (~2-10 minutes)
-4. Create SSH services on `oob-server-01` and `dhcp-oob`
+4. Create SSH services on the jump hosts
 5. Auto-update `host_vars` with the worker hostname and SSH ports
+
+> **OOB mode & jump host — L3 is the default.** In the default **L3** OOB mode
+> the management nodes are `utility` (the Ansible `[jump]` host) + `external-conn`
+> + `external-dhcp`. Some steps below still reference the older **L2** node names
+> `oob-server-01` / `dhcp-oob` — those apply only when `oob_uplink_mode=l2`; in
+> the default L3 mode read `oob-server-01` → **`utility`** and `dhcp-oob` →
+> **`external-dhcp`**.
 
 > **Note**: After `make import` sets `.era-context`, you don't need to pass `ARCH=` to every command.
 
@@ -222,7 +256,7 @@ make air-ssh-check FIX=1
 The check verifies:
 - SSH key path is configured and the key file exists
 - Key is loaded in ssh-agent (required for passphrase-protected keys)
-- SSH key auth works against oob-server-01 and dhcp-oob
+- SSH key auth works against the jump host (`utility` in L3 mode; `oob-server-01` / `dhcp-oob` in legacy L2)
 - Password auth works (Ansible fallback via `ansible_password`)
 
 **Passphrase-protected keys**: If your SSH key has a passphrase, load it into the agent first:
@@ -277,14 +311,18 @@ If you prefer not to use the API, or if the automated workflow encounters issues
 
 ### 1.1 Get the Template
 
-Download the Excel template for your architecture from the repo:
+Every architecture ships a committed default template and ready-to-use samples
+in the repo. Use whichever matches your target:
 
-| Architecture | Template |
+| Purpose | Path |
 |---|---|
-| `2-4-3-200` | `input/2-4-3-200/default/2-4-3-200.xlsx` |
-| `2-8-5-200` | `input/2-8-5-200/default/2-8-5-200.xlsx` |
-| `2-8-9-400` | `input/2-8-9-400/default/2-8-9-400.xlsx` |
-| `2-8-9-800` | `input/2-8-9-800/default/2-8-9-800.xlsx` |
+| Default template (per arch) | `input/{ARCH}/default/{ARCH}.xlsx` |
+| Ready-to-use sample (default scale) | `input/sample-{ARCH}.xlsx` |
+| Ready-to-use sample (largescale) | `input/largescale-{ARCH}.xlsx` |
+
+Replace `{ARCH}` with one of: `2-4-3-200`, `2-8-5-200`, `2-8-9-400`,
+`2-4-5-800`, `2-8-9-800`, `2-8-9-400-SP`. (When you import to a named site,
+the working copy lands at `input/{ARCH}/{SITE}/{ARCH}.xlsx`.)
 
 ### 1.2 Fill Out the Excel
 

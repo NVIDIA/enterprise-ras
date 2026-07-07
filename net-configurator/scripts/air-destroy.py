@@ -136,7 +136,12 @@ def main() -> int:
         # Confirm
         if not args.force:
             console.print(f"\n  [bold]This will destroy simulation '{sim.title}'.[/]")
-            response = input("  Continue? [y/N]: ").strip().lower()
+            try:
+                response = input("  Continue? [y/N]: ").strip().lower()
+            except EOFError:
+                # Non-interactive: cancel cleanly instead of a raw EOFError.
+                console.print("  No TTY to confirm — pass --force to destroy without a prompt. Cancelled.")
+                return 0
             if response != "y":
                 console.print("  Cancelled.")
                 return 0

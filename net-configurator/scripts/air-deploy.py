@@ -38,6 +38,8 @@ import httpx
 import yaml
 from rich.console import Console
 
+from concurrent.futures import ThreadPoolExecutor
+
 from airlib.api import (
     create_node_instruction,
     create_service_for_node,
@@ -48,6 +50,7 @@ from airlib.api import (
     import_topology,
     list_simulations,
     poll_until_loaded,
+    prefetch_node_ids,
     start_simulation,
     wait_for_inactive,
 )
@@ -57,8 +60,37 @@ from airlib.env import load_air_config, require_config
 from airlib.errors import AirAPIError, AirError
 from airlib.models import SimState
 from airlib.ssh import build_ssh_args, check_key_access, check_port_open, get_key_fingerprint
+from airlib.ext_storage_config import (
+    CUST_STORAGE_ASN,
+    build_daemons,
+    build_eth0_netplan,
+    build_frr_conf,
+    discover_ext_storage_targets,
+)
+from oob_reserved import EXTERNAL_DHCP_OCTET, UTILITY_OCTET
 
 console = Console()
+
+
+def cleanup_failed_sim(client, base_url, token, sim_id, arch):
+    """Best-effort removal of a sim that was created but failed to start (#26).
+
+    A created-but-unstarted sim is left in STORED state; repeated failed deploys
+    accumulate orphans that must be cleared in the Air UI. Try to delete it. If
+    delete also fails (e.g. the same 403 that blocked start — an API-key
+    permission issue), tell the operator how to remove it manually. Returns True
+    if the sim was removed, False otherwise. Never raises.
+    """
+    console.print("  Attempting to clean up the created simulation...")
+    try:
+        delete_simulation(client, base_url, token, sim_id)
+        console.print(f"  ✓ Removed orphaned simulation {sim_id}")
+        return True
+    except AirError as del_exc:
+        console.print(f"  ⚠️  Could not auto-remove it ({del_exc}).")
+        console.print(f"     Remove manually: make air-destroy ARCH={arch}")
+        console.print(f"     (or delete sim {sim_id} in the Air UI if that 403s too)")
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -278,23 +310,24 @@ def _inject_cust_net_edge_instructions(
     switch_password: str = "Cumu1usLinux!",
     common: dict | None = None,
 ) -> int:
-    """Configure cust-net-edge-{01,02} for L3 OOB mode.
+    """Configure cust-net-edge-* for L3 OOB mode.
 
     cust-net-edge simulates the customer's network edge in Air. It plays
-    two roles:
+    two independent roles:
 
-      1. **L2 bridge for the Air-mgmt VLAN** (cust-net-edge-01 only):
-         every switch eth0, plus external-conn:eth1 and external-dhcp:eth1,
-         lands on one of cust-net-edge-01's swp1..swp6 ports. Without an
-         L2 bridge across those, DHCP/ARP can't traverse between the
-         switches and external-dhcp.
+      1. **L2 bridge for the Air-mgmt VLAN** (ADR-0002): every switch eth0,
+         plus external-dhcp:eth1 and utility:eth2, lands on a cust-net-edge
+         bridge port. Multiple edges are stitched into one L2 domain through
+         a loop-free star centred on cust-net-edge-01. Only the hub owns the
+         bridge SVI (172.20.0.254/24).
 
-      2. **Customer-side eBGP underlay peer** (both -01 and -02): the
+      2. **Customer-side eBGP underlay peer** (EXIT edges): the
          cores' EXIT VRF carries `nv set vrf EXIT router bgp neighbor
          swp61s0 peer-group underlay-esl-external remote-as external`
          on the ports facing cust-net-edge. Without cust-net-edge running
          BGP back at the cores, the eBGP sessions never come up and the
-         EXIT VRF doesn't propagate routes.
+         EXIT VRF doesn't propagate routes. EXIT egress to external-conn is
+         deliberately routed on dedicated L3 ports, not on the mgmt bridge.
 
     cust-net-edge is an Air-sim-only node — it has no equivalent in real
     ERA deployments. So instead of rendering a real Ansible role + host_vars,
@@ -303,8 +336,10 @@ def _inject_cust_net_edge_instructions(
     Returns the number of cust-net-edge nodes configured.
     """
     nodes = topology_json.get("content", {}).get("nodes", {})
-    targets = [n for n in ("cust-net-edge-01", "cust-net-edge-02")
-               if n in nodes]
+    targets = sorted(
+        (n for n in nodes if n.startswith("cust-net-edge")),
+        key=lambda n: int(n.rsplit("-", 1)[1]) if n.rsplit("-", 1)[-1].isdigit() else 0,
+    )
     if not targets:
         return 0
 
@@ -321,14 +356,24 @@ def _inject_cust_net_edge_instructions(
     L3_PEER_PORTS: dict[tuple[str, str], str] = {
         ("external-dhcp", "eth2"): "10.88.88.1/24",
     }
+    # EXIT egress links to the NAT host. These are intentionally NOT bridge
+    # ports: the air-mgmt bridge is a single 172.20.0.0/24 domain with its SVI
+    # on edge-01, while EXIT egress uses per-edge routed subnets so traffic
+    # ECMP'd to either EXIT edge has a real path to external-conn.
+    EXIT_EGRESS_PORTS: dict[tuple[str, str], tuple[str, str]] = {
+        ("external-conn", "eth1"): ("172.20.1.254/24", "172.20.1.1"),
+        ("external-conn", "eth2"): ("172.20.2.254/24", "172.20.2.1"),
+    }
 
     configured = 0
     for idx, edge_name in enumerate(targets):
         # Classify ports: bridge (peer is ethN, default), L3 (peer is a
-        # known L3_PEER_PORTS entry), or BGP (peer is swpXX).
+        # known L3_PEER_PORTS entry), EXIT egress (external-conn leg), or BGP
+        # (peer is swpXX).
         bridge_ports: list[str] = []
         bgp_ports: list[str] = []
         l3_ports: list[tuple[str, str]] = []  # (local_port, ipv4_addr)
+        exit_egress_ports: list[tuple[str, str, str]] = []  # (local_port, ipv4_addr, default_via)
         for link in topology_json.get("content", {}).get("links", []):
             if not (isinstance(link[0], dict) and isinstance(link[1], dict)):
                 continue
@@ -341,6 +386,14 @@ def _inject_cust_net_edge_instructions(
                 l3_key = (peer_node, peer_iface)
                 if l3_key in L3_PEER_PORTS:
                     l3_ports.append((ep["interface"], L3_PEER_PORTS[l3_key]))
+                elif l3_key in EXIT_EGRESS_PORTS:
+                    addr, default_via = EXIT_EGRESS_PORTS[l3_key]
+                    exit_egress_ports.append((ep["interface"], addr, default_via))
+                elif peer_node.startswith("cust-net-edge"):
+                    # Inter-edge trunk (ADR-0002): edge↔edge link spans the
+                    # air-mgmt L2 across the multi-edge star, so it's a BRIDGE
+                    # port, not a BGP-underlay swp port.
+                    bridge_ports.append(ep["interface"])
                 elif peer_iface.startswith("eth"):
                     bridge_ports.append(ep["interface"])
                 elif peer_iface.startswith("swp"):
@@ -355,6 +408,11 @@ def _inject_cust_net_edge_instructions(
             return (int(rest), -1)
         bridge_ports = sorted(set(bridge_ports), key=_port_sort_key)
         bgp_ports = sorted(set(bgp_ports), key=_port_sort_key)
+        l3_ports = sorted(set(l3_ports), key=lambda item: _port_sort_key(item[0]))
+        exit_egress_ports = sorted(
+            set(exit_egress_ports),
+            key=lambda item: _port_sort_key(item[0]),
+        )
 
         # Loopback IP — stable per cust-net-edge in a customer-side block
         # that doesn't collide with ERA's 172.16.176.0/24.
@@ -407,39 +465,35 @@ def _inject_cust_net_edge_instructions(
                 # Cumulus boots swpN with dhcp4=true (Cumulus default for
                 # any link-up interface), the port DHCPs from external-dhcp
                 # *before* our NVUE config adds it to the bridge, gets a
-                # /24 IP + a kernel `0/0 via <gateway>` default route at
-                # distance 0, and that kernel default beats our static
-                # `0/0 via 172.20.0.1` (distance 1). Symptom: cust-net-edge
-                # ICMPs back "Destination Host Unreachable" with its
-                # loopback as source for any transit traffic. Disabling
-                # dhcp-client per-port keeps the bridge a pure L2 path.
+                # /24 IP + a kernel default route. Symptom: cust-net-edge
+                # ICMPs back "Destination Host Unreachable" with its loopback
+                # as source for any transit traffic. Disabling dhcp-client
+                # per-port keeps the bridge a pure L2 path.
                 f"nv set interface {port_list} ipv4 dhcp-client state disabled",
                 f"nv set interface {port_list} ipv6 dhcp-client state disabled",
             ]
-            # Bridge SVI so the cust-net-edge advertises the Air-mgmt subnet
-            # into eBGP — without this, cores' EXIT VRF (and the OOB VRF
-            # import) has no route to external-conn, so .200.x clients
-            # can't reach the NAT host. Static default points outbound
-            # traffic at external-conn (which MASQUERADEs onto Air's outbound).
-            # -01 owns 172.20.0.0/24 (eth1 leg); -02 owns 172.20.1.0/24
-            # (eth2 leg) — both advertise default-route-origination so cores
-            # ECMP between edges.
-            EDGE_VLAN1 = {
-                "cust-net-edge-01": ("172.20.0.254/24", "172.20.0.1"),
-                "cust-net-edge-02": ("172.20.1.254/24", "172.20.1.1"),
-            }
-            if edge_name in EDGE_VLAN1:
-                svi_addr, default_via = EDGE_VLAN1[edge_name]
+            # Bridge SVI only on the hub. Spokes are pure L2 bridge members
+            # plus a star trunk back to edge-01. The SVI is the on-link default
+            # gateway for the air-mgmt DHCP scope; EXIT egress default routes
+            # live on dedicated routed ports below.
+            if edge_name == "cust-net-edge-01":
                 config_lines += [
                     "nv set bridge domain br_default vlan 1",
                     "nv set interface vlan1 type svi",
-                    f"nv set interface vlan1 ipv4 address {svi_addr}",
-                    f"nv set vrf default router static 0.0.0.0/0 via {default_via} type ipv4-address",
+                    "nv set interface vlan1 ipv4 address 172.20.0.254/24",
                 ]
-        # L3 ports (customer-DC simulated subnets, e.g. external-dhcp:eth2).
-        # Emit as routed L3 with a static IPv4; `redistribute connected` in
-        # the BGP block below carries the prefix to cores' EXIT VRF via the
-        # existing eBGP ESL session.
+
+        # Routed L3 ports. `redistribute connected` in the BGP block below
+        # carries these prefixes to cores' EXIT VRF via the existing eBGP ESL
+        # sessions.
+        for port, addr, default_via in exit_egress_ports:
+            config_lines += [
+                f"nv set interface {port} type swp",
+                f"nv set interface {port} ipv4 address {addr}",
+                f"nv set interface {port} ipv4 dhcp-client state disabled",
+                f"nv set interface {port} ipv6 dhcp-client state disabled",
+                f"nv set vrf default router static 0.0.0.0/0 via {default_via} type ipv4-address",
+            ]
         for port, addr in l3_ports:
             config_lines += [
                 f"nv set interface {port} type swp",
@@ -464,7 +518,7 @@ def _inject_cust_net_edge_instructions(
                 # to the cores' EXIT VRF, which the existing OOB_FILTER then
                 # leaks into OOB VRF — giving .200.x clients a usable outbound
                 # default. The actual forwarding target is the Gap-A static
-                # route below (0/0 via 172.20.0.1).
+                # route below (0/0 via the edge's external-conn L3 leg).
                 "nv set vrf default router bgp peer-group external address-family ipv4-unicast default-route-origination state enabled",
             ]
             for port in bgp_ports:
@@ -491,6 +545,7 @@ def _inject_cust_net_edge_instructions(
             )
             console.print(
                 f"  {edge_name}: bridge={len(bridge_ports)} ports, "
+                f"L3={len(l3_ports) + len(exit_egress_ports)} ports, "
                 f"BGP={len(bgp_ports)} unnumbered peers, lo={lo_ip}/32 "
                 f"(deferred-apply NI)")
             configured += 1
@@ -526,7 +581,7 @@ def _inject_ext_storage_instructions(
 
     Each ext-storage gets:
       - eth0 static IP 172.20.0.{79+idx}/24 on cust-net-edge-01 bridge,
-        default route via 172.20.0.1 (external-conn NAT) for apt access
+        default route via 172.20.0.254 (cust-net-edge-01 SVI) for apt access
       - Loopback at 10.187.5.{idx+1}/32 (customer-side block, distinct
         from cluster's 172.16.176.0/21 supernet)
       - FRR (apt-installed) with BGP unnumbered on each eth* facing a
@@ -539,117 +594,33 @@ def _inject_ext_storage_instructions(
 
     Returns the number of ext-storage nodes configured.
     """
-    nodes = topology_json.get("content", {}).get("nodes", {})
-    targets = sorted(n for n in nodes if n.startswith("ext-storage-"))
+    # Discovery + FRR/netplan builders live in airlib.ext_storage_config so
+    # `make fix-ext-storage` reuses the exact same config (no drift).
+    targets = discover_ext_storage_targets(topology_json)
     if not targets:
         return 0
 
-    CUST_STORAGE_ASN = 4260000002
     configured = 0
-    for idx, node_name in enumerate(targets):
-        # Find which eth* interfaces face a CSL swp63* port (those become
-        # BGP-unnumbered peers). Anything else (eth0 outbound, or other
-        # Wire Map rows) we leave alone.
-        peer_ifaces: list[str] = []
-        for link in topology_json.get("content", {}).get("links", []):
-            if not (isinstance(link[0], dict) and isinstance(link[1], dict)):
-                continue
-            for i, ep in enumerate(link):
-                if (ep.get("node") != node_name
-                        or not ep.get("interface", "").startswith("eth")):
-                    continue
-                peer_node = link[1 - i].get("node", "")
-                peer_iface = link[1 - i].get("interface", "")
-                # Only peer toward CSLs on swp* (swp63s0/s1). Skip eth0
-                # outbound and any other Wire Map cabling.
-                if peer_node.startswith("csl-") and peer_iface.startswith("swp"):
-                    peer_ifaces.append(ep["interface"])
-        peer_ifaces = sorted(set(peer_ifaces))
+    for _t in targets:
+        node_name = _t["node_name"]
+        peer_ifaces = _t["peer_ifaces"]
+        lo_ip = _t["lo_ip"]
+        eth0_ip = _t["eth0_ip"]
         if not peer_ifaces:
             console.print(f"  [yellow]Warning:[/] {node_name} has no CSL-facing "
                           f"interfaces; skipping FRR config")
             continue
 
-        lo_ip = f"10.187.5.{idx + 1}"
-
-        # FRR config — BGP unnumbered eBGP with `extended-nexthop` for
-        # RFC 5549 IPv4-over-IPv6 next-hop resolution (what NVUE/FRR-on-
-        # Cumulus use for unnumbered). `no bgp ebgp-requires-policy`
-        # disables FRR 8.1+'s default outbound-policy gate so
-        # redistributed connected prefixes actually advertise.
-        frr_conf_lines = [
-            "frr version 8.4",
-            "frr defaults traditional",
-            f"hostname {node_name}",
-            "no ipv6 forwarding",
-            "!",
-            f"interface lo",
-            f" ip address {lo_ip}/32",
-            "!",
-            f"router bgp {CUST_STORAGE_ASN}",
-            f" bgp router-id {lo_ip}",
-            " no bgp default ipv4-unicast",
-            " no bgp ebgp-requires-policy",
-            " neighbor STORAGE peer-group",
-            " neighbor STORAGE remote-as external",
-            " neighbor STORAGE capability extended-nexthop",
-        ]
-        for iface in peer_ifaces:
-            frr_conf_lines.append(
-                f" neighbor {iface} interface peer-group STORAGE"
-            )
-        frr_conf_lines += [
-            " !",
-            " address-family ipv4 unicast",
-            f"  network {lo_ip}/32",
-            "  redistribute connected",
-            "  neighbor STORAGE activate",
-            " exit-address-family",
-            "!",
-            "line vty",
-            "!",
-        ]
-        frr_conf = "\n".join(frr_conf_lines) + "\n"
-        frr_conf_b64 = base64.b64encode(frr_conf.encode()).decode()
-
-        # /etc/frr/daemons — enable bgpd only.
-        daemons_lines = [
-            "bgpd=yes",
-            "ospfd=no", "ospf6d=no", "ripd=no", "ripngd=no", "isisd=no",
-            "pimd=no", "ldpd=no", "nhrpd=no", "eigrpd=no", "babeld=no",
-            "sharpd=no", "pbrd=no", "bfdd=no", "fabricd=no", "vrrpd=no",
-            "vtysh_enable=yes",
-            'zebra_options="  -A 127.0.0.1 -s 90000000"',
-            'bgpd_options="   -A 127.0.0.1"',
-        ]
-        daemons_b64 = base64.b64encode(
-            ("\n".join(daemons_lines) + "\n").encode()
+        # FRR config, daemons, and eth0 netplan all come from the shared
+        # builder (airlib.ext_storage_config) so this NI path and
+        # `make fix-ext-storage` can never diverge.
+        frr_conf_b64 = base64.b64encode(
+            build_frr_conf(node_name, lo_ip, peer_ifaces).encode()
         ).decode()
-
-        # Static IP on eth0 (the cust-net-edge-01 air-mgmt bridge leg).
-        # Same pattern as L3_TRIO_NETPLAN — Ubuntu/cloud-init only DHCPs
-        # the primary interface and only when netplan tells it to, so
-        # secondary interfaces in Air need static config injected at
-        # first boot. .79/.80 sit below the .100-.200 DHCP pool that
-        # external-dhcp's dnsmasq hands out on this same subnet, so no
-        # lease collision.
-        eth0_ip = f"172.20.0.{79 + idx}"
-        eth0_netplan = (
-            "network:\n"
-            "  version: 2\n"
-            "  renderer: networkd\n"
-            "  ethernets:\n"
-            "    eth0:\n"
-            f"      addresses: [{eth0_ip}/24]\n"
-            "      routes:\n"
-            "        - to: 0.0.0.0/0\n"
-            "          via: 172.20.0.1\n"
-            "      nameservers:\n"
-            "        addresses: [8.8.8.8, 8.8.4.4]\n"
-            "      dhcp4: false\n"
-            "      dhcp6: false\n"
-        )
-        eth0_netplan_b64 = base64.b64encode(eth0_netplan.encode()).decode()
+        daemons_b64 = base64.b64encode(build_daemons().encode()).decode()
+        eth0_netplan_b64 = base64.b64encode(
+            build_eth0_netplan(eth0_ip).encode()
+        ).decode()
 
         # NI #1: boot-time IP setup. wait_for_network=False so this runs
         # immediately at boot — there's no dependency on outside
@@ -669,7 +640,7 @@ def _inject_ext_storage_instructions(
             # Manual fallback if netplan-apply didn't take.
             "ip link set eth0 up || true",
             f"ip addr replace {eth0_ip}/24 dev eth0 || true",
-            "ip route replace default via 172.20.0.1 dev eth0 || true",
+            "ip route replace default via 172.20.0.254 dev eth0 || true",
         ]
 
         # NI #2: FRR install. wait_for_network=True with reachability_ip
@@ -755,12 +726,12 @@ def _inject_l3_trio_netplan_ni(
 
     Hard-coded IP plan for v1 (matches what setup-ztp-server.yml renders):
       - external-dhcp:eth1 = 172.20.0.77/24 (air-mgmt subnet, dnsmasq listens)
-      - external-conn:eth1 = 172.20.0.1/24  (default gateway for switch ZTP)
-        + route 192.168.200.0/24 via 172.20.0.254 (return path through
-          cust-net-edge-01 for NAT-untranslated replies). Without this,
-          MASQUERADE'd reply traffic from internet → compute servers
-          tries to egress eth0 (Air outbound) and gets dropped, so
-          slurm-01-style outbound ping times out silently.
+      - external-conn:eth1 = 172.20.1.1/24 (routed EXIT egress via edge-01)
+        + route 172.20.0.0/24 via 172.20.1.254 (return path to air-mgmt)
+        + route 192.168.200.0/24 via 172.20.1.254 (OOB return path)
+      - external-conn:eth2 = 172.20.2.1/24 (routed EXIT egress via edge-02)
+        + backup route 192.168.200.0/24 via 172.20.2.254. The NAT NI later
+        installs an ECMP route for OOB return traffic.
       - utility:eth1       = 192.168.200.78/24 (VLAN 200 / OOB VRF)
       - utility:eth2       = 172.20.0.78/24  (Air-mgmt bridge; reach to switch eth0s)
 
@@ -771,7 +742,7 @@ def _inject_l3_trio_netplan_ni(
     # for Air mgmt / jump-box reachability).
     L3_TRIO_NETPLAN: dict = {
         "external-dhcp": {
-            "eth1": {"addr": "172.20.0.77/24"},
+            "eth1": {"addr": f"172.20.0.{EXTERNAL_DHCP_OCTET}/24"},
             # eth2: customer-DC-side DHCP listener for EXIT-VRF inter-VRF
             # relay testing. Connected via cust-net-edge-01:swpN to the
             # cores' EXIT VRF underlay; cust-net-edge runs
@@ -797,27 +768,28 @@ def _inject_l3_trio_netplan_ni(
         },
         "external-conn": {
             "eth1": {
-                "addr": "172.20.0.1/24",
-                # Return route for NAT-untranslated replies destined for
-                # compute servers on the OOB plane. Without this,
-                # external-conn falls back to the default route via
-                # eth0 (Air outbound) and the reply silently dies.
+                "addr": "172.20.1.1/24",
+                # eth1 is the edge-01 EXIT egress leg. Management traffic
+                # returns only through edge-01 because edge-01 owns the
+                # 172.20.0.0/24 bridge SVI; OOB return traffic starts here
+                # and the NAT NI later replaces it with ECMP across both legs.
                 "routes": [
-                    {"to": "192.168.200.0/24", "via": "172.20.0.254"},
+                    {"to": "172.20.0.0/24", "via": "172.20.1.254"},
+                    {"to": "192.168.200.0/24", "via": "172.20.1.254", "metric": 100},
                 ],
             },
-            # HA second leg to cust-net-edge-02 on a parallel /24 so cores
-            # ECMP outbound to either edge resolves to a real NAT path.
+            # Second EXIT egress leg to cust-net-edge-02 on a separate /24 so
+            # cores ECMP outbound to either edge resolves to a real NAT path.
             "eth2": {
-                "addr": "172.20.1.1/24",
+                "addr": "172.20.2.1/24",
                 "routes": [
-                    {"to": "192.168.200.0/24", "via": "172.20.1.254"},
+                    {"to": "192.168.200.0/24", "via": "172.20.2.254", "metric": 200},
                 ],
             },
         },
         "utility": {
             "eth1": {
-                "addr": "192.168.200.78/24",
+                "addr": f"192.168.200.{UTILITY_OCTET}/24",
                 # PBR: utility's main default stays via eth0 (Air mgmt) so
                 # Air's SSH service / our jump-box access keep working.
                 # Source-policy rule diverts traffic from .200.78 into
@@ -826,7 +798,7 @@ def _inject_l3_trio_netplan_ni(
                 # MASQUERADE → internet.
                 "pbr_table": 200,
                 "pbr_table_default_via": "192.168.200.1",
-                "pbr_from": "192.168.200.78",
+                "pbr_from": f"192.168.200.{UTILITY_OCTET}",
             },
             # eth2: utility's direct foot on the Air-mgmt L2 bridge
             # (cust-net-edge-01). Required so Ansible plays from utility
@@ -834,7 +806,7 @@ def _inject_l3_trio_netplan_ni(
             # otherwise fails with "Connection Failed: N/N"). Static IP
             # avoids a DHCP-race against external-dhcp at first boot;
             # .78 mirrors utility's .200.78 mnemonic on the OOB plane.
-            "eth2": {"addr": "172.20.0.78/24"},
+            "eth2": {"addr": f"172.20.0.{UTILITY_OCTET}/24"},
         },
     }
     nodes = topology_json.get("content", {}).get("nodes", {})
@@ -868,6 +840,8 @@ def _inject_l3_trio_netplan_ni(
                     lines.append(f"          via: {route['via']}")
                     if "table" in route:
                         lines.append(f"          table: {route['table']}")
+                    if "metric" in route:
+                        lines.append(f"          metric: {route['metric']}")
             if "pbr_table" in spec:
                 lines += [
                     "      routing-policy:",
@@ -935,10 +909,14 @@ def _inject_external_conn_nat_ni(
         "  iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE",
         "mkdir -p /etc/iptables",
         "iptables-save > /etc/iptables/rules.v4 || true",
-        # Return route to OOB clients. After un-MASQUERADE the kernel does
-        # a fresh route lookup for the original .200.x dst; without this it
-        # falls back to the eth0 default and the packet is lost.
-        "ip route replace 192.168.200.0/24 via 172.20.0.254 dev eth1 || true",
+        # Return routes after un-MASQUERADE. Management subnet traffic must
+        # return through edge-01's SVI; OOB client traffic can return through
+        # either EXIT edge.
+        "ip route replace 172.20.0.0/24 via 172.20.1.254 dev eth1 || true",
+        "ip route replace 192.168.200.0/24 \\",
+        "  nexthop via 172.20.1.254 dev eth1 \\",
+        "  nexthop via 172.20.2.254 dev eth2 || \\",
+        "  ip route replace 192.168.200.0/24 via 172.20.1.254 dev eth1 || true",
     ]
     try:
         create_node_instruction(
@@ -983,20 +961,18 @@ def _inject_ubuntu_node_instructions(
         "systemctl disable --now systemd-networkd-wait-online.service || true",
     ]
 
-    configured = 0
-    for node_name in targets:
-        try:
-            create_node_instruction(
-                client, base_url, token, sim_id,
-                node_name=node_name,
-                commands=commands,
-                name=f"{node_name}-disable-unattended-upgrades",
-                wait_for_network=False,
-            )
-            configured += 1
-        except AirError:
-            pass  # best-effort
-    return configured
+    jobs = [
+        {
+            "node_name": node_name,
+            "commands": commands,
+            "name": f"{node_name}-disable-unattended-upgrades",
+            "wait_for_network": False,
+        }
+        for node_name in targets
+    ]
+    return _parallel_create_nis(
+        client, base_url, token, sim_id, jobs, best_effort=True,
+    )
 
 
 def _inject_server_ip_instructions(
@@ -1222,36 +1198,66 @@ def _render_server_netplan(node_name: str, dev: dict, common: dict) -> str:
             del cfg["network"]["bonds"]
         return yaml.dump(cfg, default_flow_style=False, sort_keys=False)
 
-    # Storage nodes — access VLAN 500 on switch, server sends untagged (IP on bond0)
+    # Storage nodes. The switch storage port is either:
+    #   - ACCESS/untagged on the storage VLAN (collapsed-core archs, e.g.
+    #     `access 500`) → the server must put the IP on the RAW bond and send
+    #     untagged frames; or
+    #   - a TAGGED trunk member (e.g. `vlan 400,500` native 300 on 2-4-5-800)
+    #     → the server must tag via bond.<vlan>.
+    # `common.storage_vlan_tagged` (set by the parser from the Storage role's
+    # actual VLAN membership) selects which. A mismatch drops frames at the
+    # switch port → gateway unreachable. Defaults to untagged when absent (the
+    # historically-safe collapsed-core behavior).
+    #
+    # Dual-bond same-subnet PBR (orthogonal to tagging): when 4 storage NICs
+    # split into two bonds in the same storage /24, each bond gets its own PBR
+    # /32 src rule + table so the kernel's connected-route ambiguity doesn't
+    # race bond0 vs bond1 ARP resolution.
     if node_name.startswith("storage"):
         data = [i for i in ifaces.get("storage", ifaces.get("cpu", [])) if i != "eth0"]
-        storage_network = common.get("storage_network", "")
         storage_gateway = common.get("storage_gateway", "")
         storage_vlan = int(common.get("storage_vlan", 500))
+        tagged = bool(common.get("storage_vlan_tagged", False))
         cfg = _init_cfg()
         if not data:
             return yaml.dump(cfg, default_flow_style=False, sort_keys=False)
         cfg["network"]["bonds"] = {}
+        cfg["network"]["vlans"] = {}
         for iface in data:
             cfg["network"]["ethernets"][iface] = {"dhcp4": False, "optional": True}
-        if len(data) >= 2 and dev.get("bond_ip1"):
-            cfg["network"]["bonds"]["bond0"] = {
-                "interfaces": [data[0], data[1]],
-                "addresses": [dev.get("bond_ip1")],
-                "nameservers": {"addresses": ["8.8.8.8", "8.8.4.4"]},
-                "routing-policy": [{"from": storage_network, "table": storage_vlan}],
-                "routes": [{"to": "0.0.0.0/0", "via": storage_gateway, "table": storage_vlan}],
-                "parameters": {"mode": "active-backup", "primary": data[0],
+
+        def _add_storage_bond(bond_name, members, ip, table):
+            cfg["network"]["bonds"][bond_name] = {
+                "interfaces": members,
+                "parameters": {"mode": "active-backup", "primary": members[0],
                                "mii-monitor-interval": 100},
             }
-        if len(data) >= 4 and dev.get("bond_ip2"):
-            cfg["network"]["bonds"]["bond1"] = {
-                "interfaces": [data[2], data[3]],
-                "addresses": [dev.get("bond_ip2")],
-                "nameservers": {"addresses": ["8.8.8.8", "8.8.4.4"]},
-                "parameters": {"mode": "active-backup", "primary": data[2],
-                               "mii-monitor-interval": 100},
-            }
+            src = ip.split("/")[0]
+            policy = [{"from": f"{src}/32", "table": table}]
+            routes = [{"to": "0.0.0.0/0", "via": storage_gateway, "table": table}]
+            ns = {"addresses": ["8.8.8.8", "8.8.4.4"]}
+            if tagged:
+                # Tag storage on a VLAN sub-interface of the bond.
+                cfg["network"]["vlans"][f"{bond_name}.{storage_vlan}"] = {
+                    "id": storage_vlan, "link": bond_name, "addresses": [ip],
+                    "nameservers": ns, "routing-policy": policy, "routes": routes,
+                }
+            else:
+                # Untagged access port: IP rides the raw bond.
+                cfg["network"]["bonds"][bond_name].update({
+                    "addresses": [ip], "nameservers": ns,
+                    "routing-policy": policy, "routes": routes,
+                })
+
+        bond_ip1 = dev.get("bond_ip1") or ""
+        bond_ip2 = dev.get("bond_ip2") or ""
+        if len(data) >= 2 and bond_ip1:
+            _add_storage_bond("bond0", [data[0], data[1]], bond_ip1, storage_vlan)
+        if len(data) >= 4 and bond_ip2:
+            # Distinct table id for bond1 so its default route doesn't collide.
+            _add_storage_bond("bond1", [data[2], data[3]], bond_ip2, storage_vlan + 1)
+        if not cfg["network"]["vlans"]:
+            del cfg["network"]["vlans"]
         if not cfg["network"]["bonds"]:
             del cfg["network"]["bonds"]
         return yaml.dump(cfg, default_flow_style=False, sort_keys=False)
@@ -1289,8 +1295,10 @@ def build_server_ni_commands(node_name: str, dev: dict, common: dict) -> list[st
 
     commands = [f"# Full server configuration for {node_name}"]
 
-    # Hostname
-    commands.append(f"hostnamectl set-hostname {node_name}")
+    # Hostname — quote the Excel-derived name so a hostname like `n;reboot` or
+    # `n$(id)` can't break out into arbitrary shell during first-boot
+    # provisioning (same class-of-bug fix as ztp.sh.j2 | quote and airlib/ssh.py).
+    commands.append(f"hostnamectl set-hostname {shlex.quote(node_name)}")
 
     # Netplan config — base64 to avoid heredoc/quoting issues in Air shell executor.
     # Air's image ships `/etc/netplan/40-air.yaml` and cloud-init drops
@@ -1307,35 +1315,42 @@ def build_server_ni_commands(node_name: str, dev: dict, common: dict) -> list[st
         commands.append("chmod 600 /etc/netplan/10-netcfg.yaml")
         commands.append("netplan apply || true")
 
-    # ARP-flux fix — compute hosts with multiple GPU NICs in the same
-    # subnet need strict ARP behavior so Linux doesn't respond on the
-    # "wrong" NIC. This is safe because the parser also emits per-NIC
-    # PBR tables in `gpu_interfaces[].table` — each NIC has its own
-    # routing table holding exactly one default route bound to that
-    # NIC, plus a `from <NIC's IP>/32 lookup <table>` source-policy
-    # rule. With per-NIC routing in place, `arp_filter=1` correctly
-    # restricts ARP responses to the owning interface (the route
-    # lookup for the request now returns a single, unambiguous
-    # interface).
+    # ARP-flux fix — hosts with multiple L3 interfaces in the SAME subnet need
+    # strict ARP so Linux doesn't answer/announce on the "wrong" NIC. Without
+    # it, EVPN MAC-mobility flaps the anycast VRR binding and the gateway
+    # blackholes replies. Two host classes hit this:
     #
-    # Without this combination, dual-plane gpu hosts (16 NICs spread
-    # across plane1 + plane2) suffer EVPN MAC-mobility flap on the
-    # anycast VRR (~85% loss on gpu-gw ping). Production deployments
-    # with BlueField-3 SuperNICs handle this in hardware; the sysctls
-    # are the Air-sim equivalent.
+    #  * Dual-plane GPU hosts (`gpu_interfaces`/`gpu_ips`): 16 NICs across
+    #    plane1+plane2 -> ~85% loss on gpu-gw ping. The parser also emits
+    #    per-NIC PBR tables (`gpu_interfaces[].table`) — a route table per NIC
+    #    with one default route + a `from <NIC-IP>/32 lookup <table>` rule — so
+    #    `arp_filter=1` is safe here: the route lookup for an ARP request now
+    #    resolves to a single unambiguous interface.
     #
-    # Gate on the same `gpu_interfaces`/`gpu_ips` device facts the PBR
-    # tables are tied to, so the sysctls and the per-NIC tables are
-    # always in lock-step.
-    if dev.get("gpu_interfaces") or dev.get("gpu_ips"):
-        commands.append("sysctl -w net.ipv4.conf.all.arp_ignore=1")
-        commands.append("sysctl -w net.ipv4.conf.all.arp_announce=2")
-        commands.append("sysctl -w net.ipv4.conf.all.arp_filter=1")
+    #  * Dual-bond storage hosts (`bond_ip1` + `bond_ip2`, both in the storage
+    #    subnet/VLAN): two bonds, one subnet -> intermittent 100% loss on
+    #    storage-gw (root-caused live on a 2-8-9-800 largescale sim — only the
+    #    storage nodes were missing these sysctls the GPU hosts already got).
+    #    Storage has NO per-NIC PBR, so `arp_filter=1` would be ambiguous;
+    #    `arp_ignore=1` + `arp_announce=2` (the canonical flux fix, matching
+    #    `roles/nodes/tasks/main.yml`) is sufficient and safe.
+    #
+    # Production BlueField-3 SuperNICs handle this in hardware; the sysctls are
+    # the Air-sim equivalent.
+    is_gpu_host = bool(dev.get("gpu_interfaces") or dev.get("gpu_ips"))
+    is_multi_bond_host = bool(dev.get("bond_ip1") and dev.get("bond_ip2"))
+    if is_gpu_host or is_multi_bond_host:
+        arp_sysctls = [
+            "net.ipv4.conf.all.arp_ignore=1",
+            "net.ipv4.conf.all.arp_announce=2",
+        ]
+        if is_gpu_host:  # arp_filter is only safe with the gpu per-NIC PBR tables
+            arp_sysctls.append("net.ipv4.conf.all.arp_filter=1")
+        for _s in arp_sysctls:
+            commands.append(f"sysctl -w {_s}")
         commands.append("cat > /etc/sysctl.d/90-arp-flux.conf <<'EOF'\n"
-                        "net.ipv4.conf.all.arp_ignore=1\n"
-                        "net.ipv4.conf.all.arp_announce=2\n"
-                        "net.ipv4.conf.all.arp_filter=1\n"
-                        "EOF")
+                        + "".join(f"{_s}\n" for _s in arp_sysctls)
+                        + "EOF")
 
     # LLDP
     commands.append("DEBIAN_FRONTEND=noninteractive apt-get update -qq")
@@ -1371,7 +1386,7 @@ def _inject_server_full_config(
 
     topo_nodes = set(topology_json.get("content", {}).get("nodes", {}).keys())
 
-    configured = 0
+    jobs = []
     for node_name, dev in sorted(devices.items()):
         if node_name not in topo_nodes:
             continue
@@ -1381,25 +1396,67 @@ def _inject_server_full_config(
         commands = build_server_ni_commands(node_name, dev, common)
         if not commands:
             continue
+        jobs.append({
+            "node_name": node_name,
+            "commands": commands,
+            "name": f"{node_name}-full-config",
+            "wait_for_network": False,
+        })
 
-        try:
-            create_node_instruction(
-                client, base_url, token, sim_id,
-                node_name=node_name,
-                commands=commands,
-                name=f"{node_name}-full-config",
-                wait_for_network=False,
-            )
-            configured += 1
-        except AirError as exc:
-            console.print(f"  [yellow]Warning:[/] {node_name}: {exc}")
-
-    return configured
+    return _parallel_create_nis(client, base_url, token, sim_id, jobs)
 
 
 # ---------------------------------------------------------------------------
 # No-ZTP switch configuration via Node Instructions
 # ---------------------------------------------------------------------------
+
+def _parallel_create_nis(
+    client: httpx.Client,
+    base_url: str,
+    token: str,
+    sim_id: str,
+    jobs: list[dict],
+    *,
+    max_workers: int = 12,
+    best_effort: bool = False,
+) -> int:
+    """POST many Node Instructions concurrently. Returns the count that succeeded.
+
+    ``jobs`` is a list of dicts forwarded as create_node_instruction kwargs
+    (node_name, commands, name, wait_for_network, reachability_ip). The node
+    name->id cache is warmed once up front so the threads don't race to fetch
+    it. httpx.Client is safe to share across threads. ``best_effort`` swallows
+    per-node errors (matches the old disable-unattended behavior); otherwise the
+    failing node name is logged.
+    """
+    if not jobs:
+        return 0
+    # Warm the per-sim node-id cache once (single fetch) before fanning out.
+    prefetch_node_ids(client, base_url, token, sim_id)
+
+    def _one(job: dict):
+        try:
+            create_node_instruction(
+                client, base_url, token, sim_id,
+                node_name=job["node_name"],
+                commands=job["commands"],
+                name=job.get("name", ""),
+                wait_for_network=job.get("wait_for_network", False),
+                reachability_ip=job.get("reachability_ip"),
+            )
+            return (job["node_name"], None)
+        except AirError as exc:
+            return (job["node_name"], exc)
+
+    ok = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for name, err in ex.map(_one, jobs):
+            if err is None:
+                ok += 1
+            elif not best_effort:
+                console.print(f"  [yellow]Warning:[/] {name}: {err}")
+    return ok
+
 
 def _inject_switch_config_via_ni(
     client: httpx.Client,
@@ -1454,7 +1511,9 @@ def _inject_switch_config_via_ni(
         if "=" in s:  # ansible_user=... etc.
             continue
         # Hosts in switch groups (skip child-group markers like 'core' under [switches:children])
-        if current_group in ("core", "csl", "gsl_plane1", "gsl_plane2", "oob", "edge"):
+        if current_group in ("core", "csl", "cs", "cl", "gsl_plane1", "gsl_plane2",
+                             "gl_plane1", "gl_plane2", "gs_plane1", "gs_plane2",
+                             "oob", "edge"):
             # Expand range syntax: oob-switch-[01:02] → oob-switch-01, oob-switch-02
             if "[" in s and ":" in s and "]" in s:
                 prefix, rng = s.split("[", 1)
@@ -1480,7 +1539,11 @@ def _inject_switch_config_via_ni(
             secrets = yaml.safe_load(f) or {}
         switch_password = secrets.get("switch_password", switch_password)
 
-    configured = 0
+    # Build the per-switch NI command lists (local file I/O — fast), then POST
+    # them all concurrently. Previously this looped serially and each
+    # create_node_instruction re-fetched every node, which dominated maxscale
+    # air-deploy time.
+    jobs = []
     for hostname in switches:
         config_file = configs_dir / f"{hostname}-config.sh"
         if not config_file.exists():
@@ -1498,20 +1561,14 @@ def _inject_switch_config_via_ni(
             host_ip = hv.get("ansible_host")
 
         commands = build_switch_ni_commands(hostname, config_text, host_ip, switch_password)
+        jobs.append({
+            "node_name": hostname,
+            "commands": commands,
+            "name": f"{hostname}-no-ztp-config",
+            "wait_for_network": False,
+        })
 
-        try:
-            create_node_instruction(
-                client, base_url, token, sim_id,
-                node_name=hostname,
-                commands=commands,
-                name=f"{hostname}-no-ztp-config",
-                wait_for_network=False,
-            )
-            configured += 1
-        except AirError as exc:
-            console.print(f"  [yellow]Warning:[/] {hostname}: {exc}")
-
-    return configured
+    return _parallel_create_nis(client, base_url, token, sim_id, jobs)
 
 
 def build_switch_ni_commands(
@@ -1558,23 +1615,46 @@ def build_switch_ni_commands(
 
     apply_script = (
         "#!/bin/bash\n"
-        "set -ex\n"
-        "# 1. Linux-level eth0 + password BEFORE NVUE apply (debug access).\n"
+        # NOTE: no top-level `set -e` — we manage failure via the retry loop so
+        # a single transient nvued error doesn't strand the switch.
+        "set -x\n"
+        "# 1. Linux-level eth0 for debug access during apply.\n"
         + eth0_linux_lines
-        # Disable xtrace around chpasswd so the plaintext password is not
-        # echoed to stderr (-> systemd journal) by 'set -x'. Errexit stays on.
+        + "# 2. Stage + apply NVUE config, RETRYING on transient nvued errors.\n"
+        "#    During a large concurrent first boot (e.g. 232-node maxscale) the\n"
+        "#    nvued REST daemon can return 'The server encountered an internal\n"
+        "#    error' mid-apply — especially on the multi-edge bridge hub with\n"
+        "#    its big bridge-domain config. A single failure used to leave\n"
+        "#    era-apply.service failed (set -e exited before disable), stranding\n"
+        "#    the switch (e.g. cust-net-edge-01: bridge SVI + EXIT eBGP never\n"
+        "#    came up). Retry until nvued settles.\n"
+        "ok=0\n"
+        "for attempt in 1 2 3 4 5 6; do\n"
+        "  if (\n"
+        "      set -e\n"
+        f"      . /opt/era/{hostname}-config.sh\n"
+        + static_eth0_lines
+        + "      nv config apply --assume-yes\n"
+        "      nv config save\n"
+        "  ); then ok=1; break; fi\n"
+        "  echo \"era-apply: attempt $attempt failed (nvued transient?); \"\\\n"
+        "       \"discarding pending + retrying in 20s\" >&2\n"
+        "  nv config detach 2>/dev/null || true\n"
+        "  sleep 20\n"
+        "done\n"
+        "if [ \"$ok\" != 1 ]; then\n"
+        "  echo 'era-apply: all attempts failed — leaving unit enabled for retry' >&2\n"
+        "  exit 1\n"
+        "fi\n"
+        # chpasswd AFTER a successful nv config apply to avoid the PAM
+        # reconcile_password_with_nvue.sh hook racing with nvued at boot.
+        # The hook calls `nv config apply` internally; if nvued is still
+        # initializing, the CLI hangs and blocks the entire apply.sh.
         + "set +x\n"
         + f"echo {shlex.quote('cumulus:' + switch_password)} | chpasswd\n"
         + "set -x\n"
-        "# 2. Stage NVUE config from the rendered file.\n"
-        f". /opt/era/{hostname}-config.sh\n"
-        + static_eth0_lines
-        + "# 3. Apply (the step that historically races ifreload-nvue, now\n"
-        "#    deferred via systemd to After=multi-user.target).\n"
-        "nv config apply --assume-yes\n"
-        "nv config save\n"
-        "# 4. First-boot only — don't run again on subsequent reboots\n"
-        "#    (the saved config in /etc/nvue.d/startup.yaml takes over).\n"
+        "# First-boot only — only disable after a SUCCESSFUL apply, so a failed\n"
+        "# run stays enabled and re-attempts on the next boot.\n"
         "systemctl disable era-apply.service\n"
     )
     apply_b64 = base64.b64encode(apply_script.encode()).decode()
@@ -1839,7 +1919,14 @@ def main() -> int:
                 for s in dupes:
                     owner_str = f"  owner: {s.owner}" if s.owner else ""
                     console.print(f"  [{s.state}] {s.id}{owner_str}")
-                response = input("  Create another with the same name? [y/N]: ").strip().lower()
+                try:
+                    response = input("  Create another with the same name? [y/N]: ").strip().lower()
+                except EOFError:
+                    # Non-interactive (CI / piped `make deploy` / nohup): don't
+                    # crash with a raw EOFError — cancel cleanly with guidance.
+                    console.print("  No TTY to confirm and a same-named sim exists — cancelled. "
+                                  "Destroy it first (make air-destroy) or deploy with a unique SITE.")
+                    return 0
                 if response != "y":
                     console.print("  Cancelled.")
                     return 0
@@ -1999,14 +2086,16 @@ def main() -> int:
                         console.print(f"  Clean up with: make air-destroy ARCH={arch}")
                         return 1
                 else:
-                    # L3 NOZTP: utility/external-conn/external-dhcp netplan setup
-                    # needs new parser-emitted inventory variables. Tracked as a
-                    # v2 follow-on in docs/plans/2026-05-20-l3-oob-air-topology.md.
+                    # L3 mode: the infra-node netplan was ALREADY injected
+                    # unconditionally above via _inject_l3_trio_netplan_ni
+                    # (first-boot NI brings up utility eth1/eth2, external-dhcp
+                    # eth1/eth2, external-conn eth1/eth2). Unlike L2 — where
+                    # dhcp-oob's netplan is only set up here in the NOZTP path —
+                    # L3 needs no extra NOZTP-specific step: validate-* can ssh
+                    # switch eth0s via utility:eth2 on the air-mgmt bridge.
                     console.print(
-                        "[bold yellow]L3 NOZTP:[/] skipping infra-node netplan NI "
-                        "(v2 follow-on). validate-* playbooks may fail until the "
-                        "operator manually configures eth1 on utility/external-* "
-                        "or reruns with ZTP."
+                        "  L3 infra-node netplan already injected via first-boot NI "
+                        "(utility/external-* eth1+) — no extra NOZTP step needed."
                     )
 
             # Server configuration: either full config (--server-config) or just eth0 IPs
@@ -2045,7 +2134,7 @@ def main() -> int:
             except AirError as exc:
                 console.print(f"[red]Error:[/] Failed to start: {exc}")
                 console.print(f"  Simulation ID: {sim_id}")
-                console.print(f"  Clean up with: make air-destroy ARCH={arch}")
+                cleanup_failed_sim(client, base_url, token, sim_id, arch)
                 return 1
 
             # Poll until loaded (with error detection)
@@ -2058,8 +2147,15 @@ def main() -> int:
             def error_cb(msg):
                 node_errors.append(msg)
 
+            # Boot time scales with node count (~5-6s/node on a busy Air host).
+            # The default 60-poll (600s) cap aborts large fabrics mid-boot — a
+            # healthy 219-node 2-8-9-800 SU32 takes ~14min to reach ACTIVE. Scale
+            # the wait to the topology size (interval=10s) with a 600s floor.
+            _node_count = len(topology_json.get("content", {}).get("nodes", {}))
+            _max_polls = max(60, (_node_count * 6) // 10)
             final_state = poll_until_loaded(
                 client, base_url, token, sim_id,
+                max_polls=_max_polls,
                 status_callback=status_cb,
                 error_callback=error_cb,
             )

@@ -1,0 +1,4 @@
+---
+# Host variables for su-26-node-02 (Generated from Excel)
+ansible_host: 192.168.200.167
+hostname: su-26-node-02

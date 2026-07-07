@@ -4,44 +4,6 @@
     "ztp": null,
     "content": {
         "nodes": {
-            "bcm-01": {
-                "cpu": 1,
-                "memory": 1024,
-                "storage": 20,
-                "positioning": {
-                    "x": 1925,
-                    "y": 1100
-                },
-                "os": "generic/ubuntu2204",
-                "features": {
-                    "uefi": false,
-                    "tpm": false
-                },
-                "pxehost": false,
-                "secureboot": false,
-                "oob": false,
-                "emulation_type": null,
-                "network_pci": {}
-            },
-            "bcm-02": {
-                "cpu": 1,
-                "memory": 1024,
-                "storage": 20,
-                "positioning": {
-                    "x": 1925,
-                    "y": 1375
-                },
-                "os": "generic/ubuntu2204",
-                "features": {
-                    "uefi": false,
-                    "tpm": false
-                },
-                "pxehost": false,
-                "secureboot": false,
-                "oob": false,
-                "emulation_type": null,
-                "network_pci": {}
-            },
             "csl-01": {
                 "cpu": 4,
                 "memory": 4096,
@@ -81,14 +43,14 @@
                 "network_pci": {}
             },
             "cust-net-edge-01": {
-                "cpu": 1,
-                "memory": 2048,
+                "cpu": 4,
+                "memory": 4096,
                 "storage": 20,
                 "positioning": {
                     "x": 1650,
                     "y": -275
                 },
-                "os": "cumulus-vx-5.15.1",
+                "os": "cumulus-vx-5.16.1",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -100,14 +62,14 @@
                 "network_pci": {}
             },
             "cust-net-edge-02": {
-                "cpu": 1,
-                "memory": 2048,
+                "cpu": 4,
+                "memory": 4096,
                 "storage": 20,
                 "positioning": {
                     "x": 2200,
                     "y": -275
                 },
-                "os": "cumulus-vx-5.15.1",
+                "os": "cumulus-vx-5.16.1",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -144,158 +106,6 @@
                 "positioning": {
                     "x": 3575,
                     "y": -275
-                },
-                "os": "generic/ubuntu2204",
-                "features": {
-                    "uefi": false,
-                    "tpm": false
-                },
-                "pxehost": false,
-                "secureboot": false,
-                "oob": false,
-                "emulation_type": null,
-                "network_pci": {}
-            },
-            "gpu-01": {
-                "cpu": 1,
-                "memory": 1024,
-                "storage": 20,
-                "positioning": {
-                    "x": 3850,
-                    "y": 275
-                },
-                "os": "generic/ubuntu2204",
-                "features": {
-                    "uefi": false,
-                    "tpm": false
-                },
-                "pxehost": false,
-                "secureboot": false,
-                "oob": false,
-                "emulation_type": null,
-                "network_pci": {}
-            },
-            "gpu-02": {
-                "cpu": 1,
-                "memory": 1024,
-                "storage": 20,
-                "positioning": {
-                    "x": 3850,
-                    "y": 550
-                },
-                "os": "generic/ubuntu2204",
-                "features": {
-                    "uefi": false,
-                    "tpm": false
-                },
-                "pxehost": false,
-                "secureboot": false,
-                "oob": false,
-                "emulation_type": null,
-                "network_pci": {}
-            },
-            "gpu-03": {
-                "cpu": 1,
-                "memory": 1024,
-                "storage": 20,
-                "positioning": {
-                    "x": 3850,
-                    "y": 825
-                },
-                "os": "generic/ubuntu2204",
-                "features": {
-                    "uefi": false,
-                    "tpm": false
-                },
-                "pxehost": false,
-                "secureboot": false,
-                "oob": false,
-                "emulation_type": null,
-                "network_pci": {}
-            },
-            "gpu-04": {
-                "cpu": 1,
-                "memory": 1024,
-                "storage": 20,
-                "positioning": {
-                    "x": 3850,
-                    "y": 1100
-                },
-                "os": "generic/ubuntu2204",
-                "features": {
-                    "uefi": false,
-                    "tpm": false
-                },
-                "pxehost": false,
-                "secureboot": false,
-                "oob": false,
-                "emulation_type": null,
-                "network_pci": {}
-            },
-            "gpu-05": {
-                "cpu": 1,
-                "memory": 1024,
-                "storage": 20,
-                "positioning": {
-                    "x": 3850,
-                    "y": 1375
-                },
-                "os": "generic/ubuntu2204",
-                "features": {
-                    "uefi": false,
-                    "tpm": false
-                },
-                "pxehost": false,
-                "secureboot": false,
-                "oob": false,
-                "emulation_type": null,
-                "network_pci": {}
-            },
-            "gpu-06": {
-                "cpu": 1,
-                "memory": 1024,
-                "storage": 20,
-                "positioning": {
-                    "x": 3850,
-                    "y": 1650
-                },
-                "os": "generic/ubuntu2204",
-                "features": {
-                    "uefi": false,
-                    "tpm": false
-                },
-                "pxehost": false,
-                "secureboot": false,
-                "oob": false,
-                "emulation_type": null,
-                "network_pci": {}
-            },
-            "gpu-07": {
-                "cpu": 1,
-                "memory": 1024,
-                "storage": 20,
-                "positioning": {
-                    "x": 3850,
-                    "y": 1925
-                },
-                "os": "generic/ubuntu2204",
-                "features": {
-                    "uefi": false,
-                    "tpm": false
-                },
-                "pxehost": false,
-                "secureboot": false,
-                "oob": false,
-                "emulation_type": null,
-                "network_pci": {}
-            },
-            "gpu-08": {
-                "cpu": 1,
-                "memory": 1024,
-                "storage": 20,
-                "positioning": {
-                    "x": 3850,
-                    "y": 2200
                 },
                 "os": "generic/ubuntu2204",
                 "features": {
@@ -384,63 +194,6 @@
                 "emulation_type": null,
                 "network_pci": {}
             },
-            "k8s-01": {
-                "cpu": 1,
-                "memory": 1024,
-                "storage": 20,
-                "positioning": {
-                    "x": 1925,
-                    "y": 275
-                },
-                "os": "generic/ubuntu2204",
-                "features": {
-                    "uefi": false,
-                    "tpm": false
-                },
-                "pxehost": false,
-                "secureboot": false,
-                "oob": false,
-                "emulation_type": null,
-                "network_pci": {}
-            },
-            "k8s-02": {
-                "cpu": 1,
-                "memory": 1024,
-                "storage": 20,
-                "positioning": {
-                    "x": 1925,
-                    "y": 550
-                },
-                "os": "generic/ubuntu2204",
-                "features": {
-                    "uefi": false,
-                    "tpm": false
-                },
-                "pxehost": false,
-                "secureboot": false,
-                "oob": false,
-                "emulation_type": null,
-                "network_pci": {}
-            },
-            "k8s-03": {
-                "cpu": 1,
-                "memory": 1024,
-                "storage": 20,
-                "positioning": {
-                    "x": 1925,
-                    "y": 825
-                },
-                "os": "generic/ubuntu2204",
-                "features": {
-                    "uefi": false,
-                    "tpm": false
-                },
-                "pxehost": false,
-                "secureboot": false,
-                "oob": false,
-                "emulation_type": null,
-                "network_pci": {}
-            },
             "oob-switch-01": {
                 "cpu": 1,
                 "memory": 2048,
@@ -479,7 +232,254 @@
                 "emulation_type": null,
                 "network_pci": {}
             },
-            "slurm-01": {
+            "su-01-node-01": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3300,
+                    "y": 275
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-01-node-02": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3300,
+                    "y": 550
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-01-node-03": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3300,
+                    "y": 825
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-01-node-04": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3300,
+                    "y": 1100
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-02-node-01": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3575,
+                    "y": 275
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-02-node-02": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3575,
+                    "y": 550
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-02-node-03": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3575,
+                    "y": 825
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-02-node-04": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3575,
+                    "y": 1100
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "support-01": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1925,
+                    "y": 275
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "support-02": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1925,
+                    "y": 550
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "support-03": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1925,
+                    "y": 825
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "support-04": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1925,
+                    "y": 1100
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "support-05": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1925,
+                    "y": 1375
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "support-06": {
                 "cpu": 1,
                 "memory": 1024,
                 "storage": 20,
@@ -498,7 +498,7 @@
                 "emulation_type": null,
                 "network_pci": {}
             },
-            "slurm-02": {
+            "support-07": {
                 "cpu": 1,
                 "memory": 1024,
                 "storage": 20,
@@ -579,8 +579,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:0c:3a:2c",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:d7:da:39",
                     "network_pci": null
                 },
                 {
@@ -593,8 +593,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:74:6d:fe",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:23:5d:c2",
                     "network_pci": null
                 },
                 {
@@ -607,8 +607,8 @@
             [
                 {
                     "interface": "eth3",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:48:1c:64",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:39:80:66",
                     "network_pci": null
                 },
                 {
@@ -621,8 +621,8 @@
             [
                 {
                     "interface": "eth4",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:60:3a:b3",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:2a:1e:be",
                     "network_pci": null
                 },
                 {
@@ -635,8 +635,8 @@
             [
                 {
                     "interface": "eth5",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:37:62:ba",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:10:3e:e2",
                     "network_pci": null
                 },
                 {
@@ -649,8 +649,8 @@
             [
                 {
                     "interface": "eth6",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:68:2f:e4",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:32:df:de",
                     "network_pci": null
                 },
                 {
@@ -663,8 +663,8 @@
             [
                 {
                     "interface": "eth7",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:17:17:12",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:dd:2d:55",
                     "network_pci": null
                 },
                 {
@@ -677,8 +677,8 @@
             [
                 {
                     "interface": "eth8",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:c6:2d:1a",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:99:c7:16",
                     "network_pci": null
                 },
                 {
@@ -691,8 +691,8 @@
             [
                 {
                     "interface": "eth9",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:0d:04:fd",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:08:bf:04",
                     "network_pci": null
                 },
                 {
@@ -705,8 +705,8 @@
             [
                 {
                     "interface": "eth10",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:b3:dd:3e",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:ed:a1:b8",
                     "network_pci": null
                 },
                 {
@@ -719,8 +719,8 @@
             [
                 {
                     "interface": "eth11",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:3a:d0:b7",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:34:a8:84",
                     "network_pci": null
                 },
                 {
@@ -733,8 +733,8 @@
             [
                 {
                     "interface": "eth12",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:7b:48:f8",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:f3:fd:96",
                     "network_pci": null
                 },
                 {
@@ -747,8 +747,8 @@
             [
                 {
                     "interface": "eth13",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:03:50:02",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:ce:11:9c",
                     "network_pci": null
                 },
                 {
@@ -761,8 +761,8 @@
             [
                 {
                     "interface": "eth14",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:4b:a3:a8",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:10:fa:1a",
                     "network_pci": null
                 },
                 {
@@ -775,8 +775,8 @@
             [
                 {
                     "interface": "eth15",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:05:4e:54",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:af:8d:3f",
                     "network_pci": null
                 },
                 {
@@ -789,8 +789,8 @@
             [
                 {
                     "interface": "eth16",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:e1:2b:7c",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:9e:de:6a",
                     "network_pci": null
                 },
                 {
@@ -803,8 +803,8 @@
             [
                 {
                     "interface": "eth17",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:c3:a5:52",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:56:14:19",
                     "network_pci": null
                 },
                 {
@@ -817,8 +817,8 @@
             [
                 {
                     "interface": "eth18",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:85:37:2e",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:55:0b:8b",
                     "network_pci": null
                 },
                 {
@@ -831,8 +831,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:5a:04:f9",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:90:10:b7",
                     "network_pci": null
                 },
                 {
@@ -845,8 +845,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:11:41:3c",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:0b:2c:49",
                     "network_pci": null
                 },
                 {
@@ -859,8 +859,8 @@
             [
                 {
                     "interface": "eth3",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:0a:96:aa",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:25:e5:40",
                     "network_pci": null
                 },
                 {
@@ -873,8 +873,8 @@
             [
                 {
                     "interface": "eth4",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:ff:65:e0",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:54:b6:58",
                     "network_pci": null
                 },
                 {
@@ -887,8 +887,8 @@
             [
                 {
                     "interface": "eth5",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:21:b9:c3",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:4f:3f:64",
                     "network_pci": null
                 },
                 {
@@ -901,8 +901,8 @@
             [
                 {
                     "interface": "eth6",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:e7:66:9c",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:49:6a:18",
                     "network_pci": null
                 },
                 {
@@ -915,8 +915,8 @@
             [
                 {
                     "interface": "eth7",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:0d:84:a1",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:3c:86:4a",
                     "network_pci": null
                 },
                 {
@@ -929,8 +929,8 @@
             [
                 {
                     "interface": "eth8",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:1c:44:4e",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:e9:ac:86",
                     "network_pci": null
                 },
                 {
@@ -943,8 +943,8 @@
             [
                 {
                     "interface": "eth9",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:7f:52:53",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:4b:da:73",
                     "network_pci": null
                 },
                 {
@@ -957,8 +957,8 @@
             [
                 {
                     "interface": "eth10",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:b7:10:4d",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:8c:0c:fb",
                     "network_pci": null
                 },
                 {
@@ -971,8 +971,8 @@
             [
                 {
                     "interface": "eth11",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:49:3c:9c",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:0a:de:80",
                     "network_pci": null
                 },
                 {
@@ -985,8 +985,8 @@
             [
                 {
                     "interface": "eth12",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:5b:d5:7c",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:92:9c:a9",
                     "network_pci": null
                 },
                 {
@@ -999,8 +999,8 @@
             [
                 {
                     "interface": "eth13",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:1e:87:1b",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:c2:d1:16",
                     "network_pci": null
                 },
                 {
@@ -1013,8 +1013,8 @@
             [
                 {
                     "interface": "eth14",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:ac:87:a3",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:4c:6f:e7",
                     "network_pci": null
                 },
                 {
@@ -1027,8 +1027,8 @@
             [
                 {
                     "interface": "eth15",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:a6:96:f6",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:85:98:ff",
                     "network_pci": null
                 },
                 {
@@ -1041,8 +1041,8 @@
             [
                 {
                     "interface": "eth16",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:16:40:70",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:92:ab:6f",
                     "network_pci": null
                 },
                 {
@@ -1055,8 +1055,8 @@
             [
                 {
                     "interface": "eth17",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:2b:be:87",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:7c:2a:87",
                     "network_pci": null
                 },
                 {
@@ -1069,8 +1069,8 @@
             [
                 {
                     "interface": "eth18",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:6d:57:c8",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:e5:0a:74",
                     "network_pci": null
                 },
                 {
@@ -1083,8 +1083,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:3a:f7:a5",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:c8:84:57",
                     "network_pci": null
                 },
                 {
@@ -1097,8 +1097,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:91:4e:9e",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:5a:91:e9",
                     "network_pci": null
                 },
                 {
@@ -1111,8 +1111,8 @@
             [
                 {
                     "interface": "eth3",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:e9:71:80",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:9f:7d:c4",
                     "network_pci": null
                 },
                 {
@@ -1125,8 +1125,8 @@
             [
                 {
                     "interface": "eth4",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:c0:f8:a9",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:75:45:39",
                     "network_pci": null
                 },
                 {
@@ -1139,8 +1139,8 @@
             [
                 {
                     "interface": "eth5",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:d1:44:c9",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:84:02:c4",
                     "network_pci": null
                 },
                 {
@@ -1153,8 +1153,8 @@
             [
                 {
                     "interface": "eth6",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:03:0c:d1",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:1e:e0:e5",
                     "network_pci": null
                 },
                 {
@@ -1167,8 +1167,8 @@
             [
                 {
                     "interface": "eth7",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:6f:f9:0f",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:69:c3:5a",
                     "network_pci": null
                 },
                 {
@@ -1181,8 +1181,8 @@
             [
                 {
                     "interface": "eth8",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:a4:36:69",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:ba:0a:2e",
                     "network_pci": null
                 },
                 {
@@ -1195,8 +1195,8 @@
             [
                 {
                     "interface": "eth9",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:8e:02:ba",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:90:3e:1c",
                     "network_pci": null
                 },
                 {
@@ -1209,8 +1209,8 @@
             [
                 {
                     "interface": "eth10",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:ca:bd:88",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:84:01:15",
                     "network_pci": null
                 },
                 {
@@ -1223,8 +1223,8 @@
             [
                 {
                     "interface": "eth11",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:5b:ff:d6",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:1f:3a:45",
                     "network_pci": null
                 },
                 {
@@ -1237,8 +1237,8 @@
             [
                 {
                     "interface": "eth12",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:9a:00:9b",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:07:d6:71",
                     "network_pci": null
                 },
                 {
@@ -1251,8 +1251,8 @@
             [
                 {
                     "interface": "eth13",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:a0:68:df",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:bc:80:55",
                     "network_pci": null
                 },
                 {
@@ -1265,8 +1265,8 @@
             [
                 {
                     "interface": "eth14",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:84:53:10",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:80:6b:f4",
                     "network_pci": null
                 },
                 {
@@ -1279,8 +1279,8 @@
             [
                 {
                     "interface": "eth15",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:d0:c3:f2",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:10:57:48",
                     "network_pci": null
                 },
                 {
@@ -1293,8 +1293,8 @@
             [
                 {
                     "interface": "eth16",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:38:d7:ae",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:f2:40:0b",
                     "network_pci": null
                 },
                 {
@@ -1307,8 +1307,8 @@
             [
                 {
                     "interface": "eth17",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:e6:ec:64",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:b4:a7:cf",
                     "network_pci": null
                 },
                 {
@@ -1321,8 +1321,8 @@
             [
                 {
                     "interface": "eth18",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:96:8f:7e",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:96:b1:a4",
                     "network_pci": null
                 },
                 {
@@ -1335,8 +1335,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:e9:d1:e5",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:5e:e7:37",
                     "network_pci": null
                 },
                 {
@@ -1349,8 +1349,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:10:f4:fc",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:ee:ee:1c",
                     "network_pci": null
                 },
                 {
@@ -1363,8 +1363,8 @@
             [
                 {
                     "interface": "eth3",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:4e:64:9d",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:fc:2c:90",
                     "network_pci": null
                 },
                 {
@@ -1377,8 +1377,8 @@
             [
                 {
                     "interface": "eth4",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:9f:38:1a",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:8d:b5:21",
                     "network_pci": null
                 },
                 {
@@ -1391,8 +1391,8 @@
             [
                 {
                     "interface": "eth5",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:8e:f4:85",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:d3:a8:92",
                     "network_pci": null
                 },
                 {
@@ -1405,8 +1405,8 @@
             [
                 {
                     "interface": "eth6",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:40:1a:1c",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:f5:b0:9f",
                     "network_pci": null
                 },
                 {
@@ -1419,8 +1419,8 @@
             [
                 {
                     "interface": "eth7",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:c4:bd:da",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:65:82:91",
                     "network_pci": null
                 },
                 {
@@ -1433,8 +1433,8 @@
             [
                 {
                     "interface": "eth8",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:3d:f6:fd",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:2d:b2:ae",
                     "network_pci": null
                 },
                 {
@@ -1447,8 +1447,8 @@
             [
                 {
                     "interface": "eth9",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:ee:5a:6f",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:5f:f2:b6",
                     "network_pci": null
                 },
                 {
@@ -1461,8 +1461,8 @@
             [
                 {
                     "interface": "eth10",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:e5:14:1f",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:4c:b5:42",
                     "network_pci": null
                 },
                 {
@@ -1475,8 +1475,8 @@
             [
                 {
                     "interface": "eth11",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:42:d9:6e",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:88:5e:8f",
                     "network_pci": null
                 },
                 {
@@ -1489,8 +1489,8 @@
             [
                 {
                     "interface": "eth12",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:64:84:52",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:f9:00:ea",
                     "network_pci": null
                 },
                 {
@@ -1503,8 +1503,8 @@
             [
                 {
                     "interface": "eth13",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:98:dc:83",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:af:90:32",
                     "network_pci": null
                 },
                 {
@@ -1517,8 +1517,8 @@
             [
                 {
                     "interface": "eth14",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:df:78:5a",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:75:1f:73",
                     "network_pci": null
                 },
                 {
@@ -1531,8 +1531,8 @@
             [
                 {
                     "interface": "eth15",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:f7:9e:0c",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:44:48:31",
                     "network_pci": null
                 },
                 {
@@ -1545,8 +1545,8 @@
             [
                 {
                     "interface": "eth16",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:e6:fd:47",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:d6:bb:8e",
                     "network_pci": null
                 },
                 {
@@ -1559,8 +1559,8 @@
             [
                 {
                     "interface": "eth17",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:88:97:09",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:e1:b7:6c",
                     "network_pci": null
                 },
                 {
@@ -1573,8 +1573,8 @@
             [
                 {
                     "interface": "eth18",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:9c:f1:61",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:3e:65:73",
                     "network_pci": null
                 },
                 {
@@ -1587,8 +1587,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:b5:dd:69",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:b8:ed:8d",
                     "network_pci": null
                 },
                 {
@@ -1601,8 +1601,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:15:69:52",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:0d:d2:18",
                     "network_pci": null
                 },
                 {
@@ -1615,8 +1615,8 @@
             [
                 {
                     "interface": "eth3",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:dc:e6:27",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:b6:ec:c1",
                     "network_pci": null
                 },
                 {
@@ -1629,8 +1629,8 @@
             [
                 {
                     "interface": "eth4",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:cc:bf:07",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:70:5d:09",
                     "network_pci": null
                 },
                 {
@@ -1643,8 +1643,8 @@
             [
                 {
                     "interface": "eth5",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:bc:0c:54",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:92:ec:a4",
                     "network_pci": null
                 },
                 {
@@ -1657,8 +1657,8 @@
             [
                 {
                     "interface": "eth6",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:06:72:e1",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:bd:04:b8",
                     "network_pci": null
                 },
                 {
@@ -1671,8 +1671,8 @@
             [
                 {
                     "interface": "eth7",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:f2:26:4b",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:ee:2d:c1",
                     "network_pci": null
                 },
                 {
@@ -1685,8 +1685,8 @@
             [
                 {
                     "interface": "eth8",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:94:63:33",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:f1:a8:4b",
                     "network_pci": null
                 },
                 {
@@ -1699,8 +1699,8 @@
             [
                 {
                     "interface": "eth9",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:de:b7:77",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:85:0d:c0",
                     "network_pci": null
                 },
                 {
@@ -1713,8 +1713,8 @@
             [
                 {
                     "interface": "eth10",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:17:fe:eb",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:b7:4d:14",
                     "network_pci": null
                 },
                 {
@@ -1727,8 +1727,8 @@
             [
                 {
                     "interface": "eth11",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:46:56:b8",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:96:72:3f",
                     "network_pci": null
                 },
                 {
@@ -1741,8 +1741,8 @@
             [
                 {
                     "interface": "eth12",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:cb:e7:0a",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:16:b9:d7",
                     "network_pci": null
                 },
                 {
@@ -1755,8 +1755,8 @@
             [
                 {
                     "interface": "eth13",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:1d:cf:bc",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:e8:8f:59",
                     "network_pci": null
                 },
                 {
@@ -1769,8 +1769,8 @@
             [
                 {
                     "interface": "eth14",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:c3:a0:52",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:a0:9d:65",
                     "network_pci": null
                 },
                 {
@@ -1783,8 +1783,8 @@
             [
                 {
                     "interface": "eth15",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:a3:3a:b9",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:ad:eb:28",
                     "network_pci": null
                 },
                 {
@@ -1797,8 +1797,8 @@
             [
                 {
                     "interface": "eth16",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:be:df:41",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:cb:95:c5",
                     "network_pci": null
                 },
                 {
@@ -1811,8 +1811,8 @@
             [
                 {
                     "interface": "eth17",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:eb:57:fe",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:76:c4:bc",
                     "network_pci": null
                 },
                 {
@@ -1825,8 +1825,8 @@
             [
                 {
                     "interface": "eth18",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:9f:41:d9",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:90:b8:0d",
                     "network_pci": null
                 },
                 {
@@ -1839,8 +1839,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:06:74:51",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:13:2a:dc",
                     "network_pci": null
                 },
                 {
@@ -1853,8 +1853,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:55:ee:ff",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:c8:2e:9e",
                     "network_pci": null
                 },
                 {
@@ -1867,8 +1867,8 @@
             [
                 {
                     "interface": "eth3",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:bf:5a:bf",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:e5:79:f0",
                     "network_pci": null
                 },
                 {
@@ -1881,8 +1881,8 @@
             [
                 {
                     "interface": "eth4",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:f9:3e:cd",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:4c:cd:fb",
                     "network_pci": null
                 },
                 {
@@ -1895,8 +1895,8 @@
             [
                 {
                     "interface": "eth5",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:71:e1:9c",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:d7:d2:24",
                     "network_pci": null
                 },
                 {
@@ -1909,8 +1909,8 @@
             [
                 {
                     "interface": "eth6",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:fb:bd:cf",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:f4:0a:74",
                     "network_pci": null
                 },
                 {
@@ -1923,8 +1923,8 @@
             [
                 {
                     "interface": "eth7",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:1f:30:fe",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:d4:49:63",
                     "network_pci": null
                 },
                 {
@@ -1937,8 +1937,8 @@
             [
                 {
                     "interface": "eth8",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:ec:de:85",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:9b:f6:7d",
                     "network_pci": null
                 },
                 {
@@ -1951,8 +1951,8 @@
             [
                 {
                     "interface": "eth9",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:e2:3e:29",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:90:26:40",
                     "network_pci": null
                 },
                 {
@@ -1965,8 +1965,8 @@
             [
                 {
                     "interface": "eth10",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:d1:1b:24",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:89:61:a1",
                     "network_pci": null
                 },
                 {
@@ -1979,8 +1979,8 @@
             [
                 {
                     "interface": "eth11",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:4f:8a:b5",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:de:77:7f",
                     "network_pci": null
                 },
                 {
@@ -1993,8 +1993,8 @@
             [
                 {
                     "interface": "eth12",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:c7:7e:03",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:63:06:d3",
                     "network_pci": null
                 },
                 {
@@ -2007,8 +2007,8 @@
             [
                 {
                     "interface": "eth13",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:fb:25:93",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:6e:a4:9a",
                     "network_pci": null
                 },
                 {
@@ -2021,8 +2021,8 @@
             [
                 {
                     "interface": "eth14",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:9a:21:e7",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:3d:a8:63",
                     "network_pci": null
                 },
                 {
@@ -2035,8 +2035,8 @@
             [
                 {
                     "interface": "eth15",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:d9:46:ec",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:ef:c9:66",
                     "network_pci": null
                 },
                 {
@@ -2049,8 +2049,8 @@
             [
                 {
                     "interface": "eth16",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:e9:37:7c",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:84:48:d0",
                     "network_pci": null
                 },
                 {
@@ -2063,8 +2063,8 @@
             [
                 {
                     "interface": "eth17",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:09:e5:74",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:92:31:c0",
                     "network_pci": null
                 },
                 {
@@ -2077,8 +2077,8 @@
             [
                 {
                     "interface": "eth18",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:81:0d:46",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:d1:bf:24",
                     "network_pci": null
                 },
                 {
@@ -2091,8 +2091,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:55:82:21",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:6e:fc:7a",
                     "network_pci": null
                 },
                 {
@@ -2105,8 +2105,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:9e:90:a8",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:0a:e4:5d",
                     "network_pci": null
                 },
                 {
@@ -2119,8 +2119,8 @@
             [
                 {
                     "interface": "eth3",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:cd:9d:a7",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:c9:f0:e3",
                     "network_pci": null
                 },
                 {
@@ -2133,8 +2133,8 @@
             [
                 {
                     "interface": "eth4",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:3d:55:e7",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:80:86:bf",
                     "network_pci": null
                 },
                 {
@@ -2147,8 +2147,8 @@
             [
                 {
                     "interface": "eth5",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:2f:7e:c8",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:4a:57:d1",
                     "network_pci": null
                 },
                 {
@@ -2161,8 +2161,8 @@
             [
                 {
                     "interface": "eth6",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:de:76:bb",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:2a:80:60",
                     "network_pci": null
                 },
                 {
@@ -2175,8 +2175,8 @@
             [
                 {
                     "interface": "eth7",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:91:71:34",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:ee:50:a8",
                     "network_pci": null
                 },
                 {
@@ -2189,8 +2189,8 @@
             [
                 {
                     "interface": "eth8",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:0e:9a:ed",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:f4:7f:96",
                     "network_pci": null
                 },
                 {
@@ -2203,8 +2203,8 @@
             [
                 {
                     "interface": "eth9",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:52:e1:41",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:06:57:97",
                     "network_pci": null
                 },
                 {
@@ -2217,8 +2217,8 @@
             [
                 {
                     "interface": "eth10",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:ca:57:d3",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:52:28:52",
                     "network_pci": null
                 },
                 {
@@ -2231,8 +2231,8 @@
             [
                 {
                     "interface": "eth11",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:cb:0b:f1",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:4c:f5:f0",
                     "network_pci": null
                 },
                 {
@@ -2245,8 +2245,8 @@
             [
                 {
                     "interface": "eth12",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:55:21:d1",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:1d:cc:fc",
                     "network_pci": null
                 },
                 {
@@ -2259,8 +2259,8 @@
             [
                 {
                     "interface": "eth13",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:fe:95:2e",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:3f:43:26",
                     "network_pci": null
                 },
                 {
@@ -2273,8 +2273,8 @@
             [
                 {
                     "interface": "eth14",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:b5:d9:7e",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:06:b6:ac",
                     "network_pci": null
                 },
                 {
@@ -2287,8 +2287,8 @@
             [
                 {
                     "interface": "eth15",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:4f:4b:2b",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:5e:8f:19",
                     "network_pci": null
                 },
                 {
@@ -2301,8 +2301,8 @@
             [
                 {
                     "interface": "eth16",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:80:f3:c5",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:ff:8d:48",
                     "network_pci": null
                 },
                 {
@@ -2315,8 +2315,8 @@
             [
                 {
                     "interface": "eth17",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:d6:67:0c",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:f5:97:1b",
                     "network_pci": null
                 },
                 {
@@ -2329,8 +2329,8 @@
             [
                 {
                     "interface": "eth18",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:f5:a0:a8",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:48:c5:43",
                     "network_pci": null
                 },
                 {
@@ -2343,8 +2343,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:16:c9:8a",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:d9:1d:b1",
                     "network_pci": null
                 },
                 {
@@ -2357,8 +2357,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:5d:65:0d",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:39:84:4e",
                     "network_pci": null
                 },
                 {
@@ -2371,8 +2371,8 @@
             [
                 {
                     "interface": "eth3",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:35:ef:9f",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:08:c9:a7",
                     "network_pci": null
                 },
                 {
@@ -2385,8 +2385,8 @@
             [
                 {
                     "interface": "eth4",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:ce:e9:3f",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:9b:cf:17",
                     "network_pci": null
                 },
                 {
@@ -2399,8 +2399,8 @@
             [
                 {
                     "interface": "eth5",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:4d:b7:c4",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:22:1f:82",
                     "network_pci": null
                 },
                 {
@@ -2413,8 +2413,8 @@
             [
                 {
                     "interface": "eth6",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:bd:9a:82",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:bf:66:4e",
                     "network_pci": null
                 },
                 {
@@ -2427,8 +2427,8 @@
             [
                 {
                     "interface": "eth7",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:c6:fc:83",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:86:67:71",
                     "network_pci": null
                 },
                 {
@@ -2441,8 +2441,8 @@
             [
                 {
                     "interface": "eth8",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:0a:34:01",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:e7:1a:88",
                     "network_pci": null
                 },
                 {
@@ -2455,8 +2455,8 @@
             [
                 {
                     "interface": "eth9",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:d5:dc:f6",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:a8:a3:06",
                     "network_pci": null
                 },
                 {
@@ -2469,8 +2469,8 @@
             [
                 {
                     "interface": "eth10",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:16:59:f3",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:d2:96:4c",
                     "network_pci": null
                 },
                 {
@@ -2483,8 +2483,8 @@
             [
                 {
                     "interface": "eth11",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:de:f9:ce",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:2b:03:c9",
                     "network_pci": null
                 },
                 {
@@ -2497,8 +2497,8 @@
             [
                 {
                     "interface": "eth12",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:97:2f:2f",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:46:1f:23",
                     "network_pci": null
                 },
                 {
@@ -2511,8 +2511,8 @@
             [
                 {
                     "interface": "eth13",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:88:f1:08",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:75:62:a9",
                     "network_pci": null
                 },
                 {
@@ -2525,8 +2525,8 @@
             [
                 {
                     "interface": "eth14",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:29:98:f5",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:6e:7c:77",
                     "network_pci": null
                 },
                 {
@@ -2539,8 +2539,8 @@
             [
                 {
                     "interface": "eth15",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:23:b3:57",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:aa:b5:05",
                     "network_pci": null
                 },
                 {
@@ -2553,8 +2553,8 @@
             [
                 {
                     "interface": "eth16",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:7c:0a:fe",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:fb:91:f3",
                     "network_pci": null
                 },
                 {
@@ -2567,8 +2567,8 @@
             [
                 {
                     "interface": "eth17",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:3f:bc:31",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:64:eb:6a",
                     "network_pci": null
                 },
                 {
@@ -2581,8 +2581,8 @@
             [
                 {
                     "interface": "eth18",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:98:79:8a",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:82:d0:27",
                     "network_pci": null
                 },
                 {
@@ -2595,8 +2595,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "bcm-01",
-                    "mac": "48:b0:2d:1c:de:7d",
+                    "node": "support-01",
+                    "mac": "48:b0:2d:da:89:48",
                     "network_pci": null
                 },
                 {
@@ -2609,8 +2609,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "bcm-01",
-                    "mac": "48:b0:2d:d5:2b:96",
+                    "node": "support-01",
+                    "mac": "48:b0:2d:b7:d9:4c",
                     "network_pci": null
                 },
                 {
@@ -2623,8 +2623,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "bcm-02",
-                    "mac": "48:b0:2d:7b:58:fe",
+                    "node": "support-02",
+                    "mac": "48:b0:2d:57:7b:62",
                     "network_pci": null
                 },
                 {
@@ -2637,8 +2637,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "bcm-02",
-                    "mac": "48:b0:2d:18:f5:43",
+                    "node": "support-02",
+                    "mac": "48:b0:2d:d4:ed:a3",
                     "network_pci": null
                 },
                 {
@@ -2651,8 +2651,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "k8s-01",
-                    "mac": "48:b0:2d:96:af:f7",
+                    "node": "support-03",
+                    "mac": "48:b0:2d:a3:3e:35",
                     "network_pci": null
                 },
                 {
@@ -2665,8 +2665,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "k8s-01",
-                    "mac": "48:b0:2d:1e:0a:7d",
+                    "node": "support-03",
+                    "mac": "48:b0:2d:bf:fd:ba",
                     "network_pci": null
                 },
                 {
@@ -2679,8 +2679,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "k8s-02",
-                    "mac": "48:b0:2d:1a:08:b2",
+                    "node": "support-04",
+                    "mac": "48:b0:2d:41:e6:1b",
                     "network_pci": null
                 },
                 {
@@ -2693,8 +2693,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "k8s-02",
-                    "mac": "48:b0:2d:2d:cc:b9",
+                    "node": "support-04",
+                    "mac": "48:b0:2d:06:94:5e",
                     "network_pci": null
                 },
                 {
@@ -2707,8 +2707,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "k8s-03",
-                    "mac": "48:b0:2d:48:f2:69",
+                    "node": "support-05",
+                    "mac": "48:b0:2d:b4:4a:04",
                     "network_pci": null
                 },
                 {
@@ -2721,8 +2721,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "k8s-03",
-                    "mac": "48:b0:2d:bf:8d:82",
+                    "node": "support-05",
+                    "mac": "48:b0:2d:c5:89:46",
                     "network_pci": null
                 },
                 {
@@ -2735,8 +2735,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "slurm-01",
-                    "mac": "48:b0:2d:cd:47:77",
+                    "node": "support-06",
+                    "mac": "48:b0:2d:c7:64:77",
                     "network_pci": null
                 },
                 {
@@ -2749,8 +2749,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "slurm-01",
-                    "mac": "48:b0:2d:d7:43:51",
+                    "node": "support-06",
+                    "mac": "48:b0:2d:42:92:20",
                     "network_pci": null
                 },
                 {
@@ -2763,8 +2763,8 @@
             [
                 {
                     "interface": "eth1",
-                    "node": "slurm-02",
-                    "mac": "48:b0:2d:6c:a5:58",
+                    "node": "support-07",
+                    "mac": "48:b0:2d:ac:20:db",
                     "network_pci": null
                 },
                 {
@@ -2777,8 +2777,8 @@
             [
                 {
                     "interface": "eth2",
-                    "node": "slurm-02",
-                    "mac": "48:b0:2d:5c:e1:f9",
+                    "node": "support-07",
+                    "mac": "48:b0:2d:ac:d5:e1",
                     "network_pci": null
                 },
                 {
@@ -3925,8 +3925,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "gpu-01",
-                    "mac": "48:b0:2d:fc:a1:51",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:79:6c:d7",
                     "network_pci": null
                 },
                 {
@@ -3939,8 +3939,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "gpu-02",
-                    "mac": "48:b0:2d:d1:a6:da",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:7a:db:6b",
                     "network_pci": null
                 },
                 {
@@ -3953,8 +3953,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "gpu-03",
-                    "mac": "48:b0:2d:e2:d0:2b",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:f5:bd:25",
                     "network_pci": null
                 },
                 {
@@ -3967,8 +3967,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "gpu-04",
-                    "mac": "48:b0:2d:b5:e7:6a",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:fc:01:bf",
                     "network_pci": null
                 },
                 {
@@ -3981,8 +3981,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "bcm-01",
-                    "mac": "48:b0:2d:38:29:6d",
+                    "node": "support-01",
+                    "mac": "48:b0:2d:be:40:ad",
                     "network_pci": null
                 },
                 {
@@ -3995,8 +3995,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "k8s-01",
-                    "mac": "48:b0:2d:8e:37:86",
+                    "node": "support-03",
+                    "mac": "48:b0:2d:de:e6:5f",
                     "network_pci": null
                 },
                 {
@@ -4009,8 +4009,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "k8s-02",
-                    "mac": "48:b0:2d:52:5f:a7",
+                    "node": "support-04",
+                    "mac": "48:b0:2d:5c:a9:e5",
                     "network_pci": null
                 },
                 {
@@ -4023,8 +4023,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "slurm-01",
-                    "mac": "48:b0:2d:e5:7c:7b",
+                    "node": "support-06",
+                    "mac": "48:b0:2d:36:2f:63",
                     "network_pci": null
                 },
                 {
@@ -4037,8 +4037,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "gpu-05",
-                    "mac": "48:b0:2d:c3:a5:09",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:03:2b:62",
                     "network_pci": null
                 },
                 {
@@ -4051,8 +4051,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "gpu-06",
-                    "mac": "48:b0:2d:0f:e1:29",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:97:d9:c1",
                     "network_pci": null
                 },
                 {
@@ -4065,8 +4065,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "gpu-07",
-                    "mac": "48:b0:2d:9d:c4:8b",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:cb:e1:18",
                     "network_pci": null
                 },
                 {
@@ -4079,8 +4079,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "gpu-08",
-                    "mac": "48:b0:2d:0c:97:05",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:9a:2e:74",
                     "network_pci": null
                 },
                 {
@@ -4093,8 +4093,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "bcm-02",
-                    "mac": "48:b0:2d:b4:97:57",
+                    "node": "support-02",
+                    "mac": "48:b0:2d:92:d8:4d",
                     "network_pci": null
                 },
                 {
@@ -4107,8 +4107,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "k8s-03",
-                    "mac": "48:b0:2d:f9:f3:d2",
+                    "node": "support-05",
+                    "mac": "48:b0:2d:64:1c:99",
                     "network_pci": null
                 },
                 {
@@ -4121,8 +4121,8 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "slurm-02",
-                    "mac": "48:b0:2d:c8:95:07",
+                    "node": "support-07",
+                    "mac": "48:b0:2d:b4:db:9e",
                     "network_pci": null
                 },
                 {
@@ -4140,6 +4140,62 @@
                     "network_pci": null
                 },
                 {
+                    "interface": "swp1",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:9f:a2:f5",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:fb:08:86",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp1",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:0d:c7:0f",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:0d:8d:fb",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp2",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:82:2b:b1",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:8f:df:3d",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp2",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:f1:05:35",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "gsl-plane2-01",
+                    "mac": "48:b0:2d:79:85:32",
+                    "network_pci": null
+                },
+                {
                     "interface": "swp3",
                     "node": "cust-net-edge-01",
                     "mac": "48:b0:2d:d7:78:6b",
@@ -4149,8 +4205,22 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "csl-02",
-                    "mac": "48:b0:2d:fb:08:86",
+                    "node": "gsl-plane2-02",
+                    "mac": "48:b0:2d:c3:11:86",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp3",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:2a:26:d5",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:ee:61:ba",
                     "network_pci": null
                 },
                 {
@@ -4163,84 +4233,28 @@
             [
                 {
                     "interface": "eth0",
-                    "node": "gsl-plane1-01",
-                    "mac": "48:b0:2d:0d:8d:fb",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:28:8c:b8",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp4",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:73:d2:d6",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp5",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:bb:29:7a",
                     "network_pci": null
                 },
                 {
                     "interface": "swp5",
                     "node": "cust-net-edge-01",
                     "mac": "48:b0:2d:be:6f:fc",
-                    "network_pci": null
-                }
-            ],
-            [
-                {
-                    "interface": "eth0",
-                    "node": "gsl-plane1-02",
-                    "mac": "48:b0:2d:8f:df:3d",
-                    "network_pci": null
-                },
-                {
-                    "interface": "swp6",
-                    "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:c7:b3:fb",
-                    "network_pci": null
-                }
-            ],
-            [
-                {
-                    "interface": "eth0",
-                    "node": "gsl-plane2-01",
-                    "mac": "48:b0:2d:79:85:32",
-                    "network_pci": null
-                },
-                {
-                    "interface": "swp7",
-                    "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:cd:15:1c",
-                    "network_pci": null
-                }
-            ],
-            [
-                {
-                    "interface": "eth0",
-                    "node": "gsl-plane2-02",
-                    "mac": "48:b0:2d:c3:11:86",
-                    "network_pci": null
-                },
-                {
-                    "interface": "swp8",
-                    "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:61:79:07",
-                    "network_pci": null
-                }
-            ],
-            [
-                {
-                    "interface": "eth0",
-                    "node": "oob-switch-01",
-                    "mac": "48:b0:2d:ee:61:ba",
-                    "network_pci": null
-                },
-                {
-                    "interface": "swp9",
-                    "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:39:62:fc",
-                    "network_pci": null
-                }
-            ],
-            [
-                {
-                    "interface": "eth0",
-                    "node": "oob-switch-02",
-                    "mac": "48:b0:2d:28:8c:b8",
-                    "network_pci": null
-                },
-                {
-                    "interface": "swp10",
-                    "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:dd:34:7c",
                     "network_pci": null
                 }
             ],
@@ -4261,9 +4275,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp1",
+                    "interface": "swp6",
                     "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:9f:a2:f5",
+                    "mac": "48:b0:2d:c7:b3:fb",
                     "network_pci": null
                 }
             ],
@@ -4275,9 +4289,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp1",
+                    "interface": "swp6",
                     "node": "cust-net-edge-02",
-                    "mac": "48:b0:2d:0d:c7:0f",
+                    "mac": "48:b0:2d:1f:c5:bd",
                     "network_pci": null
                 }
             ],
@@ -4298,9 +4312,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp2",
+                    "interface": "swp7",
                     "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:82:2b:b1",
+                    "mac": "48:b0:2d:cd:15:1c",
                     "network_pci": null
                 }
             ],
@@ -4312,9 +4326,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp11",
+                    "interface": "swp8",
                     "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:d6:d7:e7",
+                    "mac": "48:b0:2d:61:79:07",
                     "network_pci": null
                 }
             ],
@@ -4349,9 +4363,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp12",
+                    "interface": "swp9",
                     "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:9c:ad:80",
+                    "mac": "48:b0:2d:39:62:fc",
                     "network_pci": null
                 }
             ],
@@ -4363,9 +4377,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp13",
+                    "interface": "swp10",
                     "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:d9:69:0d",
+                    "mac": "48:b0:2d:dd:34:7c",
                     "network_pci": null
                 }
             ],
@@ -4377,9 +4391,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp14",
+                    "interface": "swp11",
                     "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:93:44:12",
+                    "mac": "48:b0:2d:d6:d7:e7",
                     "network_pci": null
                 }
             ],
@@ -5411,6 +5425,33 @@
             ],
             [
                 {
+                    "interface": "swp12",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:9c:ad:80",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp13",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:d9:69:0d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp14",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:93:44:12",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
                     "interface": "swp15",
                     "node": "cust-net-edge-01",
                     "mac": "48:b0:2d:93:c6:88",
@@ -5702,51 +5743,6 @@
                     "interface": "eth0",
                     "node": "cust-net-edge-01",
                     "mac": "48:b0:2d:cc:ba:11",
-                    "network_pci": null
-                },
-                "unconnected"
-            ],
-            [
-                {
-                    "interface": "swp2",
-                    "node": "cust-net-edge-02",
-                    "mac": "48:b0:2d:f1:05:35",
-                    "network_pci": null
-                },
-                "unconnected"
-            ],
-            [
-                {
-                    "interface": "swp3",
-                    "node": "cust-net-edge-02",
-                    "mac": "48:b0:2d:2a:26:d5",
-                    "network_pci": null
-                },
-                "unconnected"
-            ],
-            [
-                {
-                    "interface": "swp4",
-                    "node": "cust-net-edge-02",
-                    "mac": "48:b0:2d:73:d2:d6",
-                    "network_pci": null
-                },
-                "unconnected"
-            ],
-            [
-                {
-                    "interface": "swp5",
-                    "node": "cust-net-edge-02",
-                    "mac": "48:b0:2d:bb:29:7a",
-                    "network_pci": null
-                },
-                "unconnected"
-            ],
-            [
-                {
-                    "interface": "swp6",
-                    "node": "cust-net-edge-02",
-                    "mac": "48:b0:2d:1f:c5:bd",
                     "network_pci": null
                 },
                 "unconnected"

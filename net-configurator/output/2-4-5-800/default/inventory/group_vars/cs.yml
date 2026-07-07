@@ -1,0 +1,51 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+# ============================================================================
+# CSL Spine Group Variables - 2-4-5-800 Deployment
+# ============================================================================
+# CSL spines: EVPN relay, aggregate CSL leaves + core + OOB SN2201s
+
+# Port assignments
+isl_leaf_ports: "swp61-62"
+# isl_core_ports: "swp4"  # uncomment when core1 is added to the deployment
+#
+# NOTE: A dedicated N/S spine (cs) aggregates the cl/csl leaves only — it has
+# NO OOB (SN2201 OOB) uplinks. Those 8x100G uplinks live on the converged
+# leaf/core, not the aggregation spine. Declaring smn_ports here caused the
+# spine to emit `link breakout 8x` on swp1-2,swp5-6, which collided with the
+# 2x ISL breakout the parser derives for those ports (last-wins → wrong 8x on
+# uncabled spares). At scale the parser overrides isl_leaf_ports/overlay_peers/
+# underlay_neighbors per-host; smn must stay unset so the OOB block never
+# renders.
+
+# Overlay peers: CSL leaves + all OOB switches
+overlay_peers:
+  - 172.16.1.4   # csl-01
+  - 172.16.1.5   # csl-02
+  - 172.16.1.33  # oob-switch-01
+  - 172.16.1.34  # oob-switch-02
+  - 172.16.1.35  # oob-switch-03
+  - 172.16.1.36  # oob-switch-04
+  - 172.16.1.37  # oob-switch-05
+  - 172.16.1.38  # oob-switch-06
+  - 172.16.1.39  # oob-switch-07
+  - 172.16.1.40  # oob-switch-08
+
+# Underlay neighbors (all breakout sub-ports)
+underlay_neighbors:
+  - swp61s0
+  - swp61s1
+  - swp62s0
+  - swp62s1
+  # - swp4s0  # core1 ISL - uncomment when core1 is added
+  # - swp4s1  # core1 ISL - uncomment when core1 is added
+  - swp1s0
+  - swp1s1
+  - swp2s0
+  - swp2s1
+  - swp5s0
+  - swp5s1
+  - swp6s0
+  - swp6s1

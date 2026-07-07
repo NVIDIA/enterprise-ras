@@ -1,0 +1,1344 @@
+---
+# ============================================================================
+# Global Variables - Applied to All Switches
+# ============================================================================
+architecture: 2-4-5-800
+scalable_units: 8
+nodes_per_su: 4
+ns_tiers: 1
+ew_tiers: 2
+convergence: dedicated_gpu
+gpu_planes: 2
+oob_uplink_mode: l3
+ntp_servers:
+- 0.cumulusnetworks.pool.ntp.org
+- 1.cumulusnetworks.pool.ntp.org
+- 2.cumulusnetworks.pool.ntp.org
+- 3.cumulusnetworks.pool.ntp.org
+common:
+  oob_network: 172.16.177.0/24
+  oob_gateway: 172.16.177.1
+  oob_vlan: 200
+  oob_vrf: OOB
+  cpu_network: 172.16.178.0/24
+  cpu_gateway: 172.16.178.1
+  cpu_vlan: 300
+  cpu_vrf: INBAND
+  support_network: 172.16.179.0/24
+  support_gateway: 172.16.179.1
+  support_vlan: 400
+  support_vrf: INBAND
+  storage_network: 172.16.180.0/24
+  storage_gateway: 172.16.180.1
+  storage_vlan: 500
+  storage_vrf: STORAGE
+  gpu_plane1_network: 192.168.0.0/20
+  gpu_plane1_gateway: 192.168.0.1
+  gpu_plane1_vlan: 900
+  gpu_plane1_vrf: GPU
+  gpu_plane2_network: 192.168.16.0/20
+  gpu_plane2_gateway: 192.168.16.1
+  gpu_plane2_vlan: 900
+  gpu_plane2_vrf: GPU
+  storage_vlan_tagged: true
+  pre_login_message: '##############################################################################
+
+    #      You are accessing an Information System (IS) that is provided for authorized
+    use only.
+
+    ##############################################################################'
+  post_login_message: '####################################################################
+
+    #       You are successfully logged in to: {hostname} - site: {site} / arch: {arch}
+
+    ####################################################################'
+  site: default
+  arch: 2-4-5-800
+ldap:
+  enabled: false
+  domain: example.com
+  organization: Example Org
+  admin_password: '{{ ldap_admin_password }}'
+  base_dn: dc=example,dc=com
+  root_dn: cn=admin,ou=Users,dc=example,dc=com
+  servers:
+  - ip: 172.20.0.78
+    priority: 1
+  users:
+  - firstname: John
+    lastname: Doe
+    username: jdoe
+    password: '{{ ldap_user_default_password }}'
+  - firstname: Alice
+    lastname: Smith
+    username: asmith
+    password: '{{ ldap_user_default_password }}'
+status_page_enabled: true
+host_dhcp: true
+devices:
+  cl-01:
+    eth0_ip: 192.168.200.10
+    mac: 48:b0:2d:7e:7a:87
+  cl-02:
+    eth0_ip: 192.168.200.11
+    mac: 48:b0:2d:bc:39:04
+  gl-plane1-01:
+    eth0_ip: 192.168.200.12
+    mac: 48:b0:2d:91:d8:fd
+  gl-plane1-02:
+    eth0_ip: 192.168.200.13
+    mac: 48:b0:2d:f7:21:90
+  gl-plane1-03:
+    eth0_ip: 192.168.200.14
+    mac: 48:b0:2d:4c:19:80
+  gl-plane1-04:
+    eth0_ip: 192.168.200.15
+    mac: 48:b0:2d:67:a1:b0
+  gs-plane1-01:
+    eth0_ip: 192.168.200.16
+    mac: 48:b0:2d:2a:6b:b9
+  gs-plane1-02:
+    eth0_ip: 192.168.200.17
+    mac: 48:b0:2d:a8:82:cd
+  gl-plane2-01:
+    eth0_ip: 192.168.200.18
+    mac: 48:b0:2d:74:50:cb
+  gl-plane2-02:
+    eth0_ip: 192.168.200.19
+    mac: 48:b0:2d:26:a5:8b
+  gl-plane2-03:
+    eth0_ip: 192.168.200.20
+    mac: 48:b0:2d:0f:60:88
+  gl-plane2-04:
+    eth0_ip: 192.168.200.21
+    mac: 48:b0:2d:06:a3:7b
+  gs-plane2-01:
+    eth0_ip: 192.168.200.22
+    mac: 48:b0:2d:d2:16:e4
+  gs-plane2-02:
+    eth0_ip: 192.168.200.23
+    mac: 48:b0:2d:ed:cf:5a
+  su-01-node-01:
+    eth0_ip: 192.168.200.26
+    mac: 48:b0:2d:79:6c:d7
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.201/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.0.201/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.16.201/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.0.202/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.16.202/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.0.203/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.16.203/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.0.204/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.16.204/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-02:
+    eth0_ip: 192.168.200.27
+    mac: 48:b0:2d:7a:db:6b
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.202/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.0.217/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.16.217/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.0.218/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.16.218/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.0.219/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.16.219/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.0.220/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.16.220/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-03:
+    eth0_ip: 192.168.200.28
+    mac: 48:b0:2d:f5:bd:25
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.203/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.0.233/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.16.233/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.0.234/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.16.234/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.0.235/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.16.235/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.0.236/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.16.236/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-04:
+    eth0_ip: 192.168.200.29
+    mac: 48:b0:2d:fc:01:bf
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.204/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.0.249/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.16.249/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.0.250/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.16.250/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.0.251/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.16.251/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.0.252/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.16.252/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-05:
+    eth0_ip: 192.168.200.30
+    mac: 48:b0:2d:aa:2e:fe
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.205/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.9/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.9/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.10/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.10/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.11/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.11/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.12/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.12/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-06:
+    eth0_ip: 192.168.200.31
+    mac: 48:b0:2d:5a:9e:11
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.206/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.25/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.25/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.26/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.26/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.27/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.27/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.28/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.28/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-07:
+    eth0_ip: 192.168.200.32
+    mac: 48:b0:2d:89:37:b5
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.207/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.41/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.41/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.42/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.42/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.43/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.43/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.44/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.44/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-08:
+    eth0_ip: 192.168.200.33
+    mac: 48:b0:2d:88:eb:ac
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.208/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.57/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.57/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.58/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.58/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.59/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.59/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.60/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.60/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-09:
+    eth0_ip: 192.168.200.34
+    mac: 48:b0:2d:12:a9:21
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.209/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.73/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.73/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.74/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.74/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.75/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.75/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.76/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.76/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-10:
+    eth0_ip: 192.168.200.35
+    mac: 48:b0:2d:a3:4d:f0
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.210/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.89/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.89/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.90/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.90/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.91/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.91/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.92/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.92/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-11:
+    eth0_ip: 192.168.200.36
+    mac: 48:b0:2d:d4:4a:6b
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.211/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.105/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.105/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.106/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.106/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.107/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.107/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.108/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.108/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-12:
+    eth0_ip: 192.168.200.37
+    mac: 48:b0:2d:ac:0c:c4
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.212/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.121/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.121/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.122/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.122/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.123/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.123/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.124/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.124/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-13:
+    eth0_ip: 192.168.200.38
+    mac: 48:b0:2d:ef:0b:4d
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.213/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.137/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.137/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.138/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.138/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.139/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.139/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.140/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.140/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-14:
+    eth0_ip: 192.168.200.39
+    mac: 48:b0:2d:65:bf:0c
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.214/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.153/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.153/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.154/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.154/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.155/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.155/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.156/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.156/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-15:
+    eth0_ip: 192.168.200.40
+    mac: 48:b0:2d:66:fc:5d
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.215/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.169/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.169/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.170/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.170/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.171/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.171/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.172/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.172/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-16:
+    eth0_ip: 192.168.200.41
+    mac: 48:b0:2d:10:c2:6d
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.216/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.185/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.185/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.186/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.186/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.187/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.187/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.188/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.188/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-17:
+    eth0_ip: 192.168.200.42
+    mac: 48:b0:2d:18:15:83
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.217/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.201/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.201/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.202/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.202/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.203/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.203/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.204/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.204/20
+      gateway: 192.168.16.1
+      table: 1003
+  su-01-node-18:
+    eth0_ip: 192.168.200.43
+    mac: 48:b0:2d:f7:e7:a8
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      gpu:
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      - eth7
+      - eth8
+      - eth9
+      - eth10
+      oob:
+      - eth0
+    bond_ip: 172.16.178.218/24
+    gpu_interfaces:
+    - iface: eth3
+      plane: plane1
+      ip: 192.168.1.217/20
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: plane2
+      ip: 192.168.17.217/20
+      gateway: 192.168.16.1
+      table: 1000
+    - iface: eth5
+      plane: plane1
+      ip: 192.168.1.218/20
+      gateway: 192.168.0.1
+      table: 901
+    - iface: eth6
+      plane: plane2
+      ip: 192.168.17.218/20
+      gateway: 192.168.16.1
+      table: 1001
+    - iface: eth7
+      plane: plane1
+      ip: 192.168.1.219/20
+      gateway: 192.168.0.1
+      table: 902
+    - iface: eth8
+      plane: plane2
+      ip: 192.168.17.219/20
+      gateway: 192.168.16.1
+      table: 1002
+    - iface: eth9
+      plane: plane1
+      ip: 192.168.1.220/20
+      gateway: 192.168.0.1
+      table: 903
+    - iface: eth10
+      plane: plane2
+      ip: 192.168.17.220/20
+      gateway: 192.168.16.1
+      table: 1003
+  support-01:
+    eth0_ip: 192.168.200.44
+    mac: 48:b0:2d:be:40:ad
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      oob:
+      - eth0
+    bond_ip1: 172.16.179.101/24
+    bond_ip2: 172.16.179.102/24
+  support-02:
+    eth0_ip: 192.168.200.45
+    mac: 48:b0:2d:92:d8:4d
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      oob:
+      - eth0
+    bond_ip1: 172.16.179.103/24
+    bond_ip2: 172.16.179.104/24
+  support-03:
+    eth0_ip: 192.168.200.46
+    mac: 48:b0:2d:de:e6:5f
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      oob:
+      - eth0
+    bond_ip1: 172.16.179.105/24
+    bond_ip2: 172.16.179.106/24
+  support-04:
+    eth0_ip: 192.168.200.47
+    mac: 48:b0:2d:5c:a9:e5
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      oob:
+      - eth0
+    bond_ip1: 172.16.179.107/24
+    bond_ip2: 172.16.179.108/24
+  support-05:
+    eth0_ip: 192.168.200.48
+    mac: 48:b0:2d:64:1c:99
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      oob:
+      - eth0
+    bond_ip1: 172.16.179.109/24
+    bond_ip2: 172.16.179.110/24
+  support-06:
+    eth0_ip: 192.168.200.49
+    mac: 48:b0:2d:36:2f:63
+    interfaces:
+      cpu:
+      - eth1
+      - eth2
+      oob:
+      - eth0
+    bond_ip1: 172.16.179.111/24
+    bond_ip2: 172.16.179.112/24
+  storage-01:
+    eth0_ip: 192.168.200.50
+    mac: 48:b0:2d:92:b0:27
+    interfaces:
+      storage:
+      - eth1
+      - eth2
+      - eth3
+      - eth4
+      oob:
+      - eth0
+    bond_ip1: 172.16.180.101/24
+    bond_ip2: 172.16.180.102/24
+switch_user: cumulus
+ztp_server_host: external-dhcp
+dhcp_server_host: external-dhcp
+jump_host: utility
+ansible_target: utility
+nat_host: external-conn
+air_mgmt_subnet: 172.20.0.0/24
+ztp_interfaces:
+- name: eth1
+  ip: 172.20.0.77
+  network: 172.20.0.0/24
+  gateway: 172.20.0.254
+  purpose: air-mgmt
+  dnsmasq_listen: true
+ztp_allow_subnets:
+- 172.20.0.0/24
+- 192.168.200.0/24
+inter_vrf_dhcp_listen_iface: eth2
+inter_vrf_dhcp_scopes:
+- vlan_id: 400
+  subnet: 172.16.179.0/24
+  gateway: 172.16.179.1
+  name: Support
+tiers: 2
+target_cumulus_version: 5.16.0
+gpu_vlan: 900
+gpu_vni: 245900
+gpu_vrf_name: GPU
+gpu_evpn_vlan: 3003
+gpu_evpn_vni: 245003
+tan_vlans:
+  100:
+    vni: 245100
+    vrf: OOB
+    subnet: 172.16.0.0/24
+    purpose: Switch eth0 mgmt
+  200:
+    vni: 245200
+    vrf: OOB
+    subnet: 172.16.2.0/24
+    gateway: 172.16.2.1
+    purpose: Server BMC/OOB (1G from SN2201)
+  300:
+    vni: 245300
+    vrf: INBAND
+    subnet: 172.16.3.0/24
+    gateway: 172.16.3.1
+    purpose: In-band DPU management
+  400:
+    vni: 245400
+    vrf: STORAGE
+    subnet: 172.16.4.0/24
+    gateway: 172.16.4.1
+    purpose: Storage traffic
+tan_vrfs:
+  OOB:
+    evpn_vlan: 3001
+    vni: 245001
+  INBAND:
+    evpn_vlan: 3002
+    vni: 245002
+  STORAGE:
+    evpn_vlan: 3005
+    vni: 245005
+ztp_server_ip: 169.254.0.2

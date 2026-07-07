@@ -23,164 +23,192 @@
         msg: "Ping matrix: {{ server_groups | length }} servers"
 
     # ── Phase 1: Push + fire on all servers (parallel) ──
-    # All SSH connections run concurrently via backgrounded subshells.
-    # Each server gets a script that pings all other servers.
+    # One Ansible task per server, fired with async+poll: 0 so they run in
+    # parallel via Ansible's fork pool. Previously this was one giant
+    # `shell:` task that inlined every server's script into a single
+    # `/bin/sh -c ...` invocation; that exceeded Linux MAX_ARG_STRLEN
+    # (~128 KB) once the server count crossed ~20 (2-4-5-800 has 25),
+    # producing "Argument list too long" before any SSH ran.
     - name: Push and fire ping scripts (parallel)
-      shell: |
-        export SSHPASS='{{ server_ansible_password }}'
-        {% for item in server_groups %}
-        (
-          HOST='{{ hostvars[item].ansible_host }}'
-          NAME='{{ item }}'
-          SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ubuntu@$HOST"
+      loop: "{{ server_groups }}"
+      loop_control:
+        label: "{{ item }}"
+      async: 60
+      poll: 0
+      register: fire_async
+      ansible.builtin.shell:
+        cmd: |
+          export SSHPASS='{{ server_ansible_password }}'
+          (
+            HOST='{{ hostvars[item].ansible_host }}'
+            NAME='{{ item }}'
+            SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ubuntu@$HOST"
 
-          echo "CONNECT|$NAME|$HOST" >&2
+            echo "CONNECT|$NAME|$HOST" >&2
 
-          if ! timeout 15 $SSH_CMD 'rm -f /tmp/ping-matrix-results.txt' 2>/dev/null; then
-            echo "FIRE|$NAME|UNREACHABLE"
-            exit 0
-          fi
+            if ! timeout 15 $SSH_CMD 'rm -f /tmp/ping-matrix-results.txt' 2>/dev/null; then
+              echo "FIRE|$NAME|UNREACHABLE"
+              exit 0
+            fi
 
-          {% set src_dev = devices.get(item, {}) %}
-          {% set src_ifaces = src_dev.get('interfaces', {}) %}
-          {# Compute prefixes: su-*/node-* (legacy) + gpu-* (2-8-9-800 dual-plane) #}
-          {% set src_is_compute = item.startswith('su-') or item.startswith('node-') or item.startswith('gpu-') %}
-          {# Support prefixes: support-* (legacy) + bcm-/slurm-/k8s-* (2-8-9-800 control plane) #}
-          {% set src_is_support = item.startswith('support') or item.startswith('bcm-') or item.startswith('slurm-') or item.startswith('k8s-') %}
-          {% set src_is_storage = item.startswith('storage') %}
-          {% set src_inband_iface = 'bond0' if src_is_compute else ('bond0.' ~ common.support_vlan if src_is_support else ('bond0.' ~ common.storage_vlan if src_is_storage else '')) %}
-          {% set src_inband_ip = (src_dev.get('bond_ip', '') if src_is_compute else src_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
-          {# GPU IPs: dual-plane uses gpu_interfaces (list of {iface,plane,ip}); single-plane uses gpu_ips list #}
-          {% set src_gpu_iface = src_ifaces.get('gpu', [''])[0] if src_ifaces.get('gpu', []) | length > 0 else '' %}
-          {% set _src_gpu_ifaces = src_dev.get('gpu_interfaces', []) %}
-          {% set src_gpu_ip = (_src_gpu_ifaces[0].ip | regex_replace('/.*', '')) if _src_gpu_ifaces | length > 0
-                              else ((src_dev.get('gpu_ips', [])[0] | regex_replace('/.*', '')) if src_dev.get('gpu_ips', []) | length > 0 else '') %}
+            {% set src_dev = devices.get(item, {}) %}
+            {% set src_ifaces = src_dev.get('interfaces', {}) %}
+            {# Compute prefixes: su-*/node-* (legacy) + gpu-* (2-8-9-800 dual-plane) #}
+            {% set src_is_compute = item.startswith('su-') or item.startswith('node-') or item.startswith('gpu-') %}
+            {# Support prefixes: support-* (legacy) + bcm-/slurm-/k8s-* (2-8-9-800 control plane) #}
+            {% set src_is_support = item.startswith('support') or item.startswith('bcm-') or item.startswith('slurm-') or item.startswith('k8s-') %}
+            {% set src_is_storage = item.startswith('storage') %}
+            {% set src_inband_iface = 'bond0' if src_is_compute else ('bond0.' ~ common.support_vlan if src_is_support else ('bond0.' ~ common.storage_vlan if src_is_storage else '')) %}
+            {% set src_inband_ip = (src_dev.get('bond_ip', '') if src_is_compute else src_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
+            {# GPU IPs: dual-plane uses gpu_interfaces (list of {iface,plane,ip}); single-plane uses gpu_ips list #}
+            {% set src_gpu_iface = src_ifaces.get('gpu', [''])[0] if src_ifaces.get('gpu', []) | length > 0 else '' %}
+            {% set _src_gpu_ifaces = src_dev.get('gpu_interfaces', []) %}
+            {% set src_gpu_ip = (_src_gpu_ifaces[0].ip | regex_replace('/.*', '')) if _src_gpu_ifaces | length > 0
+                                else ((src_dev.get('gpu_ips', [])[0] | regex_replace('/.*', '')) if src_dev.get('gpu_ips', []) | length > 0 else '') %}
 
-          SCRIPT='#!/bin/bash
-          R=/tmp/ping-matrix-results.txt
-          # Warm-up ARP cache (discard) then measure. Suppresses spurious
-          # first-ping failures from ARP/bond/STP convergence.
-          _p() { ping -c 1 -W 3 "$1" -I "$2" >/dev/null 2>&1; ping -c 2 -W 5 "$1" -I "$2" >/dev/null 2>&1; }
-          # Wait for L3 convergence before running the matrix. EVPN-MH +
-          # BGP underlay + bridge MAC learning can take 60-90s to settle
-          # after the sim reaches LOADED. Without this gate, ARP to the
-          # anycast VRR gateways (gpu-gw, cpu-gw, etc.) gets transient
-          # FAILs that do not reflect the steady-state network. We probe
-          # any one of the L3 gateways the host should be able to reach;
-          # if it comes up within 90s, we treat the data plane as
-          # converged and proceed. If it never comes up, we run the
-          # matrix anyway so the FAIL lines accurately surface the real
-          # config gap.
-          _wait_gateway() {
-            local target=$1 src=$2 i
-            for i in $(seq 1 18); do
-              ping -c 1 -W 2 "$target" -I "$src" >/dev/null 2>&1 && return 0
-              sleep 5
-            done
-            return 1
-          }
-          {% set _wait_gw = common.get("cpu_gateway") or common.get("support_gateway") %}
-          {% if _wait_gw and src_inband_ip %}
-          _wait_gateway {{ _wait_gw }} {{ src_inband_ip }} || true
-          {% endif %}
-          echo "HOST=$(hostname)" > $R
-          echo "TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $R
-          {% for dst in server_groups %}
-          {% if dst != item %}
-          {% set dst_dev = devices.get(dst, {}) %}
-          {% set dst_is_compute = dst.startswith('su-') or dst.startswith('node-') or dst.startswith('gpu-') %}
-          {% set dst_inband_ip = (dst_dev.get('bond_ip', '') if dst_is_compute else dst_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
-          {% set _dst_gpu_ifaces = dst_dev.get('gpu_interfaces', []) %}
-          {% set first_dst_gpu = (_dst_gpu_ifaces[0].ip | regex_replace('/.*', '')) if _dst_gpu_ifaces | length > 0
-                                 else ((dst_dev.get('gpu_ips', [])[0] | regex_replace('/.*', '')) if dst_dev.get('gpu_ips', []) | length > 0 else '') %}
-          {% if dst_inband_ip and src_inband_iface and src_inband_ip %}
-          _p {{ dst_inband_ip }} {{ src_inband_ip }} && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}|{{ dst_inband_ip }}|INBAND" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}|{{ dst_inband_ip }}|INBAND" >> $R
-          {% endif %}
-          {# GPU pings — plane-aware. Dual-plane archs have gpu_interfaces[0]
-             on plane1 and gpu_interfaces[1] on plane2 (the parser
-             interleaves planes when emitting them). Test each plane
-             independently when both src and dst have a NIC on the same
-             plane. Cross-plane pings are architecturally not supposed
-             to work (separate L2 fabrics, distinct subnets, no L3 leak
-             between planes), so they're skipped here — no same-plane
-             pair means no ping, no false negative.
-             Single-plane archs (gpu_ips, no gpu_interfaces) fall
-             through to the legacy single-NIC block. #}
-          {% if dst_is_compute and src_is_compute and _src_gpu_ifaces | length >= 2 and _dst_gpu_ifaces | length >= 2 %}
-          {% set _sp1 = _src_gpu_ifaces[0] %}
-          {% set _sp2 = _src_gpu_ifaces[1] %}
-          {% set _dp1 = _dst_gpu_ifaces[0] %}
-          {% set _dp2 = _dst_gpu_ifaces[1] %}
-          {% if _sp1.plane == _dp1.plane %}
-          _p {{ _dp1.ip | regex_replace('/.*', '') }} {{ _sp1.ip | regex_replace('/.*', '') }} &&
-            echo "PASS|{{ _sp1.iface }}({{ _sp1.ip | regex_replace('/.*', '') }})|{{ dst }}-gpu|{{ _dp1.ip | regex_replace('/.*', '') }}|GPU-{{ _sp1.plane }}" >> $R ||
-            echo "FAIL|{{ _sp1.iface }}({{ _sp1.ip | regex_replace('/.*', '') }})|{{ dst }}-gpu|{{ _dp1.ip | regex_replace('/.*', '') }}|GPU-{{ _sp1.plane }}" >> $R
-          {% endif %}
-          {% if _sp2.plane == _dp2.plane %}
-          _p {{ _dp2.ip | regex_replace('/.*', '') }} {{ _sp2.ip | regex_replace('/.*', '') }} &&
-            echo "PASS|{{ _sp2.iface }}({{ _sp2.ip | regex_replace('/.*', '') }})|{{ dst }}-gpu|{{ _dp2.ip | regex_replace('/.*', '') }}|GPU-{{ _sp2.plane }}" >> $R ||
-            echo "FAIL|{{ _sp2.iface }}({{ _sp2.ip | regex_replace('/.*', '') }})|{{ dst }}-gpu|{{ _dp2.ip | regex_replace('/.*', '') }}|GPU-{{ _sp2.plane }}" >> $R
-          {% endif %}
-          {% elif dst_is_compute and src_is_compute and src_gpu_iface and src_gpu_ip and first_dst_gpu %}
-          _p {{ first_dst_gpu }} {{ src_gpu_ip }} && echo "PASS|{{ src_gpu_iface }}({{ src_gpu_ip }})|{{ dst }}-gpu|{{ first_dst_gpu }}|GPU" >> $R || echo "FAIL|{{ src_gpu_iface }}({{ src_gpu_ip }})|{{ dst }}-gpu|{{ first_dst_gpu }}|GPU" >> $R
-          {% elif dst_is_compute and not src_is_compute and src_inband_iface and src_inband_ip and first_dst_gpu %}
-          _p {{ first_dst_gpu }} {{ src_inband_ip }} && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}-gpu|{{ first_dst_gpu }}|CROSS-VRF" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}-gpu|{{ first_dst_gpu }}|CROSS-VRF" >> $R
-          {% endif %}
-          {% endif %}
-          {% endfor %}
-          {% if src_inband_iface and src_inband_ip %}
-          {% if common.cpu_gateway is defined %}
-          _p {{ common.cpu_gateway }} {{ src_inband_ip }} && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|cpu-gw|{{ common.cpu_gateway }}|INBAND-gw" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|cpu-gw|{{ common.cpu_gateway }}|INBAND-gw" >> $R
-          {% endif %}
-          {% if common.support_gateway is defined %}
-          _p {{ common.support_gateway }} {{ src_inband_ip }} && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|support-gw|{{ common.support_gateway }}|INBAND-gw" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|support-gw|{{ common.support_gateway }}|INBAND-gw" >> $R
-          {% endif %}
-          {# storage_gateway test: source must be a storage host (i.e., have
-             a storage-vlan iface on bond0.<storage_vlan>). Pinging
-             storage_gateway from a compute/support host's INBAND iface was
-             always a cross-subnet test and is now a cross-VRF test on archs
-             where STORAGE is its own VRF (e.g. 2-8-9-800 with dedicated_gpu).
-             Gating on src_is_storage works in both modes: storage host's
-             storage iface and storage_gateway are always in the same VRF,
-             whether STORAGE is merged into INBAND (collapsed archs) or
-             first-class (dedicated_gpu archs). Retagged STORAGE-gw so the
-             classification is honest about which plane the ping is in. #}
-          {% if common.storage_gateway is defined and src_is_storage %}
-          _p {{ common.storage_gateway }} {{ src_inband_ip }} && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|storage-gw|{{ common.storage_gateway }}|STORAGE-gw" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|storage-gw|{{ common.storage_gateway }}|STORAGE-gw" >> $R
-          {% endif %}
-          {% endif %}
-          {# GPU gateway — plane-aware. Dual-plane archs have
-             common.gpu_plane1_gateway and common.gpu_plane2_gateway.
-             Test each plane's gateway from a NIC on that same plane.
-             Single-plane archs (common.gpu_gateway, no per-plane
-             gateways) fall through to the legacy single-gw block. #}
-          {% if src_is_compute and _src_gpu_ifaces | length >= 2 and common.gpu_plane1_gateway is defined and common.gpu_plane2_gateway is defined %}
-          {% set _sp1 = _src_gpu_ifaces[0] %}
-          {% set _sp2 = _src_gpu_ifaces[1] %}
-          _p {{ common.gpu_plane1_gateway }} {{ _sp1.ip | regex_replace('/.*', '') }} &&
-            echo "PASS|{{ _sp1.iface }}({{ _sp1.ip | regex_replace('/.*', '') }})|gpu-gw-{{ _sp1.plane }}|{{ common.gpu_plane1_gateway }}|GPU-gw-{{ _sp1.plane }}" >> $R ||
-            echo "FAIL|{{ _sp1.iface }}({{ _sp1.ip | regex_replace('/.*', '') }})|gpu-gw-{{ _sp1.plane }}|{{ common.gpu_plane1_gateway }}|GPU-gw-{{ _sp1.plane }}" >> $R
-          _p {{ common.gpu_plane2_gateway }} {{ _sp2.ip | regex_replace('/.*', '') }} &&
-            echo "PASS|{{ _sp2.iface }}({{ _sp2.ip | regex_replace('/.*', '') }})|gpu-gw-{{ _sp2.plane }}|{{ common.gpu_plane2_gateway }}|GPU-gw-{{ _sp2.plane }}" >> $R ||
-            echo "FAIL|{{ _sp2.iface }}({{ _sp2.ip | regex_replace('/.*', '') }})|gpu-gw-{{ _sp2.plane }}|{{ common.gpu_plane2_gateway }}|GPU-gw-{{ _sp2.plane }}" >> $R
-          {% elif src_is_compute and src_gpu_iface and src_gpu_ip and common.gpu_gateway is defined %}
-          _p {{ common.gpu_gateway }} {{ src_gpu_ip }} && echo "PASS|{{ src_gpu_iface }}({{ src_gpu_ip }})|gpu-gw|{{ common.gpu_gateway }}|GPU-gw" >> $R || echo "FAIL|{{ src_gpu_iface }}({{ src_gpu_ip }})|gpu-gw|{{ common.gpu_gateway }}|GPU-gw" >> $R
-          {% endif %}
-          echo "DONE" >> $R
-          '
+            SCRIPT='#!/bin/bash
+            R=/tmp/ping-matrix-results.txt
+            # Warm-up ARP cache (discard) then measure. Suppresses spurious
+            # first-ping failures from ARP/bond/STP convergence.
+            _p() { ping -c 1 -W 3 "$1" -I "$2" >/dev/null 2>&1; ping -c 2 -W 5 "$1" -I "$2" >/dev/null 2>&1; }
+            # Wait for L3 convergence before running the matrix. EVPN-MH +
+            # BGP underlay + bridge MAC learning can take 60-90s to settle
+            # after the sim reaches LOADED. Without this gate, ARP to the
+            # anycast VRR gateways (gpu-gw, cpu-gw, etc.) gets transient
+            # FAILs that do not reflect the steady-state network. We probe
+            # any one of the L3 gateways the host should be able to reach;
+            # if it comes up within 90s, we treat the data plane as
+            # converged and proceed. If it never comes up, we run the
+            # matrix anyway so the FAIL lines accurately surface the real
+            # config gap.
+            _wait_gateway() {
+              local target=$1 src=$2 i
+              for i in $(seq 1 18); do
+                ping -c 1 -W 2 "$target" -I "$src" >/dev/null 2>&1 && return 0
+                sleep 5
+              done
+              return 1
+            }
+            {% set _wait_gw = common.get("cpu_gateway") or common.get("support_gateway") %}
+            {% if _wait_gw and src_inband_ip %}
+            _wait_gateway {{ _wait_gw }} {{ src_inband_ip }} || true
+            {% endif %}
+            echo "HOST=$(hostname)" > $R
+            echo "TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $R
+            {% for dst in server_groups %}
+            {% if dst != item %}
+            {% set dst_dev = devices.get(dst, {}) %}
+            {% set dst_is_compute = dst.startswith('su-') or dst.startswith('node-') or dst.startswith('gpu-') %}
+            {% set dst_inband_ip = (dst_dev.get('bond_ip', '') if dst_is_compute else dst_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
+            {% set _dst_gpu_ifaces = dst_dev.get('gpu_interfaces', []) %}
+            {% set first_dst_gpu = (_dst_gpu_ifaces[0].ip | regex_replace('/.*', '')) if _dst_gpu_ifaces | length > 0
+                                   else ((dst_dev.get('gpu_ips', [])[0] | regex_replace('/.*', '')) if dst_dev.get('gpu_ips', []) | length > 0 else '') %}
+            {% if dst_inband_ip and src_inband_iface and src_inband_ip %}
+            {# Classify the L3 hop. If dst is a storage host AND Storage
+               VLAN lives in a different VRF than the source's VLAN
+               (e.g. STORAGE vs INBAND on 2-4-5-800 / 2-8-9-800), tag the
+               test CROSS-VRF — the cl/csl leaf has no route-leak between
+               INBAND and STORAGE, so the ping is expected to fail and is
+               not a real network issue. On legacy archs where Storage is
+               merged into INBAND, the VRFs match and we keep the INBAND
+               label so a same-VRF unreach surfaces as a real failure. #}
+            {% set dst_is_storage = dst.startswith('storage') %}
+            {% set _src_vrf = (common.storage_vrf if src_is_storage else common.get('cpu_vrf', 'INBAND')) %}
+            {% set _dst_vrf = (common.storage_vrf if dst_is_storage else common.get('cpu_vrf', 'INBAND')) %}
+            {% set _l3_tag = 'CROSS-VRF' if (_src_vrf and _dst_vrf and _src_vrf != _dst_vrf) else 'INBAND' %}
+            _p {{ dst_inband_ip }} {{ src_inband_ip }} && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}|{{ dst_inband_ip }}|{{ _l3_tag }}" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}|{{ dst_inband_ip }}|{{ _l3_tag }}" >> $R
+            {% endif %}
+            {# GPU pings — plane-aware. Dual-plane archs have gpu_interfaces[0]
+               on plane1 and gpu_interfaces[1] on plane2 (the parser
+               interleaves planes when emitting them). Test each plane
+               independently when both src and dst have a NIC on the same
+               plane. Cross-plane pings are architecturally not supposed
+               to work (separate L2 fabrics, distinct subnets, no L3 leak
+               between planes), so they're skipped here — no same-plane
+               pair means no ping, no false negative.
+               Single-plane archs (gpu_ips, no gpu_interfaces) fall
+               through to the legacy single-NIC block. #}
+            {% if dst_is_compute and src_is_compute and _src_gpu_ifaces | length >= 2 and _dst_gpu_ifaces | length >= 2 %}
+            {% set _sp1 = _src_gpu_ifaces[0] %}
+            {% set _sp2 = _src_gpu_ifaces[1] %}
+            {% set _dp1 = _dst_gpu_ifaces[0] %}
+            {% set _dp2 = _dst_gpu_ifaces[1] %}
+            {% if _sp1.plane == _dp1.plane %}
+            _p {{ _dp1.ip | regex_replace('/.*', '') }} {{ _sp1.ip | regex_replace('/.*', '') }} &&
+              echo "PASS|{{ _sp1.iface }}({{ _sp1.ip | regex_replace('/.*', '') }})|{{ dst }}-gpu|{{ _dp1.ip | regex_replace('/.*', '') }}|GPU-{{ _sp1.plane }}" >> $R ||
+              echo "FAIL|{{ _sp1.iface }}({{ _sp1.ip | regex_replace('/.*', '') }})|{{ dst }}-gpu|{{ _dp1.ip | regex_replace('/.*', '') }}|GPU-{{ _sp1.plane }}" >> $R
+            {% endif %}
+            {% if _sp2.plane == _dp2.plane %}
+            _p {{ _dp2.ip | regex_replace('/.*', '') }} {{ _sp2.ip | regex_replace('/.*', '') }} &&
+              echo "PASS|{{ _sp2.iface }}({{ _sp2.ip | regex_replace('/.*', '') }})|{{ dst }}-gpu|{{ _dp2.ip | regex_replace('/.*', '') }}|GPU-{{ _sp2.plane }}" >> $R ||
+              echo "FAIL|{{ _sp2.iface }}({{ _sp2.ip | regex_replace('/.*', '') }})|{{ dst }}-gpu|{{ _dp2.ip | regex_replace('/.*', '') }}|GPU-{{ _sp2.plane }}" >> $R
+            {% endif %}
+            {% elif dst_is_compute and src_is_compute and src_gpu_iface and src_gpu_ip and first_dst_gpu %}
+            _p {{ first_dst_gpu }} {{ src_gpu_ip }} && echo "PASS|{{ src_gpu_iface }}({{ src_gpu_ip }})|{{ dst }}-gpu|{{ first_dst_gpu }}|GPU" >> $R || echo "FAIL|{{ src_gpu_iface }}({{ src_gpu_ip }})|{{ dst }}-gpu|{{ first_dst_gpu }}|GPU" >> $R
+            {% elif dst_is_compute and not src_is_compute and src_inband_iface and src_inband_ip and first_dst_gpu %}
+            _p {{ first_dst_gpu }} {{ src_inband_ip }} && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}-gpu|{{ first_dst_gpu }}|CROSS-VRF" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}-gpu|{{ first_dst_gpu }}|CROSS-VRF" >> $R
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+            {% if src_inband_iface and src_inband_ip %}
+            {% if common.cpu_gateway is defined %}
+            _p {{ common.cpu_gateway }} {{ src_inband_ip }} && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|cpu-gw|{{ common.cpu_gateway }}|INBAND-gw" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|cpu-gw|{{ common.cpu_gateway }}|INBAND-gw" >> $R
+            {% endif %}
+            {% if common.support_gateway is defined %}
+            _p {{ common.support_gateway }} {{ src_inband_ip }} && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|support-gw|{{ common.support_gateway }}|INBAND-gw" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|support-gw|{{ common.support_gateway }}|INBAND-gw" >> $R
+            {% endif %}
+            {# storage_gateway test: source must be a storage host (i.e., have
+               a storage-vlan iface on bond0.<storage_vlan>). Pinging
+               storage_gateway from a compute/support host's INBAND iface was
+               always a cross-subnet test and is now a cross-VRF test on archs
+               where STORAGE is its own VRF (e.g. 2-8-9-800 with dedicated_gpu).
+               Gating on src_is_storage works in both modes: storage host's
+               storage iface and storage_gateway are always in the same VRF,
+               whether STORAGE is merged into INBAND (collapsed archs) or
+               first-class (dedicated_gpu archs). Retagged STORAGE-gw so the
+               classification is honest about which plane the ping is in. #}
+            {% if common.storage_gateway is defined and src_is_storage %}
+            _p {{ common.storage_gateway }} {{ src_inband_ip }} && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|storage-gw|{{ common.storage_gateway }}|STORAGE-gw" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|storage-gw|{{ common.storage_gateway }}|STORAGE-gw" >> $R
+            {% endif %}
+            {% endif %}
+            {# GPU gateway — plane-aware. Dual-plane archs have
+               common.gpu_plane1_gateway and common.gpu_plane2_gateway.
+               Test each plane's gateway from a NIC on that same plane.
+               Single-plane archs (common.gpu_gateway, no per-plane
+               gateways) fall through to the legacy single-gw block. #}
+            {% if src_is_compute and _src_gpu_ifaces | length >= 2 and common.gpu_plane1_gateway is defined and common.gpu_plane2_gateway is defined %}
+            {% set _sp1 = _src_gpu_ifaces[0] %}
+            {% set _sp2 = _src_gpu_ifaces[1] %}
+            _p {{ common.gpu_plane1_gateway }} {{ _sp1.ip | regex_replace('/.*', '') }} &&
+              echo "PASS|{{ _sp1.iface }}({{ _sp1.ip | regex_replace('/.*', '') }})|gpu-gw-{{ _sp1.plane }}|{{ common.gpu_plane1_gateway }}|GPU-gw-{{ _sp1.plane }}" >> $R ||
+              echo "FAIL|{{ _sp1.iface }}({{ _sp1.ip | regex_replace('/.*', '') }})|gpu-gw-{{ _sp1.plane }}|{{ common.gpu_plane1_gateway }}|GPU-gw-{{ _sp1.plane }}" >> $R
+            _p {{ common.gpu_plane2_gateway }} {{ _sp2.ip | regex_replace('/.*', '') }} &&
+              echo "PASS|{{ _sp2.iface }}({{ _sp2.ip | regex_replace('/.*', '') }})|gpu-gw-{{ _sp2.plane }}|{{ common.gpu_plane2_gateway }}|GPU-gw-{{ _sp2.plane }}" >> $R ||
+              echo "FAIL|{{ _sp2.iface }}({{ _sp2.ip | regex_replace('/.*', '') }})|gpu-gw-{{ _sp2.plane }}|{{ common.gpu_plane2_gateway }}|GPU-gw-{{ _sp2.plane }}" >> $R
+            {% elif src_is_compute and src_gpu_iface and src_gpu_ip and common.gpu_gateway is defined %}
+            _p {{ common.gpu_gateway }} {{ src_gpu_ip }} && echo "PASS|{{ src_gpu_iface }}({{ src_gpu_ip }})|gpu-gw|{{ common.gpu_gateway }}|GPU-gw" >> $R || echo "FAIL|{{ src_gpu_iface }}({{ src_gpu_ip }})|gpu-gw|{{ common.gpu_gateway }}|GPU-gw" >> $R
+            {% endif %}
+            echo "DONE" >> $R
+            '
 
-          SCRIPT_B64=$(echo "$SCRIPT" | base64 -w0)
-          timeout 20 $SSH_CMD "echo '$SCRIPT_B64' | base64 -d > /tmp/ping-matrix.sh && nohup bash /tmp/ping-matrix.sh > /dev/null 2>&1 &" 2>/dev/null
-          echo "FIRE|$NAME|OK"
-        ) &
-        {% endfor %}
-        wait
-      register: fire_results
+            SCRIPT_B64=$(echo "$SCRIPT" | base64 -w0)
+            timeout 20 $SSH_CMD "echo '$SCRIPT_B64' | base64 -d > /tmp/ping-matrix.sh && nohup bash /tmp/ping-matrix.sh > /dev/null 2>&1 &" 2>/dev/null
+            echo "FIRE|$NAME|OK"
+          )
       changed_when: false
 
-    - name: Show fire status
-      debug:
-        msg: "{{ fire_results.stdout }}"
+    - name: Wait for fire-phase async tasks to finish
+      async_status:
+        jid: "{{ item.ansible_job_id }}"
+      loop: "{{ fire_async.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      register: fire_status
+      until: fire_status.finished
+      retries: 30
+      delay: 2
+      changed_when: false
+      failed_when: false
 
     # ── Phase 2: Wait ──
     - name: Wait for all servers to finish pinging
@@ -189,6 +217,16 @@
         prompt: "Waiting 120s for all servers to complete ping tests..."
 
     # ── Phase 3: Collect (parallel) ──
+    # Tell the operator the collect fan-out is a single, deliberately-quiet step
+    # so the dead air doesn't read as a hang.
+    - name: "Progress — collecting ping results in parallel"
+      debug:
+        msg: >-
+          Collecting ping-matrix results from {{ server_groups | length }}
+          server(s) in parallel via the jump. This runs as ONE step and stays
+          quiet until every server returns — silence here is expected, not a hang.
+      run_once: true
+
     # All SSH connections run concurrently, same pattern as fire phase.
     - name: Collect results from all servers (parallel)
       shell: |

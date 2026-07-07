@@ -50,9 +50,9 @@ htmlcov/
 # Timestamped file backups
 archive/
 
-# Release archives built by `make release-tarball`
-/nc-v*.zip
+# Release artifacts built by `make release-tarball` (public artifact is nc-v<version>)
 /nc-v*.tar.gz
+/nc-v*.zip
 
 # Regeneration scratch dirs — never commit (use output/<arch>/<site>/ instead)
 /test_output/
@@ -66,8 +66,14 @@ architectural_docs/
 # Run: make import EXCEL=input/<filename>.xlsx
 input/*.xlsx
 input/*.xlsm
-# Exception: sample files are committed for testers to use directly
+# Exception: sample + shipped example workbooks are committed for testers/public.
+# largescale-* = largest verified scale per arch (see docs/ARCH_SUPPORT_MATRIX.md)
+# (flat default-*.xlsx stay LOCAL — never synced; the public default template is
+#  input/<arch>/default/<arch>.xlsx)
 !input/sample-*.xlsx
+!input/largescale-*.xlsx
+# Local scratch staging (old samples/defs parked here while building new ones)
+input/legacy/
 
 # Non-default input sites (user-specific, not committed)
 # input/<arch>/default/ is committed; all other site names are ignored
@@ -75,16 +81,23 @@ input/*/*/
 !input/*/default/
 
 # Non-default output sites (user-specific, not committed)
-# output/<arch>/default/ is committed; all other site names are ignored
+# output/<arch>/default/ + output/<arch>/largescale/ are committed as public
+# reference output; all other site names are ignored.
 output/*/*/
 !output/*/default/
+!output/*/largescale/
 
-# Volatile output subdirs — regenerated every run, no value in tracking
-output/*/default/reports/report-archive/
+# Volatile output subdirs — regenerated every validation/Air run, no value in
+# tracking. Only the generated inventory/, configs/, and topology/ (minus
+# node-instructions) belong in version control.
+output/*/default/reports/
 output/*/default/topology/node-instructions/
+output/*/largescale/reports/
+output/*/largescale/topology/node-instructions/
 
 # Local IDE/agent state
 .claude/
 .cursorrules
 .codex
 
+/images/

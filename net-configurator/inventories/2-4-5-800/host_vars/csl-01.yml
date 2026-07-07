@@ -1,0 +1,22 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+# ============================================================================
+# N/S Leaf 1 - csl-01
+# ============================================================================
+hostname: csl-01
+lo_ip: 172.16.1.4/32
+router_id: 172.16.1.4
+asn: 4200100004
+
+# VLAN SVI IPs (per-host)
+vlan200_ip: 172.16.2.2/24
+vlan300_ip: 172.16.3.2/24
+vlan400_ip: 172.16.4.2/24
+
+# VRF loopbacks
+vrf_loopbacks:
+  OOB: 172.16.1.20/32
+  INBAND: 172.16.1.22/32
+  STORAGE: 172.16.1.24/32

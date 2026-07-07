@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for oob-switch-01
-# Generated: 2026-05-28T18:03:06Z
+# Generated: 2026-07-02T12:36:51Z
 # Format: NVUE CLI commands
 
 #============================================================================

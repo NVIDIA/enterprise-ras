@@ -25,6 +25,7 @@ from excel_parser import (
     build_nodes_function_map,
     _build_wiremap_row_list,
     parse_nodes,
+    canonical_category,
 )
 from validate_excel import validate_loopbacks, ValidationResult
 
@@ -205,3 +206,46 @@ def test_loopbacks_no_false_positive_from_function_field():
         f"Bare canonical role 'csl' should error — it's a Function, not a "
         f"hostname. errors={r.errors!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# New leaf/spine taxonomy: cl/cs/gl/gs canonical roles + legacy aliases
+# ---------------------------------------------------------------------------
+
+def test_new_split_roles_resolve():
+    assert canonical_category("cl") == "cl"
+    assert canonical_category("cs") == "cs"
+    assert canonical_category("gl-plane1") == "gl-plane1"
+    assert canonical_category("gs-plane2") == "gs-plane2"
+
+
+def test_legacy_spine_names_purged():
+    # The branch-only legacy *-spine names are no longer canonical roles.
+    # An explicit legacy Function string now falls through to the hostname
+    # fallback, which resolves *-spine hostnames to the new cs / gs roles
+    # (and a bare 'csl-spine' string, lacking a trailing instance index,
+    # classifies as the converged 'csl' leaf).
+    assert canonical_category("csl-spine") == "csl"
+    assert canonical_category("gsl-spine-plane1") == "gs-plane1"
+    assert canonical_category("gsl-spine-plane2") == "gs-plane2"
+
+
+def test_converged_roles_unchanged():
+    assert canonical_category("csl") == "csl"
+    assert canonical_category("gsl-plane1") == "gsl-plane1"
+    assert canonical_category("core") == "core"
+
+
+def test_blank_function_spine_hostname_resolves_to_new_role():
+    # Hostname fallback: a blank-Function hostname resolves to the role its
+    # name advertises. New-taxonomy hostnames (gl-/gs-/cl-/cs-) return the new
+    # canonical so the WM hostname fallback agrees with the Nodes Function side
+    # (no canonical-vs-Function disagreement warnings). Legacy hostnames
+    # (gsl-plane*, csl-spine-*, csl-*) still resolve to their legacy canonicals
+    # so existing archs regenerate byte-identically.
+    assert canonical_category("", name="gs-plane1-01") == "gs-plane1"
+    assert canonical_category("", name="gl-plane1-01") == "gl-plane1"
+    assert canonical_category("", name="gsl-plane1-01") == "gsl-plane1"
+    assert canonical_category("", name="cs-01") == "cs"
+    assert canonical_category("", name="csl-spine-01") == "cs"
+    assert canonical_category("", name="cl-01") == "csl"

@@ -1,0 +1,17 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+# ============================================================================
+# E/W Plane 2 Leaf 2 - gl-plane2-02
+# ============================================================================
+hostname: gl-plane2-02
+lo_ip: 10.1.2.2/32
+router_id: 10.1.2.2
+asn: 4200102102
+
+# GPU SVI IP (plane 2)
+vlan900_ip: 192.168.16.3/20
+
+# GPU VRF loopback
+vrf_gpu_loopback: 10.1.2.12/32

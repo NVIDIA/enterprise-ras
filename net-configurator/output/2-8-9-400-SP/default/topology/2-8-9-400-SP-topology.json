@@ -1,0 +1,6039 @@
+{
+    "format": "JSON",
+    "title": "ERA-default-2-8-9-400-SP",
+    "ztp": null,
+    "content": {
+        "nodes": {
+            "csl-01": {
+                "cpu": 4,
+                "memory": 4096,
+                "storage": 20,
+                "positioning": {
+                    "x": 1650,
+                    "y": 0
+                },
+                "os": "cumulus-vx-5.16.1",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "csl-02": {
+                "cpu": 4,
+                "memory": 4096,
+                "storage": 20,
+                "positioning": {
+                    "x": 2200,
+                    "y": 0
+                },
+                "os": "cumulus-vx-5.16.1",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "cust-net-edge-01": {
+                "cpu": 4,
+                "memory": 4096,
+                "storage": 20,
+                "positioning": {
+                    "x": 1650,
+                    "y": -275
+                },
+                "os": "cumulus-vx-5.16.1",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "cust-net-edge-02": {
+                "cpu": 4,
+                "memory": 4096,
+                "storage": 20,
+                "positioning": {
+                    "x": 2200,
+                    "y": -275
+                },
+                "os": "cumulus-vx-5.16.1",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "ext-storage-01": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3300,
+                    "y": -275
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "ext-storage-02": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3575,
+                    "y": -275
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "gsl-plane1-01": {
+                "cpu": 4,
+                "memory": 4096,
+                "storage": 20,
+                "positioning": {
+                    "x": 3300,
+                    "y": 0
+                },
+                "os": "cumulus-vx-5.16.1",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "gsl-plane1-02": {
+                "cpu": 4,
+                "memory": 4096,
+                "storage": 20,
+                "positioning": {
+                    "x": 3575,
+                    "y": 0
+                },
+                "os": "cumulus-vx-5.16.1",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "oob-switch-01": {
+                "cpu": 1,
+                "memory": 2048,
+                "storage": 20,
+                "positioning": {
+                    "x": 2750,
+                    "y": 275
+                },
+                "os": "cumulus-vx-5.15.1",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "oob-switch-02": {
+                "cpu": 1,
+                "memory": 2048,
+                "storage": 20,
+                "positioning": {
+                    "x": 2750,
+                    "y": 550
+                },
+                "os": "cumulus-vx-5.15.1",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-01-node-01": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3300,
+                    "y": 275
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-01-node-02": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3300,
+                    "y": 550
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-01-node-03": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3300,
+                    "y": 825
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-01-node-04": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3300,
+                    "y": 1100
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-02-node-01": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3575,
+                    "y": 275
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-02-node-02": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3575,
+                    "y": 550
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-02-node-03": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3575,
+                    "y": 825
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "su-02-node-04": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 3575,
+                    "y": 1100
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "support-01": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1925,
+                    "y": 275
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "support-02": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1925,
+                    "y": 550
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "support-03": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1925,
+                    "y": 825
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "support-04": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1925,
+                    "y": 1100
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "support-05": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1925,
+                    "y": 1375
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "support-06": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1925,
+                    "y": 1650
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "support-07": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1925,
+                    "y": 1925
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "external-conn": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1650,
+                    "y": -550
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "external-dhcp": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 1375,
+                    "y": -275
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            },
+            "utility": {
+                "cpu": 1,
+                "memory": 1024,
+                "storage": 20,
+                "positioning": {
+                    "x": 2475,
+                    "y": 275
+                },
+                "os": "generic/ubuntu2204",
+                "features": {
+                    "uefi": false,
+                    "tpm": false
+                },
+                "pxehost": false,
+                "secureboot": false,
+                "oob": false,
+                "emulation_type": null,
+                "network_pci": {}
+            }
+        },
+        "links": [
+            [
+                {
+                    "interface": "eth1",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:d7:da:39",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp1s0",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:56:98:97",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:23:5d:c2",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp1s0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:c1:09:ab",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth3",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:39:80:66",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp1s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:0d:23:07",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth4",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:2a:1e:be",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp1s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:a9:19:3b",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth5",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:10:3e:e2",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp1s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:6d:a8:eb",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth6",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:32:df:de",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp1s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:3c:64:29",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth7",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:dd:2d:55",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp2s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:9c:4b:b4",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth8",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:99:c7:16",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp2s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:db:63:61",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth9",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:08:bf:04",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp2s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:5c:11:fd",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth10",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:ed:a1:b8",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp2s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:c6:4c:86",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:90:10:b7",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp1s1",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:b1:82:b3",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:0b:2c:49",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp1s1",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:e0:e5:56",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth3",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:25:e5:40",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp3s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:e5:44:8a",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth4",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:54:b6:58",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp3s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:48:f4:8f",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth5",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:4f:3f:64",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp3s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:85:5b:4a",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth6",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:49:6a:18",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp3s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:b2:4c:9c",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth7",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:3c:86:4a",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp4s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:1c:99:f2",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth8",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:e9:ac:86",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp4s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:d8:fa:d7",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth9",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:4b:da:73",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp4s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:a3:ae:40",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth10",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:8c:0c:fb",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp4s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:9e:78:67",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:c8:84:57",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp2s0",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:9f:3a:84",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:5a:91:e9",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp2s0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:1d:52:42",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth3",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:9f:7d:c4",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:4c:1b:71",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth4",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:75:45:39",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:2c:ae:85",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth5",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:84:02:c4",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:21:f8:1f",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth6",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:1e:e0:e5",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:e4:d1:8d",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth7",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:69:c3:5a",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp6s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:07:4b:4c",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth8",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:ba:0a:2e",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp6s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:ed:35:cf",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth9",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:90:3e:1c",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp6s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:76:f6:6c",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth10",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:84:01:15",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp6s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:51:3d:26",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:5e:e7:37",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp2s1",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:8b:3c:6c",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:ee:ee:1c",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp2s1",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:2d:0e:c8",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth3",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:fc:2c:90",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp7s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:92:09:01",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth4",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:8d:b5:21",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp7s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:2b:35:0b",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth5",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:d3:a8:92",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp7s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:05:d5:2c",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth6",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:f5:b0:9f",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp7s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:50:52:d2",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth7",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:65:82:91",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp8s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:21:c8:eb",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth8",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:2d:b2:ae",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp8s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:05:d5:c7",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth9",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:5f:f2:b6",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp8s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:3e:a8:ae",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth10",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:4c:b5:42",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp8s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:7b:20:c9",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:b8:ed:8d",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp3s0",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:ad:f5:cb",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:0d:d2:18",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp3s0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:0c:a7:cc",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth3",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:b6:ec:c1",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp9s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:e3:98:ff",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth4",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:70:5d:09",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp9s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:5b:57:76",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth5",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:92:ec:a4",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp9s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:79:90:ab",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth6",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:bd:04:b8",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp9s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:9a:4a:b6",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth7",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:ee:2d:c1",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp10s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:4f:a1:95",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth8",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:f1:a8:4b",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp10s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:ea:bc:e7",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth9",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:85:0d:c0",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp10s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:de:bc:4d",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth10",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:b7:4d:14",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp10s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:ee:cb:12",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:13:2a:dc",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp3s1",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:76:ea:88",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:c8:2e:9e",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp3s1",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:46:97:28",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth3",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:e5:79:f0",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp11s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:c5:2d:6a",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth4",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:4c:cd:fb",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp11s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:37:e1:30",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth5",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:d7:d2:24",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp11s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:1e:56:5f",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth6",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:f4:0a:74",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp11s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:41:50:c0",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth7",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:d4:49:63",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp12s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:4c:41:43",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth8",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:9b:f6:7d",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp12s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:7f:53:cb",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth9",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:90:26:40",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp12s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:50:8c:90",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth10",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:89:61:a1",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp12s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:cf:b8:58",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:6e:fc:7a",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp4s0",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:10:25:69",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:0a:e4:5d",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp4s0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:41:34:a6",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth3",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:c9:f0:e3",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp13s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:23:29:97",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth4",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:80:86:bf",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp13s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:a6:aa:4c",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth5",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:4a:57:d1",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp13s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:55:8d:1a",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth6",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:2a:80:60",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp13s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:b5:31:00",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth7",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:ee:50:a8",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp14s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:6b:3c:77",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth8",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:f4:7f:96",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp14s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:e2:9e:e2",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth9",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:06:57:97",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp14s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:25:eb:fe",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth10",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:52:28:52",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp14s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:ec:1b:26",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:d9:1d:b1",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp4s1",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:42:5e:0b",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:39:84:4e",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp4s1",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:02:d7:e2",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth3",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:08:c9:a7",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp15s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:5d:78:2c",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth4",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:9b:cf:17",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp15s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:d4:df:aa",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth5",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:22:1f:82",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp15s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:4b:d3:f6",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth6",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:bf:66:4e",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp15s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:91:87:2a",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth7",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:86:67:71",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp16s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:04:61:99",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth8",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:e7:1a:88",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp16s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:84:64:6e",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth9",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:a8:a3:06",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp16s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:f2:93:d1",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth10",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:d2:96:4c",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp16s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:ed:81:3f",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "support-01",
+                    "mac": "48:b0:2d:da:89:48",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5s0",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:dd:fb:a7",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "support-01",
+                    "mac": "48:b0:2d:b7:d9:4c",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5s0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:c9:b4:73",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "support-02",
+                    "mac": "48:b0:2d:57:7b:62",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5s1",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:4f:5d:79",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "support-02",
+                    "mac": "48:b0:2d:d4:ed:a3",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5s1",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:d4:98:9c",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "support-03",
+                    "mac": "48:b0:2d:a3:3e:35",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5s2",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:1e:a5:6c",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "support-03",
+                    "mac": "48:b0:2d:bf:fd:ba",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5s2",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:19:74:4e",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "support-04",
+                    "mac": "48:b0:2d:41:e6:1b",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5s3",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:79:00:14",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "support-04",
+                    "mac": "48:b0:2d:06:94:5e",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5s3",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:de:10:ec",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "support-05",
+                    "mac": "48:b0:2d:b4:4a:04",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp6s0",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:b3:b0:d8",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "support-05",
+                    "mac": "48:b0:2d:c5:89:46",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp6s0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:21:35:cf",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "support-06",
+                    "mac": "48:b0:2d:c7:64:77",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp6s1",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:27:67:68",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "support-06",
+                    "mac": "48:b0:2d:42:92:20",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp6s1",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:b6:00:e4",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "support-07",
+                    "mac": "48:b0:2d:ac:20:db",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp6s2",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:5f:bc:49",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "support-07",
+                    "mac": "48:b0:2d:ac:d5:e1",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp6s2",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:69:d3:25",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp49s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:5b:c1:e7",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp49s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:31:7f:ad",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp49s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:9f:37:21",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp49s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:ff:53:e1",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp50s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:ea:ff:f4",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp50s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:8e:fb:80",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp50s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:29:9a:a4",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp50s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:8c:ce:ca",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp51s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:de:61:31",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp51s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:b0:fa:ab",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp51s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:ce:d4:2a",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp51s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:21:25:df",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp52s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:c5:d2:89",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp52s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:26:a8:92",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp52s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:cb:de:ff",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp52s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:cd:06:4a",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp53s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:6a:97:74",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp53s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:45:85:ef",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp53s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:cf:7f:6b",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp53s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:a9:52:55",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp54s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:c4:47:d6",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp54s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:c7:71:b5",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp54s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:e1:65:36",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp54s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:f3:2c:37",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp55s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:44:de:b7",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp55s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:22:36:57",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp55s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:42:c7:a2",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp55s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:1d:03:b8",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp56s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:25:96:f7",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp56s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:b4:fa:21",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp56s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:be:1b:c9",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp56s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:73:d7:b2",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp57s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:fb:6a:a9",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp57s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:1c:20:b1",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp57s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:b7:10:28",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp57s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:19:a6:b6",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp58s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:05:35:cf",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp58s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:60:15:61",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp58s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:e0:86:12",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp58s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:ad:9b:07",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp59s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:99:1e:31",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp59s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:b5:8f:f5",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp59s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:9e:60:f3",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp59s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:e3:23:f4",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp60s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:2d:d4:c7",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp60s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:da:12:d3",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp60s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:03:80:ed",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp60s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:e9:bb:51",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp61s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:6d:02:a7",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp61s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:c5:1e:2c",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp61s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:81:5a:f4",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp61s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:44:c6:24",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp62s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:6a:06:24",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp62s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:11:ae:1f",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp62s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:29:81:03",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp62s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:02:2b:58",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp63s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:d6:2f:ed",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp63s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:e9:d6:3a",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp63s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:e7:01:92",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp63s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:33:0d:ed",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp64s0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:1a:df:bb",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp64s0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:5f:c2:a6",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp64s1",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:bb:b6:bb",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp64s1",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:82:00:7c",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp56s0",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:73:49:9c",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp56s0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:67:27:93",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp56s1",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:7a:d1:51",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp56s1",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:28:f2:cf",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp57s0",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:fc:e2:8f",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp57s0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:42:34:b0",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp57s1",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:c0:c9:7e",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp57s1",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:5d:2a:50",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp58s0",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:04:f2:9b",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp58s0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:c3:77:d7",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp59s0",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:13:95:bb",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp49",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:ca:31:eb",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp59s1",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:4e:6a:06",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp49",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:ff:7c:b9",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp59s0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:99:74:94",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp51",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:bf:69:0d",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp59s1",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:77:5e:68",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp51",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:15:56:a9",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp63s0",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:fa:3c:b9",
+                    "network_pci": null
+                },
+                {
+                    "interface": "eth1",
+                    "node": "ext-storage-01",
+                    "mac": "48:b0:2d:2c:36:32",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp63s1",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:bd:a6:98",
+                    "network_pci": null
+                },
+                {
+                    "interface": "eth1",
+                    "node": "ext-storage-02",
+                    "mac": "48:b0:2d:8c:26:86",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp64s0",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:2c:59:ef",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp29",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:07:74:2f",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp64s1",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:32:97:1b",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp29",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:bd:60:6d",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp63s0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:07:a3:18",
+                    "network_pci": null
+                },
+                {
+                    "interface": "eth2",
+                    "node": "ext-storage-01",
+                    "mac": "48:b0:2d:6f:71:7b",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp63s1",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:26:75:97",
+                    "network_pci": null
+                },
+                {
+                    "interface": "eth2",
+                    "node": "ext-storage-02",
+                    "mac": "48:b0:2d:72:83:27",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp64s0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:ef:52:ab",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp30",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:7c:b7:e0",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp64s1",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:6b:03:53",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp30",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:2d:2d:db",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "su-01-node-01",
+                    "mac": "48:b0:2d:79:6c:d7",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp33",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:6c:98:2e",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "su-01-node-02",
+                    "mac": "48:b0:2d:7a:db:6b",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp34",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:40:e6:10",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "su-01-node-03",
+                    "mac": "48:b0:2d:f5:bd:25",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp35",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:b4:0b:6a",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "su-01-node-04",
+                    "mac": "48:b0:2d:fc:01:bf",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp36",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:64:79:bb",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "support-01",
+                    "mac": "48:b0:2d:be:40:ad",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp37",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:11:d3:42",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "support-03",
+                    "mac": "48:b0:2d:de:e6:5f",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp38",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:c1:03:34",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "support-04",
+                    "mac": "48:b0:2d:5c:a9:e5",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp39",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:95:63:45",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "support-06",
+                    "mac": "48:b0:2d:36:2f:63",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp40",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:41:36:15",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "su-02-node-01",
+                    "mac": "48:b0:2d:03:2b:62",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp33",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:c9:4a:9e",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "su-02-node-02",
+                    "mac": "48:b0:2d:97:d9:c1",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp34",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:a2:08:fb",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "su-02-node-03",
+                    "mac": "48:b0:2d:cb:e1:18",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp35",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:e4:7d:2e",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "su-02-node-04",
+                    "mac": "48:b0:2d:9a:2e:74",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp36",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:4e:73:90",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "support-02",
+                    "mac": "48:b0:2d:92:d8:4d",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp37",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:4b:f5:f6",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "support-05",
+                    "mac": "48:b0:2d:64:1c:99",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp38",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:2e:15:e6",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "support-07",
+                    "mac": "48:b0:2d:b4:db:9e",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp39",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:f9:94:86",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:5b:32:38",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp1",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:9f:a2:f5",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:fb:08:86",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp1",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:0d:c7:0f",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:0d:8d:fb",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp2",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:82:2b:b1",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:8f:df:3d",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp2",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:f1:05:35",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:ee:61:ba",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp3",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:d7:78:6b",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:28:8c:b8",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp3",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:2a:26:d5",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp4",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:73:d2:d6",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp4",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:be:5b:54",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "external-conn",
+                    "mac": "48:b0:2d:00:58:f3",
+                    "network_pci": null
+                },
+                "outbound"
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "external-conn",
+                    "mac": "48:b0:2d:17:b9:5c",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:be:6f:fc",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "external-conn",
+                    "mac": "48:b0:2d:62:54:d6",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp5",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:bb:29:7a",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "external-dhcp",
+                    "mac": "48:b0:2d:f2:e9:7d",
+                    "network_pci": null
+                },
+                "outbound"
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "external-dhcp",
+                    "mac": "48:b0:2d:ea:48:c3",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp6",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:c7:b3:fb",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "external-dhcp",
+                    "mac": "48:b0:2d:73:9c:ac",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp7",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:cd:15:1c",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "utility",
+                    "mac": "48:b0:2d:49:f0:c9",
+                    "network_pci": null
+                },
+                "outbound"
+            ],
+            [
+                {
+                    "interface": "eth1",
+                    "node": "utility",
+                    "mac": "48:b0:2d:cd:ab:cb",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp1",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:9c:d9:79",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth2",
+                    "node": "utility",
+                    "mac": "48:b0:2d:22:a1:4e",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp8",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:61:79:07",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "ext-storage-01",
+                    "mac": "48:b0:2d:e8:22:37",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp9",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:39:62:fc",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "ext-storage-02",
+                    "mac": "48:b0:2d:65:84:7a",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp10",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:dd:34:7c",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp7",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:5c:f1:3a",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp8",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:fb:57:0c",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp9",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:de:bb:09",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp10",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:af:b0:cc",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp11",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:41:68:3e",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp12",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:f4:5e:d3",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp13",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:c4:e5:9d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp14",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:8b:9e:fb",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp15",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:5a:74:5c",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp16",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:f8:7f:a4",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp17",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:a9:80:04",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp18",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:3f:b3:03",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp19",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:1c:24:e9",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp20",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:63:9a:f3",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp21",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:0f:9f:e5",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp22",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:2e:6a:3b",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp23",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:70:8e:70",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp24",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:03:76:e8",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp25",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:cd:b8:33",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp26",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:ed:47:26",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp27",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:03:3c:a4",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp28",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:86:aa:8c",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp29",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:af:76:ca",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp30",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:81:e8:a1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp31",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:68:5a:c6",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp32",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:78:8b:bb",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp33",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:3b:78:c9",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp34",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:45:4c:65",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp35",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:6f:23:d8",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp36",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:f3:d3:bd",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp37",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:bf:40:c4",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp38",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:62:fd:2b",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp39",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:ec:39:1e",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp40",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:4f:1c:0e",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp41",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:07:c1:b1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp42",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:86:19:69",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp43",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:07:db:08",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp44",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:dc:5f:08",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp45",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:a0:34:32",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp46",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:89:25:5b",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp47",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:eb:6f:99",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp48",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:f6:c8:13",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp49",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:9e:84:2d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp50",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:7c:c7:86",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp51",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:c0:bd:86",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp52",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:b8:50:bf",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp53",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:e1:49:79",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp54",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:69:a7:04",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp55",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:ce:29:34",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp59s2",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:7d:ac:c7",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp59s3",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:29:51:4f",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp59s4",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:75:bb:27",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp59s5",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:d0:ff:5f",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp59s6",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:f6:77:4f",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp59s7",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:6d:0f:db",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp61",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:a8:b6:f1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp62",
+                    "node": "csl-01",
+                    "mac": "48:b0:2d:72:cc:5a",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp7",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:af:82:b1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp8",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:2f:fe:c7",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp9",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:b1:72:6b",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp10",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:24:5e:47",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp11",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:34:5a:89",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp12",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:18:1a:f2",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp13",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:4c:30:ba",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp14",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:7d:2a:ea",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp15",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:ce:2a:fd",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp16",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:1e:02:33",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp17",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:a7:76:be",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp18",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:75:c8:e0",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp19",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:5f:0d:c2",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp20",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:cc:62:67",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp21",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:98:d7:13",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp22",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:78:8d:6e",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp23",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:e7:f6:ae",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp24",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:bf:1d:a7",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp25",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:c3:85:c6",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp26",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:64:19:af",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp27",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:2b:26:c8",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp28",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:83:49:14",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp29",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:92:bd:72",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp30",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:d5:9c:c0",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp31",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:7c:53:bc",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp32",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:04:88:12",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp33",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:c9:1d:54",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp34",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:db:37:9f",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp35",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:90:b0:eb",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp36",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:0e:bb:56",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp37",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:87:b1:dc",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp38",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:9f:38:42",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp39",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:e5:0f:26",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp40",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:78:b5:a9",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp41",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:3c:88:aa",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp42",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:f0:b6:33",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp43",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:55:a2:e4",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp44",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:13:50:b9",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp45",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:90:7a:a6",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp46",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:db:37:47",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp47",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:c1:e6:60",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp48",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:83:31:1a",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp49",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:50:1d:64",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp50",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:e2:58:e6",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp51",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:28:24:4b",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp52",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:7e:90:99",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp53",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:21:97:f8",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp54",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:cc:d7:cb",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp55",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:38:a3:bf",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp59s2",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:84:73:ef",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp59s3",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:04:53:f6",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp59s4",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:67:f2:2d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp59s5",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:83:9c:46",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp59s6",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:b4:bc:e4",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp59s7",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:0c:84:4e",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp61",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:f3:45:98",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp62",
+                    "node": "csl-02",
+                    "mac": "48:b0:2d:17:e4:27",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp11",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:d6:d7:e7",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp12",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:9c:ad:80",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp13",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:d9:69:0d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp14",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:93:44:12",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp15",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:93:c6:88",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp16",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:3c:3b:39",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp17",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:50:a1:74",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp18",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:3c:d5:b6",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp19",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:23:ed:0b",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp20",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:34:39:4c",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp21",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:50:c4:ca",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp22",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:9a:08:00",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp23",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:76:b4:fa",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp24",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:ef:fb:37",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp25",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:27:be:d1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp26",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:0a:dc:34",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp27",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:f5:94:f5",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp28",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:39:d2:0d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp31",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:a3:fc:22",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp32",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:94:2f:a8",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp33",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:cc:7a:32",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp34",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:27:7e:85",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp35",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:bc:06:b7",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp36",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:3d:17:45",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp37",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:a1:a9:bc",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp38",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:df:a6:39",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp39",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:af:fa:cb",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp40",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:f8:6a:a9",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp41",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:0c:f0:88",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp42",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:f6:f3:55",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp43",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:15:58:55",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp44",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:a0:cf:01",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp45",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:d0:33:c6",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp46",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:3a:ef:03",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp47",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:87:5c:07",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp48",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:bb:c8:36",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:cc:ba:11",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp6",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:1f:c5:bd",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp7",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:b9:3c:e7",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp8",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:f5:d5:9b",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp9",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:c9:24:9d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp10",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:9b:80:7d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp11",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:36:03:a5",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp12",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:e5:4b:ff",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp13",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:4a:84:e1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp14",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:70:9c:ca",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp15",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:98:aa:c1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp16",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:c8:18:9b",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp17",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:ae:ba:23",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp18",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:a1:99:4d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp19",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:43:d0:8a",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp20",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:62:39:f9",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp21",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:6a:96:19",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp22",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:91:e3:98",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp23",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:e6:59:aa",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp24",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:64:b1:af",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp25",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:6b:31:8b",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp26",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:eb:5a:3d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp27",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:7e:fc:ed",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp28",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:83:66:e1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp31",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:0e:21:66",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp32",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:d8:3f:44",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp33",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:02:c6:56",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp34",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:ab:50:4c",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp35",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:09:ff:6a",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp36",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:e6:bb:3e",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp37",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:f5:79:b7",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp38",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:02:b1:2c",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp39",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:e4:cc:73",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp40",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:b4:27:d8",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp41",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:27:bb:55",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp42",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:f6:84:25",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp43",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:a1:bd:57",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp44",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:68:16:01",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp45",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:04:50:e7",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp46",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:bd:de:fe",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp47",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:bd:43:67",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp48",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:91:e4:a9",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "eth0",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:88:21:03",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp17",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:08:44:9f",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp18",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:3b:d6:2f",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp19",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:a7:9e:d3",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp20",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:04:a1:87",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp21",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:a4:0e:58",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp22",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:21:a2:18",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp23",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:b9:4f:95",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp24",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:4f:91:d9",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp25",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:c9:0d:8e",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp26",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:27:8b:03",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp27",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:6b:e6:ff",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp28",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:e3:92:17",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp29",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:5c:6c:68",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp30",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:49:31:c7",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp31",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:eb:d1:be",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp32",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:0b:65:eb",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp33",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:0e:1a:c3",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp34",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:5c:29:3a",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp35",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:11:65:f8",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp36",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:7e:74:18",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp37",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:02:cf:29",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp38",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:fc:94:37",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp39",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:1b:04:c9",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp40",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:64:83:72",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp41",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:2a:e0:20",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp42",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:10:16:9d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp43",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:ec:72:82",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp44",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:00:03:c9",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp45",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:f9:28:9e",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp46",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:c3:00:05",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp47",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:2c:ee:85",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp48",
+                    "node": "gsl-plane1-01",
+                    "mac": "48:b0:2d:f1:2f:2c",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp17",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:37:17:f7",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp18",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:54:eb:e4",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp19",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:3b:2b:eb",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp20",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:32:81:34",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp21",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:ba:04:4f",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp22",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:e8:f7:7a",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp23",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:d4:ea:65",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp24",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:c4:04:a5",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp25",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:8e:b0:28",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp26",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:5c:d9:5f",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp27",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:e9:e6:9f",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp28",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:32:0a:38",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp29",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:f9:0f:07",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp30",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:70:ea:7f",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp31",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:1f:0f:be",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp32",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:87:7a:22",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp33",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:fe:c6:e1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp34",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:fe:33:cf",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp35",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:66:02:db",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp36",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:42:45:72",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp37",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:8e:e8:3b",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp38",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:b3:89:33",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp39",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:f4:34:48",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp40",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:0f:e2:c1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp41",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:63:58:73",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp42",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:31:b3:26",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp43",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:d7:56:7c",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp44",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:fe:6b:37",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp45",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:26:b3:e1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp46",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:b6:e7:fb",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp47",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:92:aa:14",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp48",
+                    "node": "gsl-plane1-02",
+                    "mac": "48:b0:2d:27:75:03",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp2",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:09:d2:7f",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp3",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:79:17:1c",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp4",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:a6:c9:10",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp5",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:c7:98:67",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp6",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:01:67:89",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp7",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:3d:25:e4",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp8",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:04:a2:b6",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp9",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:97:79:87",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp10",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:10:3e:af",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp11",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:f6:9a:1b",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp12",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:d2:5f:6f",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp13",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:62:88:0a",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp14",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:7e:e0:bd",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp15",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:d1:82:21",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp16",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:8c:74:39",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp17",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:6f:29:96",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp18",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:c9:aa:a5",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp19",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:08:bf:69",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp20",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:2b:73:12",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp21",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:aa:7f:52",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp22",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:c3:ee:75",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp23",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:21:d2:b2",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp24",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:4c:c7:5a",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp25",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:a9:44:e0",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp26",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:16:6d:30",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp27",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:5b:cf:2a",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp28",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:06:12:9f",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp29",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:0e:bb:15",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp30",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:8a:5b:b1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp31",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:85:e7:74",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp32",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:c2:90:bb",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp41",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:08:8f:ff",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp42",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:fb:de:03",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp43",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:6b:19:b3",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp44",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:dc:92:d2",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp45",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:f2:e8:f4",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp46",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:bf:7a:3b",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp47",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:af:35:ec",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp48",
+                    "node": "oob-switch-01",
+                    "mac": "48:b0:2d:27:4b:83",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp1",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:98:80:30",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp2",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:6c:1a:22",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp3",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:a4:6a:16",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp4",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:ee:79:cb",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp5",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:fe:82:da",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp6",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:21:9c:2c",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp7",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:dd:fe:90",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp8",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:3c:b8:9c",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp9",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:0b:b5:fb",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp10",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:6c:ec:99",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp11",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:54:40:c7",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp12",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:f2:c4:5d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp13",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:d4:5f:eb",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp14",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:37:0f:f7",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp15",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:4c:9c:69",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp16",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:ca:3e:ab",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp17",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:87:8c:52",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp18",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:f0:5c:50",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp19",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:04:04:eb",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp20",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:15:68:ed",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp21",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:40:30:b7",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp22",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:71:7d:d5",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp23",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:5f:1e:5b",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp24",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:aa:cd:a1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp25",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:1a:79:4a",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp26",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:d7:91:1d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp27",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:52:cb:25",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp28",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:c0:f3:d6",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp29",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:f7:68:b6",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp30",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:15:7a:ea",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp31",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:f9:14:43",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp32",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:08:df:61",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp40",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:04:14:6e",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp41",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:ce:a3:d1",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp42",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:4c:de:43",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp43",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:71:2e:78",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp44",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:51:06:01",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp45",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:92:15:3d",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp46",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:21:7c:e2",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp47",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:25:06:10",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
+                    "interface": "swp48",
+                    "node": "oob-switch-02",
+                    "mac": "48:b0:2d:02:9d:e8",
+                    "network_pci": null
+                },
+                "unconnected"
+            ]
+        ],
+        "oob": false
+    },
+    "_air_oob": {},
+    "_l3_oob": {
+        "jump_host": "utility",
+        "ansible_target": "utility",
+        "status_page_host": "utility",
+        "nat_host": "external-conn",
+        "dhcp_relay_server": "external-dhcp",
+        "edge_switch": "cust-net-edge-01",
+        "oob_switch": "oob-switch-01",
+        "rewired_switches": [],
+        "utility_air_mgmt_iface": "eth2"
+    },
+    "_oob_uplink_mode": "l3"
+}

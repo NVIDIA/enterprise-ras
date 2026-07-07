@@ -106,6 +106,38 @@ make validate-ztp ARCH=2-8-5-200
 make validate-config ARCH=2-8-5-200
 ```
 
+#### `validate-switch-health.yml` — Switch Operational Health
+
+**Purpose**: Tier-1 switch health — clean config apply + BGP sessions Established + EVPN ES/VNI + interface state, in one per-switch SSH session (also runs as phase 4 of `validate-all`)
+
+```bash
+make validate-switch-health ARCH=2-8-5-200
+```
+
+#### `validate-oob-bgp.yml` — OOB↔CSL BGP Check
+
+**Purpose**: Gating check that every OOB-switch BGP neighbor is Established (L3 OOB only; N/A otherwise). Runs as part of `validate-ztp`.
+
+```bash
+make validate-oob-bgp ARCH=2-8-5-200
+```
+
+#### `validate-servers.yml` — Validate Server Config
+
+**Purpose**: Verify server bonds, VLANs, LLDP, gateway/internet connectivity via the jump host
+
+```bash
+make validate-servers ARCH=2-8-5-200
+```
+
+#### `validate-ping-matrix.yml` — Server-to-Server Ping Matrix
+
+**Purpose**: Full server-to-server ping matrix across all VLANs
+
+```bash
+make validate-ping-matrix ARCH=2-8-5-200
+```
+
 #### `push-switch-configs.yml` — Push Configs to Switches
 
 **Purpose**: Push and apply generated NVUE CLI configs to core and OOB switches
@@ -129,6 +161,18 @@ make restart-ldap ARCH=2-8-5-200
 ```bash
 make restart-ldap-direct ARCH=2-8-5-200
 ```
+
+---
+
+### Status Page & Reports
+
+#### `setup-status-page.yml` — Status / Report Page
+
+**Purpose**: Stand up the HTTP status + validation-report page (basic-auth from `status_page_username`/`status_page_password`) when `status_page_enabled=Yes`. Invoked automatically by the deploy pipeline; not a standalone Make target.
+
+#### `upload-reports.yml` — Upload Validation Reports
+
+**Purpose**: Publish the `validate-all` reports to `/reports/` on the status page. Invoked by the validation pipeline when the status page is enabled.
 
 ---
 
@@ -194,9 +238,15 @@ make ztp-update ARCH=2-8-5-200
 | `validate-ztp-direct.yml` | Validate switch configs | `make validate-ztp-direct` |
 | `validate-ztp.yml` | Validate via ZTP server | `make validate-ztp` |
 | `validate-config.yml` | Compare running vs generated config | `make validate-config` |
+| `validate-switch-health.yml` | Switch operational health (apply/BGP/EVPN/interfaces) | `make validate-switch-health` |
+| `validate-oob-bgp.yml` | OOB↔CSL BGP Established check | `make validate-oob-bgp` |
+| `validate-servers.yml` | Server bonds/VLANs/LLDP/connectivity | `make validate-servers` |
+| `validate-ping-matrix.yml` | Server-to-server ping matrix | `make validate-ping-matrix` |
 | `push-switch-configs.yml` | Push NVUE configs to switches | `make push-switch-configs` |
 | `restart-ldap-switches.yml` | Restart LDAP (via OOB) | `make restart-ldap` |
 | `restart-ldap-switches-direct.yml` | Restart LDAP (direct) | `make restart-ldap-direct` |
+| `setup-status-page.yml` | Status / validation-report page | *(pipeline)* |
+| `upload-reports.yml` | Publish reports to the status page | *(pipeline)* |
 
 ---
 

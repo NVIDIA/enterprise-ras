@@ -15,18 +15,23 @@
   gather_facts: no
 
   tasks:
-    - name: Ensure reports directories exist
+    - name: Ensure reports directory exists
       file:
-        path: "{{ item }}"
+        path: /var/www/ztp/reports
         state: directory
         mode: '0755'
         owner: www-data
         group: www-data
-      loop:
-        - /var/www/ztp/reports
-        - /var/www/ztp/reports/raw
 
-    - name: Upload top-level summary report files
+    # SECURITY: only the top-level *summary* reports are published to the
+    # status page. The per-host raw/ files (config-<sw>.txt) intentionally
+    # contain FULL generated + running switch configs, including the lines
+    # validate-config filters as "secrets/passwords" (LDAP bind secret,
+    # cumulus password, hashed-password). Publishing those to the nginx
+    # status page — basic-auth over plain HTTP in Air — would leak them, so
+    # raw/ is NOT uploaded. Operators read raw detail locally from
+    # {{ reports_dir }}/raw/ on the controller. (See issue #32 / ADR-0016.)
+    - name: Upload top-level summary report files (no secrets)
       copy:
         src: "{{ item }}"
         dest: /var/www/ztp/reports/
@@ -35,13 +40,3 @@
         group: www-data
       with_fileglob:
         - "{{ reports_dir }}/*"
-
-    - name: Upload per-host raw output files
-      copy:
-        src: "{{ item }}"
-        dest: /var/www/ztp/reports/raw/
-        mode: '0644'
-        owner: www-data
-        group: www-data
-      with_fileglob:
-        - "{{ reports_dir }}/raw/*"

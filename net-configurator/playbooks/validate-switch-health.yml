@@ -1,0 +1,127 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Switch operational-health validation (Tier 1) — STANDALONE.
+#
+# Deliberately NOT wired into validate-all yet. It runs the read-only
+# `scripts/switch_health_probe.sh` on every switch (from the jump, same SSH
+# path as validate-config/validate-ztp) and reports converged-state signals
+# that config-text comparison and packet reachability do not cover:
+#   apply / bgp / evpn_es / evpn_vni / intf
+#
+# Usage: make validate-switch-health ARCH=<arch> [SITE=<site>]
+
+- name: Validate switch operational health (Tier 1)
+  hosts: jump
+  gather_facts: false
+
+  tasks:
+    - name: Ensure sshpass is present on the jump
+      block:
+        - name: Check sshpass
+          command: which sshpass
+          register: sshpass_check
+          changed_when: false
+          failed_when: false
+
+        - name: Install sshpass
+          package:
+            name: sshpass
+            state: present
+          become: true
+          when: sshpass_check.rc != 0
+
+    - name: Copy the health probe to the jump
+      copy:
+        src: "{{ playbook_dir }}/../scripts/switch_health_probe.sh"
+        dest: /tmp/switch_health_probe.sh
+        mode: "0755"
+
+    - name: Build switch list (switches parent group)
+      set_fact:
+        switch_list: "{{ groups['switches'] | default([]) }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Fail early if no switches in inventory
+      fail:
+        msg: "No switches found in inventory group 'switches' for {{ inventory_dir }}"
+      when: switch_list | length == 0
+      delegate_to: localhost
+      run_once: true
+
+    # Tell the operator the next step is a single, deliberately-quiet collection
+    # so the dead air during the parallel fan-out doesn't read as a hang.
+    - name: "Progress — probing switch health in parallel"
+      debug:
+        msg: >-
+          Probing operational health (apply / BGP / EVPN-ES / VNI / interfaces)
+          on {{ switch_list | length }} switch(es) in parallel via the jump.
+          This runs as ONE step and stays quiet until every switch returns (up
+          to a few minutes at scale) — silence here is expected, not a hang.
+      run_once: true
+
+    # Fan out ALL switch probes in parallel from the jump (one backgrounded SSH
+    # per switch, then `wait`) instead of an Ansible serial loop — runtime drops
+    # from sum-of-per-switch to ~slowest-single-switch (big win at 76 switches).
+    - name: Run the health probe on all switches in parallel (fan-out from jump)
+      shell: |
+        export SSHPASS='{{ switch_password }}'
+        SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+        WORK=$(mktemp -d /tmp/swh.XXXXXX)
+        {% for sw in switch_list %}
+        ( if timeout 15 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[sw].ansible_host }} 'echo ok' >/dev/null 2>&1; then
+            timeout 60 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[sw].ansible_host }} "bash -s -- '{{ switch_password }}'" < /tmp/switch_health_probe.sh > "$WORK/{{ sw }}.out" 2>/dev/null || echo "CHECK|probe|FAIL|probe execution error" > "$WORK/{{ sw }}.out";
+          else echo "CHECK|ssh|FAIL|unreachable {{ hostvars[sw].ansible_host }}" > "$WORK/{{ sw }}.out"; fi ) &
+        {% endfor %}
+        wait
+        {% for sw in switch_list %}
+        echo "-- {{ sw }} ({{ hostvars[sw].ansible_host }}) --"
+        cat "$WORK/{{ sw }}.out" 2>/dev/null || echo "CHECK|probe|FAIL|no output"
+        {% endfor %}
+        rm -rf "$WORK"
+      register: health_all
+      changed_when: false
+      no_log: true
+
+    - name: Assemble report + pass/fail tallies
+      set_fact:
+        report_lines: |
+          ============================================================
+          Switch Health (Tier 1)  arch={{ arch | default('?') }}  site={{ site | default('?') }}
+          ============================================================
+          {{ health_all.stdout }}
+        fail_count: "{{ health_all.stdout_lines | select('search', '\\|FAIL\\|') | list | length }}"
+        warn_count: "{{ health_all.stdout_lines | select('search', '\\|WARN\\|') | list | length }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Print report
+      debug:
+        msg: "{{ report_lines.split('\n') }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Write report file
+      copy:
+        content: "{{ report_lines }}\n\nSUMMARY: switches={{ switch_list | length }}  FAIL_checks={{ fail_count }}  WARN_checks={{ warn_count }}\n"
+        dest: "{{ report_file | default('/tmp/switch-health.txt') }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Summary line
+      debug:
+        msg: >-
+          Switch Health: switches={{ switch_list | length }}
+          FAIL={{ fail_count }} WARN={{ warn_count }}
+          -> {{ 'PASS' if (fail_count | int) == 0 else 'FAIL' }}
+      delegate_to: localhost
+      run_once: true
+
+    - name: Fail the run if any check reported FAIL
+      fail:
+        msg: "{{ fail_count }} FAIL check(s) — see report above / {{ report_file | default('/tmp/switch-health.txt') }}"
+      when: (fail_count | int) > 0
+      delegate_to: localhost
+      run_once: true

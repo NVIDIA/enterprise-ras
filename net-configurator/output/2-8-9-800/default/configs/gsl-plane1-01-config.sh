@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for gsl-plane1-01
-# Generated: 2026-05-28T18:03:14Z
+# Generated: 2026-07-02T12:36:57Z
 # Format: NVUE CLI commands (GSL - GPU Spine/Leaf, plane 1)
 #============================================================================
 # Bridge and VLAN
@@ -60,10 +60,13 @@ nv set qos roce mode lossless
 nv set qos traffic-pool default-lossy memory-percent 10
 nv set qos traffic-pool roce-lossless memory-percent 90
 
+# GPU role - QoS PFC watchdog
+nv set interface swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1 qos pfc-watchdog state enable
+
 #============================================================================
 # Router policy
 #============================================================================
-nv set router bgp autonomous-system 4260397297
+nv set router bgp autonomous-system 4260395888
 nv set router bgp state enabled
 nv set router bgp router-id 10.1.1.1
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
@@ -131,7 +134,7 @@ nv set vrf GPU router bgp address-family ipv4-unicast state enabled
 nv set vrf GPU router bgp address-family ipv4-unicast redistribute connected state enabled
 nv set vrf GPU router bgp address-family ipv4-unicast route-export to-evpn state enabled
 nv set vrf GPU router bgp address-family l2vpn-evpn state enabled
-nv set vrf GPU router bgp autonomous-system 4260397297
+nv set vrf GPU router bgp autonomous-system 4260395888
 nv set vrf GPU router bgp state enabled
 nv set vrf GPU router bgp router-id 10.1.1.1
 nv set vrf GPU table auto
@@ -143,13 +146,12 @@ nv set vrf default router bgp address-family ipv4-unicast state enabled
 nv set vrf default router bgp address-family ipv4-unicast redistribute connected state enabled
 nv set vrf default router bgp address-family ipv4-unicast redistribute connected route-map LOOPBACK_BGP
 nv set vrf default router bgp address-family l2vpn-evpn state enabled
-nv set vrf default router bgp autonomous-system 4260397297
+nv set vrf default router bgp autonomous-system 4260395888
 nv set vrf default router bgp state enabled
 
-# Overlay peer - plane-mate (numbered)
+# Overlay peers (numbered, loopback-to-loopback)
 nv set vrf default router bgp neighbor 10.1.1.2 peer-group overlay
 nv set vrf default router bgp neighbor 10.1.1.2 type numbered
-
 # internal_isl peers - every breakout subport on the ISL trunk ports (unnumbered)
 nv set vrf default router bgp neighbor swp49s0 peer-group internal_isl
 nv set vrf default router bgp neighbor swp49s0 type unnumbered

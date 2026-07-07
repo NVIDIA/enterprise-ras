@@ -1,0 +1,86 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+# ============================================================================
+# Global Variables - 2-4-5-800 Deployment (GB300 NVL72, dual-plane E/W)
+# ============================================================================
+
+architecture: 2-4-5-800
+convergence: dedicated_gpu
+gpu_planes: 2
+tiers: 2
+
+# ============================================================================
+# Cumulus Linux Version
+# ============================================================================
+target_cumulus_version: 5.16.0
+
+# ============================================================================
+# Network Definitions
+# ============================================================================
+
+# E/W (GPU fabric) VLAN/VNI
+gpu_vlan: 900
+gpu_vni: 245900
+gpu_vrf_name: GPU
+gpu_evpn_vlan: 3003
+gpu_evpn_vni: 245003
+
+# N/S VLANs
+tan_vlans:
+  100:
+    vni: 245100
+    vrf: OOB
+    subnet: 172.16.0.0/24
+    purpose: "Switch eth0 mgmt"
+  200:
+    vni: 245200
+    vrf: OOB
+    subnet: 172.16.2.0/24
+    gateway: 172.16.2.1
+    purpose: "Server BMC/OOB (1G from SN2201)"
+  300:
+    vni: 245300
+    vrf: INBAND
+    subnet: 172.16.3.0/24
+    gateway: 172.16.3.1
+    purpose: "In-band DPU management"
+  400:
+    vni: 245400
+    vrf: STORAGE
+    subnet: 172.16.4.0/24
+    gateway: 172.16.4.1
+    purpose: "Storage traffic"
+
+# N/S VRFs
+tan_vrfs:
+  OOB:
+    evpn_vlan: 3001
+    vni: 245001
+  INBAND:
+    evpn_vlan: 3002
+    vni: 245002
+  STORAGE:
+    evpn_vlan: 3005
+    vni: 245005
+
+# ============================================================================
+# Authentication
+# ============================================================================
+switch_user: cumulus
+
+# ============================================================================
+# ZTP Server
+# ============================================================================
+ztp_server_ip: "169.254.0.2"
+ztp_server_host: "external-dhcp"
+
+# ============================================================================
+# NTP Servers
+# ============================================================================
+ntp_servers:
+  - 0.cumulusnetworks.pool.ntp.org
+  - 1.cumulusnetworks.pool.ntp.org
+  - 2.cumulusnetworks.pool.ntp.org
+  - 3.cumulusnetworks.pool.ntp.org

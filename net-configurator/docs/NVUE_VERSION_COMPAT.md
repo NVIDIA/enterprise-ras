@@ -131,9 +131,5 @@ These commands use the same syntax in both old and new versions:
 | Core switch | `roles/core/templates/core_nvue_cli.j2` | 5.15+ |
 | OOB switch | `roles/oob-switch/templates/oob_nvue_cli.j2` | 5.15+ |
 
-## Version History
-
-| Date | Change |
-|---|---|
-| 2026-03-11 | Initial 5.16 migration — all templates updated |
-| 2026-03-11 | Fixed DHCP relay (server-group model), AAA auth order, source inventory merge |
+The generated NVUE configs target Cumulus Linux 5.16+ (5.15+ compatible). If you
+run against an older release, apply the reverse of the breaking changes above.

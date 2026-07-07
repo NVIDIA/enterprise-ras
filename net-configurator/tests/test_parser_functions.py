@@ -23,6 +23,8 @@ from excel_parser import (
     ports_to_range_string,
     ROLE_HOST_BASE,
     _sanitize_scalar,
+    _svi_switch_ip,
+    _svi_gateway_ip,
 )
 # compare_excel_inventory_and_configs.py is an internal-only script (excluded
 # from the public distribution via .publicignore). Guard its import so the
@@ -113,6 +115,26 @@ class TestClassifyNode:
 
     def test_support_nodes(self):
         assert classify_node("support-01") == "support"
+
+    def test_compute_gpu_fabric_short_names_are_switches(self):
+        """Post-rename short role names (cl/cs/gl/gs) must map to switch roles.
+
+        Regression: the bare N/S-spine function 'cs' (and gpu 'gs', leaf
+        'cl'/'gl') fell through to 'unknown' → 1024 MB in the topology
+        generator, below Air's 2048 MB switch minimum, so 2-8-9-800 SU32
+        imported INVALID. They are SN56xx compute/GPU-fabric switches and
+        must classify as csl/gsl (4096 MB), like their hostname-prefixed and
+        legacy forms.
+        """
+        # bare function names (model ns_spine_function: cs, ew_*_template: gl/gs)
+        assert classify_node("cs") == "csl"
+        assert classify_node("cl") == "csl"
+        assert classify_node("gs") == "gsl"
+        assert classify_node("gl") == "gsl"
+        # hostname-prefixed forms still work
+        assert classify_node("cs-01") == "csl"
+        assert classify_node("gs-plane1-01") == "gsl"
+        assert classify_node("gl-plane2-08") == "gsl"
 
     def test_k8s_nodes(self):
         assert classify_node("k8s-01") == "k8s"
@@ -321,3 +343,57 @@ class TestNaturalKey:
         ports = ['swp10', 'swp2', 'swp1', 'swp20']
         sorted_ports = sorted(ports, key=_natural_key)
         assert sorted_ports == ['swp1', 'swp2', 'swp10', 'swp20']
+
+
+# ---------------------------------------------------------------------------
+# excel_parser._svi_switch_ip / _svi_gateway_ip
+#
+# Regression for the customer-reported SVI/VRR bug: for any VLAN whose subnet
+# does not start at .0 or whose gateway is not .1, the old code emitted SVI +
+# VRR addresses OUTSIDE the declared subnet. The fix derives per-switch host
+# IPs from ipaddress.ip_network().hosts() and uses the Excel gateway as VRR.
+# (docs/internal/BLOCKING-FIXES.md Open #1)
+# ---------------------------------------------------------------------------
+
+class TestSviAddressing:
+    """Per-switch SVI host IP + VRR gateway derivation."""
+
+    def test_default_aligned_subnet_byte_identical(self):
+        """A .0-aligned /24 with a .1 gateway must reproduce the legacy
+        `<base>.<1+core_num>` SVI scheme exactly (zero output drift on the
+        shipping default Excels)."""
+        subnet, gw = "172.16.178.0/24", "172.16.178.1"
+        assert _svi_gateway_ip(subnet, gw) == "172.16.178.1"
+        assert _svi_switch_ip(subnet, gw, 1) == "172.16.178.2"   # core-01
+        assert _svi_switch_ip(subnet, gw, 2) == "172.16.178.3"   # core-02
+
+    def test_blank_gateway_falls_back_to_first_host(self):
+        """No Excel gateway -> first usable host, matching the old `.1`."""
+        assert _svi_gateway_ip("172.16.178.0/24", None) == "172.16.178.1"
+        assert _svi_gateway_ip("172.16.178.0/24", "") == "172.16.178.1"
+
+    def test_offset_subnet_stays_in_network(self):
+        """Offset subnet: 100.82.254.128/27 + .129 gateway. SVI + VRR must land
+        inside 100.82.254.128/27, NOT 100.82.254.0/27."""
+        import ipaddress
+        subnet, gw = "100.82.254.128/27", "100.82.254.129"
+        net = ipaddress.ip_network(subnet)
+        vrr = _svi_gateway_ip(subnet, gw)
+        svi1 = _svi_switch_ip(subnet, gw, 1)
+        svi2 = _svi_switch_ip(subnet, gw, 2)
+        assert vrr == "100.82.254.129"
+        assert ipaddress.ip_address(svi1) in net
+        assert ipaddress.ip_address(svi2) in net
+        # Never collide with the gateway, and be distinct per switch.
+        assert svi1 != vrr and svi2 != vrr and svi1 != svi2
+
+    def test_offset_subnet_does_not_use_dot_zero_base(self):
+        """The old bug produced 100.82.254.2 / .1 — explicitly assert we no
+        longer emit anything in the .0 network."""
+        subnet, gw = "100.82.254.128/27", "100.82.254.129"
+        assert not _svi_switch_ip(subnet, gw, 1).startswith("100.82.254.2")
+        assert _svi_gateway_ip(subnet, gw) != "100.82.254.1"
+
+    def test_unparseable_subnet_falls_back_legacy(self):
+        """Malformed subnet must not crash — fall back to legacy scheme."""
+        assert _svi_switch_ip("not-a-subnet", None, 1) == "not-a-subnet.2"
