@@ -1,0 +1,4 @@
+---
+# Host variables for storage-05 (Generated from Excel)
+ansible_host: 192.168.200.224
+hostname: storage-05

@@ -1,0 +1,4 @@
+---
+# Host variables for su-07-node-12 (Generated from Excel)
+ansible_host: 192.168.200.204
+hostname: su-07-node-12

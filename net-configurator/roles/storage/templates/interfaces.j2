@@ -6,11 +6,26 @@
 {% set ifaces = dev.interfaces | default({}) %}
 {# Exclude eth0 — it is the OOB management interface and must not be bonded #}
 {% set data_ifaces = ifaces.storage | default(ifaces.cpu | default([])) | reject('equalto', 'eth0') | list %}
-{% if data_ifaces | length > 0 %}
+{% if data_ifaces | length > 0 or (dev.eth0_ip | default('')) %}
 network:
   version: 2
   renderer: networkd
   ethernets:
+{% if dev.eth0_ip | default('') %}
+{# eth0 is the OOB management interface. It MUST be emitted here: this file
+   overwrites /etc/netplan/10-netcfg.yaml (which the Air NI wrote with eth0),
+   so omitting eth0 would strip the mgmt IP on `netplan apply` and sever the
+   OOB path Ansible connects over. Parity with air-deploy.py::_render_server_netplan. #}
+    eth0:
+      dhcp4: no
+      dhcp6: no
+      accept-ra: no
+      addresses:
+        - {{ dev.eth0_ip }}/24
+      routes:
+        - to: 0.0.0.0/0
+          via: 192.168.200.1
+{% endif %}
 {% for iface in data_ifaces %}
     {{ iface }}:
       dhcp4: no

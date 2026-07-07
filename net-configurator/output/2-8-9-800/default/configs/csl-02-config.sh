@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for csl-02
-# Generated: 2026-05-28T18:03:14Z
+# Generated: 2026-07-02T12:36:57Z
 # Format: NVUE CLI commands (Simplified with Pure Jinja2)
 
 #============================================================================
@@ -38,62 +38,62 @@ nv set interface swp60 link breakout disabled
 
 nv set interface bond1s0 bond member swp1s0
 nv set interface bond1s0 evpn multihoming segment local-id 10
-nv set interface bond1s0 description gpu-01
+nv set interface bond1s0 description su-01-node-01
 nv set interface bond1s1 bond member swp1s1
 nv set interface bond1s1 evpn multihoming segment local-id 11
-nv set interface bond1s1 description gpu-02
+nv set interface bond1s1 description su-01-node-02
 
 nv set interface bond2s0 bond member swp2s0
 nv set interface bond2s0 evpn multihoming segment local-id 20
-nv set interface bond2s0 description gpu-03
+nv set interface bond2s0 description su-01-node-03
 nv set interface bond2s1 bond member swp2s1
 nv set interface bond2s1 evpn multihoming segment local-id 21
-nv set interface bond2s1 description gpu-04
+nv set interface bond2s1 description su-01-node-04
 
 nv set interface bond3s0 bond member swp3s0
 nv set interface bond3s0 evpn multihoming segment local-id 30
-nv set interface bond3s0 description gpu-05
+nv set interface bond3s0 description su-02-node-01
 nv set interface bond3s1 bond member swp3s1
 nv set interface bond3s1 evpn multihoming segment local-id 31
-nv set interface bond3s1 description gpu-06
+nv set interface bond3s1 description su-02-node-02
 
 nv set interface bond4s0 bond member swp4s0
 nv set interface bond4s0 evpn multihoming segment local-id 40
-nv set interface bond4s0 description gpu-07
+nv set interface bond4s0 description su-02-node-03
 nv set interface bond4s1 bond member swp4s1
 nv set interface bond4s1 evpn multihoming segment local-id 41
-nv set interface bond4s1 description gpu-08
+nv set interface bond4s1 description su-02-node-04
 
 # CPU role - 4 ports, 8 bonds
 nv set interface bond1s0,bond1s1,bond2s0,bond2s1,bond3s0,bond3s1,bond4s0,bond4s1 evpn multihoming segment state enabled
 nv set interface bond1s0,bond1s1,bond2s0,bond2s1,bond3s0,bond3s1,bond4s0,bond4s1 evpn multihoming segment mac-address 44:38:39:FF:00:AA
 nv set interface bond1s0,bond1s1,bond2s0,bond2s1,bond3s0,bond3s1,bond4s0,bond4s1 type bond
-nv set interface bond1s0,bond1s1,bond2s0,bond2s1,bond3s0,bond3s1,bond4s0,bond4s1 bridge domain br_default vlan 200,400
+nv set interface bond1s0,bond1s1,bond2s0,bond2s1,bond3s0,bond3s1,bond4s0,bond4s1 bridge domain br_default vlan 300,400
 nv set interface bond1s0,bond1s1,bond2s0,bond2s1,bond3s0,bond3s1,bond4s0,bond4s1 bridge domain br_default untagged 300
 nv set interface bond1s0,bond1s1,bond2s0,bond2s1,bond3s0,bond3s1,bond4s0,bond4s1 bond lacp-bypass enabled
 
 nv set interface bond5s0 bond member swp5s0
 nv set interface bond5s0 evpn multihoming segment local-id 50
-nv set interface bond5s0 description bcm-01
+nv set interface bond5s0 description support-01
 nv set interface bond5s1 bond member swp5s1
 nv set interface bond5s1 evpn multihoming segment local-id 51
-nv set interface bond5s1 description bcm-02
+nv set interface bond5s1 description support-02
 nv set interface bond5s2 bond member swp5s2
 nv set interface bond5s2 evpn multihoming segment local-id 52
-nv set interface bond5s2 description k8s-01
+nv set interface bond5s2 description support-03
 nv set interface bond5s3 bond member swp5s3
 nv set interface bond5s3 evpn multihoming segment local-id 53
-nv set interface bond5s3 description k8s-02
+nv set interface bond5s3 description support-04
 
 nv set interface bond6s0 bond member swp6s0
 nv set interface bond6s0 evpn multihoming segment local-id 60
-nv set interface bond6s0 description k8s-03
+nv set interface bond6s0 description support-05
 nv set interface bond6s1 bond member swp6s1
 nv set interface bond6s1 evpn multihoming segment local-id 61
-nv set interface bond6s1 description slurm-01
+nv set interface bond6s1 description support-06
 nv set interface bond6s2 bond member swp6s2
 nv set interface bond6s2 evpn multihoming segment local-id 62
-nv set interface bond6s2 description slurm-02
+nv set interface bond6s2 description support-07
 
 # SUPPORT role - 2 ports, 7 bonds
 nv set interface bond5s0,bond5s1,bond5s2,bond5s3,bond6s0,bond6s1,bond6s2 evpn multihoming segment state enabled
@@ -157,8 +157,6 @@ nv set interface swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,
 #============================================================================
 # VLAN SVIs (from host_vars)
 #============================================================================
-nv set interface vlan200 vlan 200
-nv set interface vlan200 vrf OOB
 nv set interface vlan300 ipv4 address 172.16.178.3/24
 nv set interface vlan300 ipv4 vrr address 172.16.178.1/24
 nv set interface vlan300 ipv4 vrr state enabled
@@ -237,8 +235,6 @@ nv set router policy prefix-list LOCAL_OOB_LOOPBACK rule 10 action permit
 nv set router policy prefix-list LOCAL_OOB_LOOPBACK rule 10 match 172.16.176.2/32 max-prefix-len 32
 nv set router policy prefix-list OOB_LOCAL_IF rule 10 action permit
 nv set router policy prefix-list OOB_LOCAL_IF rule 10 match 172.16.176.2/32 max-prefix-len 32
-nv set router policy prefix-list OOB_LOCAL_IF rule 20 action permit
-nv set router policy prefix-list OOB_LOCAL_IF rule 20 match 172.16.177.3/32 max-prefix-len 32
 nv set router policy prefix-list OOB_PREFIXES rule 10 action permit
 nv set router policy prefix-list OOB_PREFIXES rule 10 match 172.16.177.0/24 max-prefix-len 32
 nv set router policy prefix-list OOB_PREFIXES rule 20 action permit
@@ -285,6 +281,8 @@ nv set router policy route-map OOB_FILTER rule 20 match type ipv4
 nv set router policy route-map OUTBOUND_ERA_PREFIXES rule 10 action permit
 nv set router policy route-map OUTBOUND_ERA_PREFIXES rule 10 match ip-prefix-list ERA_PREFIXES
 nv set router policy route-map OUTBOUND_ERA_PREFIXES rule 10 match type ipv4
+nv set router policy route-map WEIGHTED_ECMP rule 10 action permit
+nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths
 
 nv set router vrr state enabled
 
@@ -362,7 +360,7 @@ nv set vrf OOB router bgp state enabled
 nv set vrf OOB router bgp router-id 172.16.176.2
 
 nv set vrf STORAGE evpn state enabled
-nv set vrf STORAGE evpn vlan 500
+nv set vrf STORAGE evpn vlan 3005
 nv set vrf STORAGE evpn vni 5005
 
 nv set vrf STORAGE loopback ip address 172.16.176.8/32
@@ -424,6 +422,7 @@ nv set vrf default router bgp peer-group internal-isl bfd profile default
 nv set vrf default router bgp peer-group internal-isl description internal_isl_interconnect
 nv set vrf default router bgp peer-group internal-isl remote-as internal
 nv set vrf default router bgp peer-group underlay address-family ipv4-unicast state enabled
+nv set vrf default router bgp peer-group underlay address-family ipv4-unicast policy outbound route-map WEIGHTED_ECMP
 nv set vrf default router bgp peer-group underlay bfd profile default
 nv set vrf default router bgp peer-group underlay description oob_underlay_interconnect
 nv set vrf default router bgp peer-group underlay remote-as external

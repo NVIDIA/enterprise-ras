@@ -1,0 +1,17 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+# ============================================================================
+# E/W Plane 1 Leaf 3 - gl-plane1-03
+# ============================================================================
+hostname: gl-plane1-03
+lo_ip: 10.1.1.3/32
+router_id: 10.1.1.3
+asn: 4200101103
+
+# GPU SVI IP (plane 1)
+vlan900_ip: 192.168.0.4/20
+
+# GPU VRF loopback
+vrf_gpu_loopback: 10.1.1.13/32

@@ -1,0 +1,25 @@
+---
+# Host variables for oob-switch-12 (Generated from Excel)
+ansible_host: 172.20.0.13
+hostname: oob-switch-12
+mac_address: 48:b0:2d:9a:97:7d
+ip_assignment_mode: dhcp
+svi_ip: 192.168.200.13/24
+default_gateway: 192.168.200.1
+access_ports: swp1-48
+uplink_ports: swp1-49
+spine_bond_members:
+- swp49
+lo_ip: 172.16.1.112/32
+router_id: 172.16.1.112
+bgp_asn: 4200100013
+vrr_ip: 192.168.200.1/24
+oob_vni: 4200
+oob_vrf_vni: 5001
+oob_vrf_vlan: 3001
+oob_vrf_loopback: 172.16.1.132/32
+overlay_peers:
+- 172.16.1.61
+- 172.16.1.62
+- 172.16.1.63
+- 172.16.1.64

@@ -1,4 +1,0 @@
----
-# Host variables for k8s-02 (Generated from Excel)
-ansible_host: 192.168.200.41
-hostname: k8s-02

@@ -1,0 +1,20 @@
+---
+# Host variables for gl-plane2-04 (Generated from Excel)
+ansible_host: 172.20.0.212
+hostname: gl-plane2-04
+mac_address: 48:b0:2d:06:a3:7b
+ip_assignment_mode: dhcp
+plane: 2
+lo_ip: 10.1.2.4/32
+vrf_gpu_loopback: 10.1.2.14/32
+asn: 4200102104
+overlay_peers:
+- 10.1.2.5
+- 10.1.2.6
+plane_mate_lo_ip: 10.1.2.5
+vlan900_ip: 192.168.16.5/20
+vlan900_vrr: 192.168.16.1/20
+gpu_subports: swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1
+gpu_breakout_parents: swp1,swp2,swp3,swp4,swp5,swp6,swp7,swp8,swp9
+isl_subports: swp47s0,swp47s1,swp48s0,swp48s1,swp49s0,swp49s1,swp50s0,swp50s1,swp51s0,swp51s1,swp52s0,swp52s1,swp53s0,swp53s1,swp54s0,swp54s1,swp55s0,swp55s1,swp56s0,swp56s1,swp57s0,swp57s1,swp58s0,swp58s1,swp59s0,swp59s1,swp60s0,swp60s1,swp61s0,swp61s1,swp62s0,swp62s1,swp63s0,swp63s1,swp64s0,swp64s1
+isl_breakout_parents: swp47,swp48,swp49,swp50,swp51,swp52,swp53,swp54,swp55,swp56,swp57,swp58,swp59,swp60,swp61,swp62,swp63,swp64

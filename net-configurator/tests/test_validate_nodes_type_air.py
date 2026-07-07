@@ -246,13 +246,13 @@ def test_ext_storage_on_dual_plane_arch_passes():
     assert not _errors_matching(result, "is only valid on arch"), result.errors
 
 
-def test_csl_on_collapsed_core_arch_errors():
-    """CSL switches don't exist in collapsed-core archs."""
+def test_csl_on_always_collapsed_core_arch_errors():
+    """CSL switches don't exist in architectures that never split fabrics."""
     ws = _nodes([
         ("csl", "csl-01", None, "192.168.200.5", 24, "192.168.200.1",
          "Yes", "Yes", "switch", None),
     ])
-    result, _ = _run(ws, settings={'architecture': '2-8-5-200'})
+    result, _ = _run(ws, settings={'architecture': '2-4-3-200'})
     assert _errors_matching(result, "is only valid on arch"), result.errors
 
 

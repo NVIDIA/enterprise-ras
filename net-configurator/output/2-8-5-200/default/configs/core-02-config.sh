@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for core-02
-# Generated: 2026-05-28T18:03:06Z
+# Generated: 2026-07-02T12:36:51Z
 # Format: NVUE CLI commands (Simplified with Pure Jinja2)
 
 #============================================================================
@@ -310,8 +310,6 @@ nv set router policy prefix-list LOCAL_OOB_LOOPBACK rule 10 action permit
 nv set router policy prefix-list LOCAL_OOB_LOOPBACK rule 10 match 172.16.176.2/32 max-prefix-len 32
 nv set router policy prefix-list OOB_LOCAL_IF rule 10 action permit
 nv set router policy prefix-list OOB_LOCAL_IF rule 10 match 172.16.176.2/32 max-prefix-len 32
-nv set router policy prefix-list OOB_LOCAL_IF rule 20 action permit
-nv set router policy prefix-list OOB_LOCAL_IF rule 20 match 172.16.177.3/32 max-prefix-len 32
 nv set router policy prefix-list OOB_PREFIXES rule 10 action permit
 nv set router policy prefix-list OOB_PREFIXES rule 10 match 172.16.177.0/24 max-prefix-len 32
 nv set router policy prefix-list OOB_PREFIXES rule 20 action permit
@@ -358,6 +356,8 @@ nv set router policy route-map OOB_FILTER rule 20 match type ipv4
 nv set router policy route-map OUTBOUND_ERA_PREFIXES rule 10 action permit
 nv set router policy route-map OUTBOUND_ERA_PREFIXES rule 10 match ip-prefix-list ERA_PREFIXES
 nv set router policy route-map OUTBOUND_ERA_PREFIXES rule 10 match type ipv4
+nv set router policy route-map WEIGHTED_ECMP rule 10 action permit
+nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths
 
 nv set router vrr state enabled
 
@@ -590,6 +590,7 @@ nv set vrf default router bgp peer-group internal-isl bfd profile default
 nv set vrf default router bgp peer-group internal-isl description internal_isl_interconnect
 nv set vrf default router bgp peer-group internal-isl remote-as internal
 nv set vrf default router bgp peer-group underlay address-family ipv4-unicast state enabled
+nv set vrf default router bgp peer-group underlay address-family ipv4-unicast policy outbound route-map WEIGHTED_ECMP
 nv set vrf default router bgp peer-group underlay bfd profile default
 nv set vrf default router bgp peer-group underlay description oob_underlay_interconnect
 nv set vrf default router bgp peer-group underlay remote-as external
@@ -653,7 +654,7 @@ nv set system api state enabled
 nv set system config auto-save state enabled
 nv set system control-plane acl acl-default-dos inbound
 nv set system control-plane acl acl-default-whitelist inbound
-nv set system global anycast-mac 44:38:39:FF:00:FF
+nv set system global anycast-mac 44:38:39:ff:00:ff
 nv set system hostname core-02
 nv set system message pre-login '##############################################################################
 #      You are accessing an Information System (IS) that is provided for authorized use only.

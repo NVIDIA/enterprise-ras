@@ -1,0 +1,17 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+# ============================================================================
+# OOB SN2201 - oob-switch-01
+# ============================================================================
+hostname: oob-switch-01
+lo_ip: 172.16.1.33/32
+router_id: 172.16.1.33
+asn: 4200100010
+
+# VLAN 200 SVI IP
+vlan200_ip: 172.16.2.4/24
+
+# VRF OOB loopback (same as lo_ip for SN2201)
+vrf_oob_loopback: 172.16.1.33/32

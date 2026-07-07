@@ -38,114 +38,66 @@
       delegate_to: localhost
       run_once: true
 
-    - name: Validate each switch via ZTP server
+    # yamllint disable rule:line-length
+    # The shell block inlines a 10-way group_names role gate (cl/cs/gl/gs +
+    # legacy core/csl/gsl) into a few Jinja {% if %}/echo lines. These live
+    # inside a literal block scalar, so wrapping them would inject newlines
+    # into the rendered bash and break it. Scope line-length off for this task.
+    - name: Copy ZTP collection probe to the jump
+      copy:
+        src: "{{ playbook_dir }}/../scripts/ztp_collect_probe.sh"
+        dest: /tmp/ztp_collect_probe.sh
+        mode: "0755"
+
+    # Tell the operator the next step is a single, deliberately-quiet collection
+    # so the dead air during the parallel fan-out doesn't read as a hang.
+    - name: "Progress — collecting switch state in parallel"
+      debug:
+        msg: >-
+          Collecting NVUE / BGP / EVPN state from {{ switch_list | length }}
+          switch(es) in parallel via the jump. This runs as ONE step and stays
+          quiet until every switch returns (up to a few minutes at scale) —
+          silence here is expected, not a hang.
+      run_once: true
+
+    # Parallel fan-out: one backgrounded `probe &` per switch, then `wait`. The
+    # probe (a file) holds the ~19-command collection, so this loop stays tiny —
+    # avoiding the ARG_MAX limit a jinja-unrolled inline mega-script hit at scale.
+    # Per-switch output is delimited by @@@SW@@@<name> and reshaped below into the
+    # original validation_results contract, so downstream tasks are unchanged.
+    - name: Collect from all switches in parallel (fan-out of probe calls)
       shell: |
-        export SSHPASS='{{ switch_password }}'
-        SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR cumulus@{{ hostvars[item].ansible_host }}"
-
-        if ! timeout 10 $SSH_CMD 'hostname' 2>/dev/null >/dev/null; then
-          echo "RESULT|FAILED||||0|0{% if 'core' in hostvars[item].group_names %}||||{% endif %}"
-          exit 0
-        fi
-
-        hostname=$($SSH_CMD 'hostname' 2>/dev/null)
-        version=$($SSH_CMD 'cat /etc/lsb-release 2>/dev/null | grep DISTRIB_RELEASE | cut -d= -f2' 2>/dev/null)
-        nvue_exists=$($SSH_CMD 'test -f /etc/nvue.d/startup.yaml && echo yes || echo no' 2>/dev/null)
-
-        # Capture full outputs for report
-        bridge_output=$($SSH_CMD 'nv show bridge domain 2>/dev/null' 2>/dev/null || echo "N/A")
-        bridges=$(echo "$bridge_output" | grep -v '^$' | tail -n +3 | wc -l)
-
-        iface_output=$($SSH_CMD 'nv show interface brief 2>/dev/null' 2>/dev/null || echo "N/A")
-        interfaces_up=$(echo "$iface_output" | awk 'NR>2 && $3=="up" {count++} END {print count+0}')
-
-        # Additional commands for OEM hand-off (all switches)
-        system_output=$($SSH_CMD 'nv show system 2>/dev/null' 2>/dev/null || echo "N/A")
-        platform_output=$($SSH_CMD 'nv show platform 2>/dev/null' 2>/dev/null || echo "N/A")
-        vrf_output=$($SSH_CMD 'nv show vrf 2>/dev/null' 2>/dev/null || echo "N/A")
-        ntp_output=$($SSH_CMD 'nv show service ntp 2>/dev/null' 2>/dev/null || echo "N/A")
-        lldp_output=$($SSH_CMD 'nv show interface --view=lldp 2>/dev/null' 2>/dev/null || echo "N/A")
-        running_config=$($SSH_CMD 'nv config show 2>/dev/null' 2>/dev/null || echo "N/A")
-
-        {% if 'core' in hostvars[item].group_names or 'csl' in hostvars[item].group_names or 'gsl' in hostvars[item].group_names %}
-        bgp_output=$($SSH_CMD 'nv show vrf default router bgp 2>/dev/null' 2>/dev/null || echo "N/A")
-        bgp_enabled=$(echo "$bgp_output" | awk '/^state/ {print $2}')
-        bgp_configured=$(echo "$bgp_output" | awk '/^configured-neighbors/ {print $2}')
-        bgp_established=$(echo "$bgp_output" | awk '/^established-neighbors/ {print $2}')
-
-        evpn_output=$($SSH_CMD 'nv show evpn 2>/dev/null' 2>/dev/null || echo "N/A")
-        evpn_l2vni=$($SSH_CMD 'nv show evpn --output json 2>/dev/null | jq -r ".\"l2vni-count\" // 0" 2>/dev/null' 2>/dev/null || echo "0")
-        evpn_l3vni=$($SSH_CMD 'nv show evpn --output json 2>/dev/null | jq -r ".\"l3vni-count\" // 0" 2>/dev/null' 2>/dev/null || echo "0")
-
-        # Additional commands for OEM hand-off (L3 switches)
-        bgp_neighbor_output=$($SSH_CMD 'nv show vrf default router bgp neighbor 2>/dev/null' 2>/dev/null || echo "N/A")
-        evpn_vni_output=$($SSH_CMD 'nv show evpn vni 2>/dev/null' 2>/dev/null || echo "N/A")
-        qos_roce_output=$($SSH_CMD 'nv show qos roce 2>/dev/null' 2>/dev/null || echo "N/A")
-
-        # Identify configured-but-not-established BGP sessions.
-        # The tabular output has columns: Neighbor Hostname AS State Uptime ResetTime ...
-        # but for never-established sessions, Hostname and AS are blank, shifting State from
-        # col 4 to col 2. We check both. State words are: established, idle, active, connect,
-        # opensent, openconfirm.
-        # For each down neighbor, look up the ports link state from iface_output to distinguish
-        # no peer in topology (link down) from peer unreachable (link up).
-        # Output: comma-separated neighbor:linkstate (e.g. swp55s6:down,swp55s7:down).
-        bgp_down_neighbors=$(echo "$bgp_neighbor_output" | awk -v ifaces="$iface_output" '
-          BEGIN {
-            n = split(ifaces, lines, "\n")
-            for (i = 1; i <= n; i++) {
-              split(lines[i], f, /[[:space:]]+/)
-              if (f[1] ~ /^swp/) port_state[f[1]] = f[3]
-            }
-          }
-          /^[-]+[[:space:]]+[-]+/ { started=1; next }
-          started {
-            state = ""
-            if ($4 ~ /^(established|idle|active|connect|opensent|openconfirm)$/) state = $4
-            else if ($2 ~ /^(established|idle|active|connect|opensent|openconfirm)$/) state = $2
-            if (state != "" && state != "established") {
-              link = (port_state[$1] != "" ? port_state[$1] : "unknown")
-              if (out != "") out = out ","
-              out = out $1 ":" link
-            }
-          }
-          END { print out }
-        ')
-        {% endif %}
-
-        echo "RESULT|SUCCESS|$hostname|$version|$nvue_exists|$bridges|$interfaces_up{% if 'core' in hostvars[item].group_names or 'csl' in hostvars[item].group_names or 'gsl' in hostvars[item].group_names %}|$bgp_enabled|$bgp_configured|$bgp_established|$evpn_l2vni|$evpn_l3vni|$bgp_down_neighbors{% endif %}"
-        echo "---RAW:system---"
-        echo "$system_output"
-        echo "---RAW:platform---"
-        echo "$platform_output"
-        echo "---RAW:bridge_domain---"
-        echo "$bridge_output"
-        echo "---RAW:interface_brief---"
-        echo "$iface_output"
-        echo "---RAW:vrf---"
-        echo "$vrf_output"
-        echo "---RAW:ntp---"
-        echo "$ntp_output"
-        echo "---RAW:lldp---"
-        echo "$lldp_output"
-        {% if 'core' in hostvars[item].group_names %}
-        echo "---RAW:bgp---"
-        echo "$bgp_output"
-        echo "---RAW:bgp_neighbor---"
-        echo "$bgp_neighbor_output"
-        echo "---RAW:evpn---"
-        echo "$evpn_output"
-        echo "---RAW:evpn_vni---"
-        echo "$evpn_vni_output"
-        echo "---RAW:qos_roce---"
-        echo "$qos_roce_output"
-        {% endif %}
-        echo "---RAW:running_config---"
-        echo "$running_config"
-      loop: "{{ switch_list }}"
-      register: validation_results
+        WORK=$(mktemp -d /tmp/ztpv.XXXXXX)
+        {% for item in switch_list %}
+        bash /tmp/ztp_collect_probe.sh '{{ hostvars[item].ansible_host }}' '{{ switch_password }}' '{% if 'core' in hostvars[item].group_names or 'csl' in hostvars[item].group_names or 'gsl' in hostvars[item].group_names or 'cl' in hostvars[item].group_names or 'cs' in hostvars[item].group_names or 'gl' in hostvars[item].group_names or 'gs_plane1' in hostvars[item].group_names or 'gs_plane2' in hostvars[item].group_names or 'gl_plane1' in hostvars[item].group_names or 'gl_plane2' in hostvars[item].group_names %}1{% else %}0{% endif %}' > "$WORK/{{ item }}.out" 2>/dev/null &
+        {% endfor %}
+        wait
+        {% for item in switch_list %}
+        echo "@@@SW@@@{{ item }}"
+        cat "$WORK/{{ item }}.out" 2>/dev/null
+        {% endfor %}
+        rm -rf "$WORK"
+      register: ztp_fanout
       changed_when: false
       no_log: true
+    # yamllint enable rule:line-length
+
+    # Reshape the combined fan-out output (per-switch blocks delimited by
+    # @@@SW@@@<name>) back into the original contract so every downstream task is
+    # unchanged: validation_results.results = [{item, stdout, stdout_lines}].
+    - name: Reshape parallel output into validation_results
+      set_fact:
+        _vr: "{{ (_vr | default([])) + [ {'item': (item.split('\n')[0]), 'stdout': (item.split('\n')[1:] | join('\n')), 'stdout_lines': (item.split('\n')[1:])} ] }}"
+      loop: "{{ ztp_fanout.stdout.split('@@@SW@@@') | reject('equalto', '') | list }}"
+      loop_control:
+        label: "{{ item.split('\n')[0] }}"
+      # Accumulating fact carries every switch's full config — without no_log
+      # Ansible reprints the growing fact each iteration -> O(N^2) output blowup.
+      no_log: true
+
+    - name: Publish validation_results
+      set_fact:
+        validation_results: "{{ {'results': _vr | default([])} }}"
 
     - name: Calculate summary statistics
       set_fact:
@@ -153,6 +105,10 @@
         successful_switches: "{{ validation_results.results | selectattr('stdout', 'search', 'RESULT\\|SUCCESS') | list | length }}"
       run_once: true
 
+    # yamllint disable rule:line-length
+    # The report template's BGP/EVPN section reuses the same 10-way group_names
+    # role gate on a single Jinja {% if %} line inside a literal block scalar;
+    # wrapping it would inject newlines into the rendered report. Scope off.
     - name: Write validation report
       copy:
         content: |
@@ -174,7 +130,9 @@
             NVUE Config:              {{ r[4] }}
             Bridge Domains:           {{ r[5] }}
             Interfaces Up:            {{ r[6] }}
-          {% if 'core' in hostvars[item.item].group_names or 'csl' in hostvars[item.item].group_names or 'gsl' in hostvars[item.item].group_names %}
+          {# Same broad gate as the capture-side conditionals so cl/cs/gl/gs
+             switches also get BGP state shown in the report. #}
+          {% if 'core' in hostvars[item.item].group_names or 'csl' in hostvars[item.item].group_names or 'gsl' in hostvars[item.item].group_names or 'cl' in hostvars[item.item].group_names or 'cs' in hostvars[item.item].group_names or 'gl' in hostvars[item.item].group_names or 'gs_plane1' in hostvars[item.item].group_names or 'gs_plane2' in hostvars[item.item].group_names or 'gl_plane1' in hostvars[item.item].group_names or 'gl_plane2' in hostvars[item.item].group_names %}
             BGP State:                {{ r[7] | default('N/A') }}
             BGP Configured Neighbors: {{ r[8] | default('0') }}
             BGP Established Neighbors:{{ r[9] | default('0') }}
@@ -212,6 +170,7 @@
         dest: "{{ report_file | default('/tmp/era-ztp-validation-report.txt') }}"
       delegate_to: localhost
       run_once: true
+    # yamllint enable rule:line-length
 
     # ── Per-switch raw nv show output → reports/raw/ (audit detail) ──
     - name: Compute raw output directory

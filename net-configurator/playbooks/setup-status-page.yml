@@ -121,7 +121,12 @@
         chmod 640 /etc/nginx/.htpasswd
         chown root:www-data /etc/nginx/.htpasswd
       environment:
-        HTPASSWD_PASS: "{{ status_page_password | default(switch_password | default('nvidia')) }}"
+        # Do NOT fall back to switch_password: the status page is served over
+        # plain HTTP (and Air publicly forwards it), so reusing the switch
+        # credential would leak it. Use the dedicated status_page_password
+        # secret; the placeholder default keeps deploys working but should be
+        # overridden in secrets.yml. Mirrors roles/ztp-server/tasks/main.yml.
+        HTPASSWD_PASS: "{{ status_page_password | default('era-status-CHANGE_ME') }}"
         HTPASSWD_USER: "{{ status_page_username | default('era') }}"
       when: status_page_enabled | default(false) | bool
       no_log: true

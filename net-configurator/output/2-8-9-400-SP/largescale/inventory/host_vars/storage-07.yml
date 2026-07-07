@@ -1,0 +1,4 @@
+---
+# Host variables for storage-07 (Generated from Excel)
+ansible_host: 192.168.200.202
+hostname: storage-07

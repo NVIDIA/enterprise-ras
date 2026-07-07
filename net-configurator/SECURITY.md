@@ -32,13 +32,26 @@ Out of scope:
 
 ### Do not run on a multi-user host (until `sshpass` is retired)
 
-Several validation playbooks — `playbooks/validate-ping-matrix.yml`,
-`playbooks/validate-config.yml`, `playbooks/restart-ldap-switches.yml`,
-and the Air `ProxyCommand` in `playbooks/vars/air_proxy.yml` — pass
-switch / server passwords to `sshpass` via CLI arguments. On a
-multi-tenant host (shared bastion, CI runner with other tenants, jump
-box with other user accounts) those passwords are visible in
-`ps auxww` to any local user while the task is running.
+Password authentication still exposes secrets in the OS **process table**
+(`ps auxww`) in two places while a task runs:
+
+1. **Air `ProxyCommand`** (`playbooks/vars/air_proxy.yml`) passes the jump-host
+   password via `sshpass -p '<pw>'` — visible to any local user on the **control
+   node**.
+2. **Validation probes** (`scripts/switch_health_probe.sh` and the per-switch/
+   server fan-out in `validate-*`/`restart-ldap-switches`) pass a password as a
+   **positional argument** — to the local probe invocation (visible on the
+   **jump host**) and, for the switch-health sudo password, into a remote
+   `bash -s -- '<pw>'` session (visible in `ps` on the **target switch**).
+
+The SSH-auth password itself is now passed via the `SSHPASS` **environment
+variable** (`sshpass -e`), not `-p`, in `validate-config` / `validate-ping-matrix`
+/ `restart-ldap-switches` **and in the Air SSH helpers** (`scripts/airlib/ssh.py`,
+used by `air-deploy` / `air-ssh-check`) — a prior `-p` argv exposure that has
+since been fixed.
+On a multi-tenant host (shared bastion, CI runner with other tenants, jump box
+with other user accounts) the exposures in (1) and (2) above are still visible to
+any local user during the task.
 
 **Mitigation:** run this tool from a single-user host (your laptop,
 a dedicated controller VM). If you must run on shared infrastructure,
@@ -50,6 +63,23 @@ exposes its bind/user passwords on the command line — `slappasswd` and
 `ldapadd` now read the secret from a mode-`0600` file (`-T` / `-y`) or the
 process environment, so the remaining `ps auxww` exposure is limited to the
 `sshpass`-based playbooks listed above.
+
+### Air bootstrap disables SSH host-key checking (accepted risk)
+
+The password-auth SSH helpers in `scripts/airlib/ssh.py` (used by
+`air-ssh-check` / `air-deploy` to verify access and inject the operator's key on
+freshly-created Air jump hosts) run with `StrictHostKeyChecking=no` and
+`UserKnownHostsFile=/dev/null`. This is inherent to the bootstrap: an Air sim's
+hosts are ephemeral and have no pre-known host key on first contact, so a
+network-position attacker who can impersonate the jump host during that brief
+window could capture the server password. The password is now passed via
+`SSHPASS` (above), and the window is the initial key-injection only; afterward
+all access is key-based.
+
+**Mitigation:** run `air-ssh-check`/`air-deploy` from a trusted network path to
+the Air endpoint. This is **accepted risk** for the bootstrap flow; pinning a
+TOFU host key would require an Air-API-provided fingerprint that the platform
+does not expose.
 
 ### The OOB management network is the trust boundary
 
@@ -93,23 +123,46 @@ switch OS image — outside this project's control.
   Instructions): configurations are placed on the switch at first boot
   without any HTTP fetch, eliminating this vector entirely.
 
-### Switch-to-LDAP binds are not encrypted
+### LDAP (optional feature) — accepted residual risks
 
-When LDAP is enabled, the generated switch config
-(`roles/core/templates/core_nvue_cli.j2`, and the OOB/GSL equivalents)
-binds to the LDAP server with `nv set system aaa ldap ...` and **no TLS
-directive**. The bind DN, bind secret, and user-authentication traffic
-cross the OOB network in cleartext.
+LDAP is **opt-in and off by default** — it is provisioned only when the
+Excel workbook sets `ldap_enabled: Yes` (or `LDAP=1` is passed explicitly).
+Deployments that do not enable LDAP are unaffected by everything in this
+section. Because LDAP is optional and the residual risks all require either
+the OOB network as a trust boundary or a prior local-shell compromise of the
+LDAP/jump host, the project **accepts and documents** the following rather
+than shipping TLS-certificate infrastructure for an optional feature. The
+two argv/file-permission risks in this class were already fixed (see below).
 
-NVUE does support LDAPS/STARTTLS, so this is fixable — but it requires
-TLS-certificate infrastructure (a server certificate for the LDAP host
-and CA distribution to every switch) that this project does not yet
-provide. LDAPS support is tracked as planned future work.
+When you do enable LDAP, deploy it **only on an isolated, trusted OOB
+management network** and treat the LDAP bind credential as exposed to anyone
+with OOB-network access or a local shell on the LDAP host.
 
-**Mitigation:** keep LDAP traffic on the isolated OOB network. Until
-LDAPS lands, do not extend the OOB segment across untrusted links, and
-treat the LDAP bind credential as exposed to anyone with OOB-network
-access.
+- **Switch↔LDAP binds are not encrypted.** The generated switch config
+  (`roles/core/templates/core_nvue_cli.j2` and the OOB/GSL equivalents) binds
+  with `nv set system aaa ldap ...` and **no TLS directive**, so the bind DN,
+  bind secret, and user-auth traffic cross the OOB network in cleartext. NVUE
+  supports LDAPS/STARTTLS, but enabling it requires a server certificate for
+  the LDAP host **and** CA distribution to every switch — infrastructure this
+  project does not provide. *Accepted; mitigated by the isolated-OOB
+  requirement above.*
+- **LDAP password hashes use `{SSHA}`** (salted SHA-1). `slappasswd` in
+  `roles/ldap/tasks/main.yml` runs without `-h`, so OpenLDAP's default
+  `{SSHA}` scheme hashes `olcRootPW`, the `cn=admin` bind DN, and every
+  provisioned user. `{SSHA}` is cheap to brute-force offline, so an attacker
+  who already has read access to the slapd database (a prior compromise of the
+  LDAP host) could recover passwords. *Accepted; the precondition is filesystem
+  read on the LDAP host.*
+- **debconf preseed interpolates the admin password into a shell `echo`.**
+  The slapd preseed task pipes `echo "slapd … {{ ldap.admin_password }}"` to
+  `debconf-set-selections` (with `no_log: true`); backticks/`$()` in the
+  operator-set admin password would expand. The value is operator-controlled
+  (not OEM-Excel-supplied), so this is low-risk. *Accepted.*
+
+**Already fixed (not accepted risk):** LDAP passwords are no longer passed on
+the command line — `slappasswd`/`ldapadd` read the secret from a mode-`0600`
+file via `-T`/`-y`, and the generated LDIF files are `mode: '0600'`
+and removed after use.
 
 ## Credential Handling
 

@@ -1,0 +1,11 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+# ============================================================================
+# N/S Spine 1 - cs-01
+# ============================================================================
+hostname: cs-01-ipp6
+lo_ip: 172.16.1.2/32
+router_id: 172.16.1.2
+asn: 4200100002

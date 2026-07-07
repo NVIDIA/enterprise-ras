@@ -39,9 +39,7 @@ The Settings sheet is a key-value table organized into sections. Column A (`Sett
 | Field | Required | Type | Description | Example |
 |-------|----------|------|-------------|---------|
 | `site_name` | No | String | A label for this deployment instance. Defaults to `default` if omitted. Use it to distinguish multiple deployments of the same architecture (e.g., `lab-east`, `prod-dc2`). | `default` |
-| `architecture` | **Yes** | Enum | The ERA architecture identifier. Must be exactly one of the four valid values. This determines which templates and topology rules are applied. | `2-8-5-200` |
-| `scalable_units` | No | Integer | Number of scalable units in the deployment. Each SU is a group of compute nodes that share a common cabling pattern. | `8` |
-| `nodes_per_su` | No | Integer | Number of nodes per scalable unit. Combined with `scalable_units`, this determines the total compute node count. | `4` |
+| `architecture` | **Yes** | Enum | The ERA architecture identifier. Must be exactly one of the six valid values. This determines which templates and topology rules are applied. | `2-8-5-200` |
 
 Valid architectures and what they represent. Naming follows the
 `{CPUs}-{GPUs}-{NICs}-{B}` convention where **B = average per-GPU
@@ -53,15 +51,26 @@ bandwidth on the East/West network (Gbps)**.
 | `2-8-5-200`* | 2 | 8 | 5 | 200 Gbps | 3 |
 | `2-8-9-400` | 2 | 8 | 9 | 400 Gbps | 3 |
 | `2-8-9-800` | 2 | 8 | 9 | 800 Gbps | 2 |
+| `2-4-5-800`† | 2 | 4 | 5 | 800 Gbps | varies |
+| `2-8-9-400-SP` | 2 | 8 | 9 | 400 Gbps | 2 |
+
+`2-8-9-400-SP` is the dedicated-GPU **single-plane** variant of `2-8-9-800`
+(GSL plane 1 only — the dual-plane default minus GPU plane 2).
 
 \* In archs where the E/W NIC:GPU ratio is 1:2 (`2-4-3-200`, `2-8-5-200`),
    strict per-GPU arithmetic gives 100 Gbps; the label `200` follows the
    per-NIC link speed convention — a documented exception, not a bug.
 
+† `2-4-5-800` is the GB300 NVL72 mini-cloud (multi-tier dedicated-GPU dual-plane
+   with separate N/S, GPU E/W, and OOB fabrics). It uses strict canonical-role
+   validation and a per-rack (NVL72) SU rather than the 4-node HGX SU of the
+   other archs; the OOB switch count is materialized per deployment, not a fixed
+   value.
+
 **Choosing an architecture:** match the row above to your compute node's CPU/GPU/NIC
 count and East/West link speed. If you're unsure which arch your hardware maps to,
-see the [Architecture Support Matrix](ARCH_SUPPORT_MATRIX.md) for the authoritative
-arch × scale × feature breakdown.
+see the [Architecture Support Matrix](ARCH_SUPPORT_MATRIX.md) for the
+arch × scale × feature breakdown (what has been tested with this tool).
 
 ### AIR DEPLOYMENT
 
@@ -70,9 +79,9 @@ These fields control NVIDIA Air simulation deployment. If you are deploying to p
 | Field | Required | Type | Description | Example |
 |-------|----------|------|-------------|---------|
 | `deploy_in_air` | No | Yes/No | Whether to deploy this configuration in an NVIDIA Air virtual simulation. | `Yes` |
-| `air_username` | No | String | NGC username for legacy Air authentication. Not needed for NGC Air 2.0 (bearer token). | `jsmith@company.com` |
-| `air_org` | No | String | NGC organization name. Required if deploying to Air. | `my-org` |
-| `status_page_enabled` | No | Yes/No | When enabled, creates an HTTP service in Air for the ZTP status page with basic auth. Allows viewing ZTP status and validation reports via a web browser. Credentials come from `status_page_username` and `status_page_password` in `secrets.yml` (default username: `era`, default password: same as `switch_password`). | `No` |
+| `air_username` | No | String | **Inert — no consumer in the current pipeline** (`make validate-excel` warns if set). Air credentials come from the `.era-secrets` vault (`make air-setup`), not the Excel. Safe to omit. | *(omit)* |
+| `air_org` | No | String | **Inert — no consumer in the current pipeline** (`make validate-excel` warns if set). Air credentials come from the vault, not the Excel. Safe to omit. | *(omit)* |
+| `status_page_enabled` | No | Yes/No | When enabled, creates an HTTP service in Air for the ZTP status page with basic auth. Allows viewing ZTP status and validation reports via a web browser. The same basic-auth credentials also protect the validation-report page (`/reports/`). Credentials come from `status_page_username` and `status_page_password` in `secrets.yml` (default username: `era`; default password: `CHANGE_ME` — you **must** set a real password in `secrets.yml` before deploying, it does not default to any other secret). | `No` |
 
 The Air instance URL is **not** an Excel field. Run `make air-setup` once per checkout
 to pick public NGC Air vs. internal air-inside (or enter a custom URL); the wizard
@@ -86,11 +95,14 @@ Core network parameters that define the fabric topology.
 | Field | Required | Type | Description | Example |
 |-------|----------|------|-------------|---------|
 | `mgmt_subnets` | **Yes** | CIDR (CSV) | Management subnet(s) for OOB network. Comma-separated if multiple. All OOB switches share this subnet. | `192.168.200.0/24` |
-| `management_switches` | **Yes** | Integer | Number of OOB management switches. Must match the architecture (2 for `2-4-3-200` and `2-8-9-800`, 3 for `2-8-5-200` and `2-8-9-400`). | `2` |
-| `tiers` | No | Integer | Number of network tiers. Currently only `1` is supported. | `1` |
-| `convergence` | No | String | Network convergence type. Use `full` for converged fabric. | `full` |
-| `bgp_asn` | **Yes** | Integer | BGP Autonomous System Number for the fabric. Must be a valid ASN (positive integer). Private ASN range 64512-65534 is typical for internal fabrics. | `65100` |
-| `loopback_base` | **Yes** | IP prefix | First three octets of the loopback IP range. The fourth octet is auto-assigned per switch and VRF. | `172.16.176` |
+| `management_switches` | **Yes** | Integer | Number of OOB management switches. **Scale-dependent** — sized by node count, not a fixed per-arch constant. The shipping default templates use 2 (`2-4-3-200`, `2-8-9-800`) or 3 (`2-8-5-200`, `2-8-9-400`) at their default SU, but the count grows with SU (see `docs/ARCH_SUPPORT_MATRIX.md` SU-scaling) and the `make generate-excel` generator materializes it per deployment. `2-4-5-800` uses a dedicated OOB management fabric. Set it to match the OOB switches your Wire Map actually cables. | `2` |
+| `ns_tiers` | No | Integer (1-2) | Compute (North-South) fabric tier count. `1` = converged spine-leaf (role `csl`), `2` = dedicated split (roles `cl` + `cs`). The validator checks that the spine role count matches. Default `1`. | `1` |
+| `ew_tiers` | No | Integer (1-2) | GPU (East-West) fabric tier count, per plane. `1` = converged spine-leaf (role `gsl-plane*`), `2` = dedicated split (roles `gl-plane*` + `gs-plane*`). Default `1`; the `2-4-5-800` default ships `2`. | `1` |
+| `tiers` | No | Integer | **Deprecated** — legacy single tier count. Seeds both `ns_tiers` and `ew_tiers` if either is missing; prints a deprecation warning. New Excels should use `ns_tiers` / `ew_tiers`. | `1` |
+| `convergence` | No | String | Network convergence type. `full` for the converged-core archs (`2-4-3-200`, `2-8-5-200`, `2-8-9-400`); `dedicated_gpu` for the dedicated-GPU archs (`2-4-5-800`, `2-8-9-800`, `2-8-9-400-SP`). Matches the shipped default per arch. | `full` |
+| `gpu_planes` | No | Integer (1-2) | Number of GPU fabric planes. `1` for single-plane archs; `2` for the dual-plane archs (`2-4-5-800`, `2-8-9-800`). The default per arch already matches its topology — only change it if you know why. | `1` |
+| `bgp_asn` | **Yes** | Integer | BGP Autonomous System Number for the fabric. 4-byte ASNs are used (the shipped defaults are in the `426039xxxx` range; `2-4-5-800` uses `4200100001`). Set to a valid ASN for your fabric. | `4260394788` |
+| `loopback_base` | **Yes** | IP prefix | First three octets of the loopback IP range. The fourth octet is auto-assigned per switch and VRF. (The `2-4-5-800` default uses `172.16.1`; the others use `172.16.176`.) | `172.16.176` |
 | `disabled_ports` | No | CSV of integers | Physical port numbers on core switches that should be administratively disabled. Comma-separated. | `50,52,60,62,64` |
 | `exit_dhcp_servers` | No | CSV of IPs | DHCP relay server IPs for the EXIT VRF. Only needed if your design uses DHCP relay on the exit network. | `10.0.0.1,10.0.0.2` |
 | `air_mgmt_subnet` | No | CIDR | Management subnet for Air virtual nodes (dhcp-oob, oob-server-01, dhcp-edge). Used to assign IPs to the Air management infrastructure. If omitted, defaults to `172.20.0.0/24`. Only relevant for Air deployments. | `172.20.0.0/24` |
@@ -113,8 +125,8 @@ LDAP configuration for centralized authentication on switches. If `ldap_enabled`
 
 | Field | Required | Type | Description | Example |
 |-------|----------|------|-------------|---------|
-| `telemetry_enabled` | No | Yes/No | Enable telemetry collection on switches (WJH, histogram, etc.). | `Yes` |
-| `netq_ip` | No | IP address | NetQ server IP address for streaming telemetry data. Only relevant if NetQ is deployed. | `10.0.1.50` |
+| `telemetry_enabled` | No | Yes/No | **Inert — no consumer in the current pipeline** (`make validate-excel` warns if set). Switch telemetry is not driven from this field today. Safe to omit. | *(omit)* |
+| `netq_ip` | No | IP address | **Inert — no consumer in the current pipeline** (`make validate-excel` warns if set). Safe to omit. | *(omit)* |
 
 ### ADVANCED
 
@@ -129,7 +141,7 @@ These fields have sensible defaults. Only change them if your deployment diverge
 | `ztp_server` | No | IP address | IP address of the ZTP server (typically oob-server-01). Must be a valid IPv4 address. | `192.168.200.1` |
 | `ntp_servers` | No | String | NTP server addresses for time synchronization. Can be IPs or hostnames. | `0.cumulusnetworks.pool.ntp.org` |
 | `num_physical_ports` | No | Integer | Number of physical front-panel ports on core switches (e.g., SN5610 has 64). Used for port range calculations. | `64` |
-| `oob_uplink_mode` | No | `l2` or `l3` | OOB switch uplink mode. `l2` (default) keeps OOB switches as flat L2 bridges (legacy ERA design); `l3` makes them L3 EVPN VTEPs with BGP underlay + OOB VRF SVI + VRR (matches a production L3-OOB design). L3 mode also flips the Air topology to use `cust-net-edge-01` as the mgmt-VLAN bridge and replaces `dhcp-oob`/`oob-server-01` with `external-conn`/`external-dhcp`/`utility`. | `l2` |
+| `oob_uplink_mode` | No | `l2` or `l3` | OOB switch uplink mode. **All shipped default templates set `l3`** (the current production L3-OOB design): OOB switches are L3 EVPN VTEPs with BGP underlay + OOB VRF SVI + VRR, the Air topology uses `cust-net-edge-*` as the mgmt-VLAN bridge, and the OOB infra nodes are `external-conn`/`external-dhcp`/`utility`. `l2` is the legacy flat-L2-bridge design (`dhcp-oob`/`oob-server-01`); the parser falls back to `l2` only if this field is left blank. **Important:** when changing this setting, you must also update the "OOB Uplink" Port Profile on the VLANs & Profiles sheet -- set it to `Access` with VLAN 200 for L2 mode, or `L3` for L3 mode. See the Port Profile table below. | `l3` (shipped); `l2` if blank |
 | `pre_login_message` | No | Multi-line text | SSH banner displayed **before** authentication. Empty cell → no banner line emitted (any existing banner on the switch persists untouched). Placeholders `{hostname}`, `{site}`, `{arch}` are substituted per-switch at config-render time. Newlines in the cell are preserved. Single quotes in the operator's text are safely escaped. Default Excels ship pre-populated with the NVIDIA Cumulus VX welcome message, so existing deploys see the same banner unless you edit the cell. | `Authorized access only — site {site}` |
 | `post_login_message` | No | Multi-line text | Login MOTD displayed **after** successful authentication. Same placeholder + empty-cell semantics as `pre_login_message`. Default Excels ship with the "successfully logged in to: `{hostname}`" message. | `Welcome to {hostname} ({arch})` |
 
@@ -171,9 +183,9 @@ The topology generator automatically injects several Ubuntu / Cumulus VX nodes i
 
 | Name | Type | Used in | Purpose |
 |---|---|---|---|
-| `cust-net-edge-01` | switch | L3 OOB | Customer-edge sim — air-mgmt L2 bridge + EXIT-VRF eBGP underlay |
-| `cust-net-edge-02` | switch | L3 OOB | HA pair for NAT return path |
-| `external-conn` | node | L3 OOB | NAT host (172.20.0.1) — routes outbound through Air |
+| `cust-net-edge-01` | switch | L3 OOB | Customer-edge sim — air-mgmt L2 bridge hub + EXIT-VRF eBGP underlay |
+| `cust-net-edge-02` | switch | L3 OOB | Second EXIT egress edge + air-mgmt bridge spoke |
+| `external-conn` | node | L3 OOB | NAT host on routed EXIT egress legs (172.20.1.1/172.20.2.1) — routes outbound through Air |
 | `external-dhcp` | node | L3 OOB | ZTP DHCP server + inter-VRF EXIT relay target |
 | `utility` | node | L3 OOB | Jumpbox + status page + OOB-side DHCP relay target |
 | `ext-storage-01` | node | L3 OOB (2-8-9-800 only) | STORAGE VRF eBGP peer + simulated customer storage |
@@ -193,7 +205,13 @@ The `Function` column value determines how the automation classifies each device
 
 | Pattern | Device Type | Examples |
 |---------|-------------|---------|
-| `core-01`, `core-02` | Core/spine switches (always exactly 2) | `core-01`, `core-02` |
+| `core-01`, `core-02` | Collapsed-core switches (single-tier `2-4-3-200` / `2-8-5-200` / `2-8-9-400`) | `core-01`, `core-02` |
+| `csl` *(or hostname `cl-*`)* | Compute Spine-Leaf — **converged 1-tier** compute (`ns_tiers=1`) | Function `csl`, Name `cl-01` |
+| `cl` | Compute **Leaf** in a **2-tier** compute fabric (`ns_tiers=2`); pair with `cs` spine | `cl-01`, `cl-02` |
+| `cs` | Compute **Spine** in a 2-tier compute fabric (`ns_tiers=2`) | `cs-01`, `cs-02` |
+| `gsl-plane1`, `gsl-plane2` | GPU Spine-Leaf — **converged 1-tier** GPU per plane (`ew_tiers=1`) | `gsl-plane1`, `gsl-plane2` |
+| `gl-plane1`, `gl-plane2` | GPU **Leaf** in a **2-tier** GPU fabric (`ew_tiers=2`); pair with `gs-plane*` spine | `gl-plane1-01..04` |
+| `gs-plane1`, `gs-plane2` | GPU **Spine** in a 2-tier GPU fabric (`ew_tiers=2`); per plane | `gs-plane1-01`, `gs-plane1-02` |
 | `oob-switch-01`, `oob-switch-02`, `oob-switch-03` | OOB management switches | `oob-switch-01` through `oob-switch-03` |
 | `su-XX-node-YY` | Compute nodes in Scalable Unit XX | `su-01-node-01`, `su-02-node-04` |
 | `storage-XX` | Storage nodes | `storage-01`, `storage-02` |
@@ -421,7 +439,7 @@ Common port profiles:
 | Storage | Trunk | Storage node uplinks |
 | Support | Trunk | Support infrastructure uplinks |
 | ISL | Trunk | Inter-switch link between core-01 and core-02 |
-| OOB Uplink | Trunk | Core-to-OOB switch uplinks |
+| OOB Uplink | Access (L2) or L3 | Core-to-OOB switch uplinks. Use `Access` with VLAN 200 when `oob_uplink_mode = l2`; use `L3` when `oob_uplink_mode = l3`. Must match the Settings value. |
 | Edge Uplink | Trunk | Core-to-edge/exit switch uplinks |
 
 ### Section 4: DHCP Relay (optional)
@@ -649,8 +667,7 @@ For a basic physical deployment without Air or LDAP:
 
 Same as above, plus:
 - Set `deploy_in_air` to `Yes`
-- Set `air_org` to your NGC organization
-- Run `make air-setup` once to pick the Air instance (public NGC Air or internal air-inside) and store credentials — no Excel field needed
+- Run `make air-setup` once to pick the Air instance (public NGC Air or internal air-inside) and store credentials — no Excel field needed (`air_org`/`air_username` in the Excel are inert and can be omitted)
 - Add `Air - Management` rows in Wire Map for each node's eth0-to-OOB-switch connection
 - Set `Display in Air` to `Yes` for all connections you want simulated
 
@@ -725,7 +742,7 @@ The validator checks:
 - **Required fields**: Mandatory Settings keys have values.
 - **IP format**: All IPs and CIDRs are syntactically valid IPv4.
 - **MAC format**: MAC addresses use `xx:xx:xx:xx:xx:xx` notation.
-- **Architecture**: Value is one of the four valid architectures.
+- **Architecture**: Value is one of the six valid architectures.
 - **Duplicates**: No duplicate Function names, no duplicate management IPs.
 - **Port conflicts**: No duplicate switch port assignments in the Wire Map.
 - **Cross-sheet consistency**: Wire Map `System Name (A)` / `System Name (B)` values reference nodes that exist in the Nodes sheet.
@@ -776,7 +793,9 @@ make switch-ztp-deploy ARCH=2-8-5-200  # Physical
 |-------|-------------------|
 | `site_name` | `default` |
 | `deploy_in_air` | `No` |
-| `tiers` | `1` |
+| `ns_tiers` | `1` (compute converged; `2` = split `cl`+`cs`) |
+| `ew_tiers` | `1` (GPU converged; `2` = split `gl`+`gs` per plane) |
+| `tiers` | *(deprecated)* — seeds both `ns_tiers` / `ew_tiers` if missing |
 | `convergence` | `full` |
 | `ldap_enabled` | `No` |
 | `telemetry_enabled` | `No` |

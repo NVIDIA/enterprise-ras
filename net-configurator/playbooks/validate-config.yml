@@ -59,26 +59,58 @@
       delegate_to: localhost
       run_once: true
 
-    - name: Pull running config from each switch via ZTP server
+    # Tell the operator the next step is a single, deliberately-quiet collection
+    # so the dead air during the parallel fan-out doesn't read as a hang.
+    - name: "Progress — pulling running configs in parallel"
+      debug:
+        msg: >-
+          Pulling running NVUE config from {{ switch_list | length }} switch(es)
+          in parallel via the jump. This runs as ONE step and stays quiet until
+          every switch returns (up to a few minutes at scale) — silence here is
+          expected, not a hang.
+      run_once: true
+
+    - name: "Pull running config from ALL switches in parallel (fan-out from jump)"
+      # One backgrounded SSH per switch on the jump, then `wait` — parallel,
+      # not the old serial loop. Parallelism happens inside this single shell
+      # task (Ansible doesn't stream, but the whole thing finishes in seconds).
+      # Per-switch output (CONNECTION_FAILED / CONFIG_FETCH_FAILED / config) is
+      # emitted between @@@SW@@@<name> markers and reshaped into the original
+      # running_configs contract below, so the compare task is unchanged.
       shell: |
         export SSHPASS='{{ switch_password }}'
-        SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
-
-        # Test connectivity first
-        if ! timeout 15 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[item].ansible_host }} 'echo ok' >/dev/null 2>&1; then
-          echo "CONNECTION_FAILED"
-          exit 0
-        fi
-
-        # Pull running config as nv set commands
-        # Try -o commands first (5.16+), fall back to plain nv config show
-        timeout 30 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[item].ansible_host }} \
-          'nv config show -o commands 2>/dev/null || nv config show --output commands 2>/dev/null || nv config show 2>/dev/null' \
-          || echo "CONFIG_FETCH_FAILED"
-      loop: "{{ switch_list }}"
-      register: running_configs
+        OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+        WORK=$(mktemp -d /tmp/cfgv.XXXXXX)
+        {% for item in switch_list %}
+        ( if ! timeout 15 sshpass -e ssh $OPTS cumulus@{{ hostvars[item].ansible_host }} 'echo ok' >/dev/null 2>&1; then
+            echo "CONNECTION_FAILED";
+          else
+            timeout 30 sshpass -e ssh $OPTS cumulus@{{ hostvars[item].ansible_host }} 'nv config show -o commands 2>/dev/null || nv config show --output commands 2>/dev/null || nv config show 2>/dev/null' || echo "CONFIG_FETCH_FAILED";
+          fi ) > "$WORK/{{ item }}.out" 2>/dev/null &
+        {% endfor %}
+        wait
+        {% for item in switch_list %}
+        echo "@@@SW@@@{{ item }}"
+        cat "$WORK/{{ item }}.out" 2>/dev/null
+        {% endfor %}
+        rm -rf "$WORK"
+      register: cfg_fanout
       changed_when: false
       no_log: true
+
+    - name: Reshape parallel output into running_configs (preserves contract)
+      set_fact:
+        _rc: "{{ (_rc | default([])) + [ {'item': (item.split('\n')[0]), 'stdout': (item.split('\n')[1:] | join('\n')), 'stdout_lines': (item.split('\n')[1:])} ] }}"
+      loop: "{{ cfg_fanout.stdout.split('@@@SW@@@') | reject('equalto', '') | list }}"
+      loop_control:
+        label: "{{ item.split('\n')[0] }}"
+      # Accumulating fact carries every switch's full config — without no_log
+      # Ansible reprints the growing fact each iteration -> O(N^2) output blowup.
+      no_log: true
+
+    - name: Publish running_configs
+      set_fact:
+        running_configs: "{{ {'results': _rc | default([])} }}"
 
     - name: Compare and format results for each switch
       shell: |
@@ -136,7 +168,10 @@
         # `interface swpN type swp` is the implicit per-port default that
         # Cumulus 5.16+ materializes in the running config; our generator
         # doesn't emit it because it's the schema default.
-        grep -v -E '(dhcp-client|interface eth0 ipv4 address|hashed-password|system docker|association-type server|system ntp vrf|ldap secret|ldap bind-password|nv set interface swp[0-9]+(s[0-9]+)? type swp$)' \
+        # `nve vxlan enable on` is implicitly enabled by NVUE when EVPN
+        # address-family is configured in BGP; we never emit it in the
+        # generated config, so filter it out of the extras here.
+        grep -v -E '(dhcp-client|interface eth0 ipv4 address|hashed-password|system docker|association-type server|system ntp vrf|ldap secret|ldap bind-password|nv set interface swp[0-9]+(s[0-9]+)? type swp$|nv set nve vxlan enable on$|nv set nve vxlan state enabled$)' \
           /tmp/extra_raw_${SWITCH}.txt > /tmp/extra_${SWITCH}.txt || true
         extra_count=$(wc -l < /tmp/extra_${SWITCH}.txt)
         ignored_count=$(( $(wc -l < /tmp/extra_raw_${SWITCH}.txt) + $(wc -l < /tmp/missing_raw_${SWITCH}.txt) - extra_count - missing_count ))
@@ -147,6 +182,17 @@
         echo "Extra on switch:     ${extra_count}"
         if [ "$ignored_count" -gt 0 ]; then
           echo "Ignored (defaults): ${ignored_count}"
+        fi
+
+        # Guard against the "0/0 false MATCH" — if BOTH generated and running
+        # normalize to zero lines, something silently failed (ansible compile
+        # glitch, empty SSH return, normalizer crash). Flag it as FAILED, not
+        # MATCH, so the operator notices instead of being misled.
+        if [ "$gen_count" -eq 0 ] && [ "$run_count" -eq 0 ]; then
+          echo "RESULT:FAILED"
+          echo "!! EMPTY DIFF -- both generated and running config came back empty"
+          echo "!! likely transient (utility race during boot) — re-run validate-config"
+          exit 0
         fi
 
         if [ "$missing_count" -eq 0 ] && [ "$extra_count" -eq 0 ]; then
@@ -172,10 +218,32 @@
           fi
         fi
 
+        # Full-detail dump appended below the SENTINEL so the on-screen
+        # `debug` task can trim it out (it shows only the summary), while
+        # the per-switch raw report file picks up the whole thing. Lets a
+        # reader see exactly what got "Ignored (defaults)" — the missing/
+        # extra lines + the unfiltered raw `comm -23 / -13` output + both
+        # full configs (generated + running).
+        echo ""
+        echo "===RAW-DETAIL==="
+        echo ""
+        echo "-- Lines filtered as defaults (running has, ignored as NVUE auto) --"
+        comm -13 /tmp/extra_${SWITCH}.txt /tmp/extra_raw_${SWITCH}.txt | sed 's/^/  ~ /' || true
+        echo ""
+        echo "-- Lines filtered from missing (secrets/passwords) --"
+        comm -13 /tmp/missing_${SWITCH}.txt /tmp/missing_raw_${SWITCH}.txt | sed 's/^/  ~ /' || true
+        echo ""
+        echo "===FULL-GENERATED==="
+        cat /tmp/gen_${SWITCH}.txt
+        echo ""
+        echo "===FULL-RUNNING==="
+        cat /tmp/run_${SWITCH}.txt
+
         # Cleanup
         rm -f /tmp/gen_${SWITCH}.txt /tmp/run_${SWITCH}.txt \
               /tmp/gen_norm_${SWITCH}.txt /tmp/run_norm_${SWITCH}.txt \
-              /tmp/missing_${SWITCH}.txt /tmp/extra_raw_${SWITCH}.txt /tmp/extra_${SWITCH}.txt
+              /tmp/missing_${SWITCH}.txt /tmp/missing_raw_${SWITCH}.txt \
+              /tmp/extra_raw_${SWITCH}.txt /tmp/extra_${SWITCH}.txt
       loop: "{{ running_configs.results }}"
       register: diff_results
       changed_when: false
@@ -183,7 +251,12 @@
 
     - name: Display results for each switch
       debug:
-        msg: "{{ item.stdout_lines }}"
+        # Trim the on-screen output at the RAW-DETAIL sentinel — the raw
+        # report file (config-<sw>.txt) still gets the full content below.
+        msg: >-
+          {{ item.stdout_lines[:item.stdout_lines.index('===RAW-DETAIL===')]
+             if '===RAW-DETAIL===' in item.stdout_lines
+             else item.stdout_lines }}
       loop: "{{ diff_results.results }}"
       loop_control:
         label: "{{ item.item.item }}"

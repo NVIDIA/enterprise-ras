@@ -64,11 +64,21 @@ storage / support bonds.
 
 ### `csl`
 
-CPU/Storage Leaf switch. In dual-plane architectures, replaces the
-converged `core` for everything *except* the GPU fabric — handles
-CPU/in-band, storage, and support VLANs.
+Converged compute spine-leaf switch (1-tier; `ns_tiers=1`). In dual-plane
+architectures, replaces the converged `core` for everything *except* the
+GPU fabric — handles CPU/in-band, storage, and support VLANs. One box
+that is genuinely both spine and leaf (the "S-L" name is accurate).
 
 **Members:** `csl-01`, `csl-02`.
+
+### `cl`
+
+Compute Leaf switch (2-tier; `ns_tiers=2`). The dedicated leaf in a split
+compute fabric, used when a dedicated `cs` spine sits above. Renders the
+same template as `csl` but stays a distinct role so per-tier group_vars
+(QoS pools, monitoring tags) can diverge later.
+
+**Members:** `cl-01`, `cl-02`.
 
 ### `gsl-plane1` / `gsl-plane2`
 
@@ -86,6 +96,33 @@ earlier Excels; when present, the parser promotes it to `gsl-plane1` or
 declare the plane-specific canonical directly.
 
 **Members:** `gsl-plane1-01`, `gsl-plane1-02`, `gsl-plane2-01`, `gsl-plane2-02`.
+
+### `gl-plane1` / `gl-plane2`
+
+GPU Leaf switch (2-tier; `ew_tiers=2`). The dedicated leaf when a `gs`
+spine sits above per plane. Same template as `gsl-plane*`; distinct role
+for future per-tier divergence.
+
+**Members:** `gl-plane1-01..04`, `gl-plane2-01..04`.
+
+### `cs`
+
+Compute Spine switch (2-tier; `ns_tiers=2`). Sits above `cl` leaves; pure
+EVPN relay (no VTEPs, bridge, or VRFs). Renders the merged
+`roles/spine/templates/spine_nvue_cli.j2` (with `weighted_ecmp` /
+`smn_ports` / `isl_core_ports` as optional, group_vars-gated blocks).
+
+**Members:** typically `cs-01`, `cs-02`.
+
+### `gs-plane1` / `gs-plane2`
+
+GPU Spine switch (2-tier; `ew_tiers=2`). Sits above `gl-plane*` leaves
+per plane; pure EVPN relay with RoCE lossless QoS (the `roce_traffic_pool`
+flag enables the memory-percent carve in the merged spine template).
+Each plane's spines peer only with their own plane's leaves.
+
+**Members:** `gs-plane1-01`, `gs-plane1-02` (plane 1), `gs-plane2-01`,
+`gs-plane2-02` (plane 2).
 
 ### `oob-switch`
 
@@ -142,110 +179,89 @@ emitted by the parser as a node role.
 
 ## Per-arch presence
 
-### Universal roles — present (or planned) in every arch
+Fabrics change shape with scale: the converged archs ship a collapsed `core`
+at their **default** and split into dedicated / 2-tier switch roles at
+**largescale**. In the tables below, ✓ means the role is used by that
+architecture at some tested scale (default or largescale); — means it is not
+used. See [`ARCH_SUPPORT_MATRIX.md`](ARCH_SUPPORT_MATRIX.md) for the scale each
+was tested at.
 
-| Role | 2-4-3-200 | 2-8-5-200 | 2-8-9-400 | 2-8-9-800 |
-|---|:-:|:-:|:-:|:-:|
-| `gpu` | ✓ | ✓ | ✓ | ✓ |
-| `support` | ✓ | ✓ | ✓ | ✓ |
-| `storage` | ✓ | ✓ | ✓ | ⌛ planned |
-| `oob-switch` | ✓ | ✓ | ✓ | ✓ |
-| `oob-server` | ✓ | ✓ | ✓ | ✓ |
-| `dhcp` | ✓ | ✓ | ✓ | ✓ |
-| `edge` | ⌛ planned | ⌛ planned | ✓ | ⌛ planned |
-| `air-oob` | ✓ | ✓ | ✓ | ✓ |
+### Compute / server roles — every architecture
 
-### Fabric-class roles — mutually exclusive per arch
+| Role | 2-4-3-200 | 2-8-5-200 | 2-8-9-400 | 2-4-5-800 | 2-8-9-800 | 2-8-9-400-SP |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| `gpu` (compute worker) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `support` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `storage` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-| Role | 2-4-3-200 | 2-8-5-200 | 2-8-9-400 | 2-8-9-800 |
-|---|:-:|:-:|:-:|:-:|
-| `core` (collapsed fabric) | ✓ | ✓ | ✓ | — |
-| `csl` (dual-plane CPU/storage leaf) | — | — | — | ✓ |
-| `gsl` (dual-plane GPU spine/leaf) | — | — | — | ✓ |
+### Switch fabric roles — per arch
 
-**Legend:** ✓ present today,  ⌛ planned, — N/A for this fabric class.
+| Role | 2-4-3-200 | 2-8-5-200 | 2-8-9-400 | 2-4-5-800 | 2-8-9-800 | 2-8-9-400-SP |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| `core` (collapsed fabric) | ✓ | ✓ | ✓ | — | — | — |
+| `csl` (converged CPU/storage leaf) | — | ✓ | ✓ | — | ✓ | ✓ |
+| `cl` / `cs` (2-tier CPU leaf / spine) | — | — | — | ✓ | ✓ | ✓ |
+| `gsl-plane1` (converged GPU spine/leaf) | — | ✓ | — | — | ✓ | ✓ |
+| `gsl-plane2` | — | — | — | — | ✓ | — |
+| `gl-plane1` / `gs-plane1` (2-tier GPU) | — | — | ✓ | ✓ | ✓ | ✓ |
+| `gl-plane2` / `gs-plane2` (plane 2) | — | — | — | ✓ | ✓ | — |
+| `oob-switch` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-## Backward-compatibility policy
+### OOB / management roles — L3 (default)
 
-The three currently-live archs ship Excels where the Role column holds the
-hostname rather than a canonical role. Migrating those is a per-OEM
-revision cycle, not a single PR. So:
+The default OOB mode is **L3** (routed OOB with an EXIT/OOB VRF). Every
+architecture uses the same L3 management set:
 
-### Parser behavior — Excel-first, name-pattern fallback
+| Role | Node | Purpose |
+|---|---|---|
+| `utility` | `utility` | L3 OOB jump host / gateway; hosts the status page; OOB-side DHCP relay target |
+| `external-dhcp` | `external-dhcp` | ZTP DHCP + web server; inter-VRF EXIT relay target |
+| `external-conn` | `external-conn` | NAT host (`172.20.0.1`) — outbound routing + eBGP into the OOB VRF |
+| `cust-net-edge` | `cust-net-edge-01` / `-02` | Customer-edge switch: air-mgmt bridge + EXIT-VRF eBGP underlay (`-02` = HA NAT return path) |
+| `oob-switch` | `oob-switch-NN` | OOB access switches — every node's `eth0` terminates here (`192.168.200.0/24`) |
+
+> **Legacy L2 OOB.** When `oob_uplink_mode=l2`, the older node set applies
+> instead: `oob-server-01` (jump/NAT), `dhcp-oob` / `dhcp-edge` (DHCP), and
+> `air-oob-switch` (Air L2 bridge). These do not appear in an L3 deployment —
+> see [`OOB_SERVER_SETUP.md`](OOB_SERVER_SETUP.md).
+
+## Role declaration & validation
+
+A node's role can be declared directly in the **Function** cell (Nodes tab) /
+**System Role** cell (Wire Map). The parser is Excel-first with a name-pattern
+fallback:
 
 ```text
 1. Read the Function / System Role cell.
 2. If it matches a canonical role string (case-insensitive), use it directly.
-3. Otherwise, fall back to classify_node(name) — legacy prefix matching.
+3. Otherwise, fall back to name-pattern classification (legacy prefix matching).
 ```
 
-This keeps every existing Excel working without modification while letting
-new Excels (and revised old ones) declare their role explicitly.
+This lets new Excels declare roles explicitly while older Excels that put the
+hostname in the Role column keep working unchanged.
 
 ### Per-arch validation enforcement
 
-| Arch | Policy | Reason |
-|---|---|---|
-| 2-4-3-200 | Legacy: warn on non-canonical roles | Live; migrate gradually |
-| 2-8-5-200 | Legacy: warn on non-canonical roles | Live; migrate gradually |
-| 2-8-9-400 | Legacy: warn on non-canonical roles | Live; migrate gradually |
-| 2-8-9-800 | **Strict: error on non-canonical roles** | Not yet live — clean start |
+`make validate-excel` enforces canonical roles per architecture:
 
-`validate-excel` enforces these modes via an allow-list per arch.
+| Arch | Policy |
+|---|---|
+| `2-4-3-200` | warn on non-canonical roles |
+| `2-8-5-200` | warn on non-canonical roles |
+| `2-8-9-400` | warn on non-canonical roles |
+| `2-4-5-800` | **strict — error on non-canonical roles** |
+| `2-8-9-800` | **strict — error on non-canonical roles** |
+| `2-8-9-400-SP` | **strict — error on non-canonical roles** |
 
-## Migration plan
-
-In order, smallest blast radius first:
-
-1. **Parser flip to Excel-first** ✅ DONE (commit 24bca73). Helper
-   `classify_host_role` recognises canonical role strings; falls back to
-   `classify_node()` for legacy.
-
-   Then expanded under the canonical-role-validation branch
-   (commit 1e03403): added `canonical_category(function, name)` and
-   `extract_role_index(name)` helpers, refactored ~25 sites across
-   `parse_oob_switch_configs`, `parse_gsl_port_config`,
-   `parse_node_mgmt_mapping`, `build_interface_map`, `categorize_nodes`,
-   `generate_hosts_file`, `generate_host_vars`,
-   `get_oob_nodes_for_inventory`. **Index extraction** now comes from
-   the Name column (trailing digits, with order-of-occurrence
-   fallback for digitless names) — `dog10` with Function=`core` works
-   correctly.
-
-2. **Standardize column naming.** ✅ DONE. Wire Map column 2 header
-   `System Role` -> `Function` across all 12 inputs (4 canonical + 4
-   sample + 4 fixture). Parsers read column 2 by position.
-
-3. **Validate-excel role enforcement.** ✅ DONE. `ROLE_ENFORCEMENT`
-   table in `validate_excel.py`: 2-8-9-800 strict (error on
-   non-canonical Function cells), 2-4-3-200/2-8-5-200/2-8-9-400
-   warn. Rolled-up reporting (one warn/error summarising rows +
-   distinct examples) keeps noise floor down. Duplicate detection
-   moved from Function to Name where canonical repeats are
-   expected. Wire Map dedup key switched from Switch Role to
-   Switch Name.
-
-4. **Convert 2-8-9-800 to canonical.** ✅ DONE for cell content
-   (commit c24f05c): 23 Nodes Function cells + 321 Wire Map System
-   Role cells + 314 Wire Map Switch Role cells flipped to canonical
-   strings.
-
-5. **Live arch cleanup, per revision cycle.** As each of the three
-   live Excels gets touched for unrelated reasons, convert it to
-   canonical roles. Validator emits a rolled-up warning per arch
-   listing the rows that still hold hostname-as-role — that's the
-   per-arch punch list. No forced rev.
-
-6. **Promote warning → error globally** once all four are on
-   canonical. Change every arch's `ROLE_ENFORCEMENT` entry to
-   `strict` in one MR.
+`warn` architectures ship Excels that still use hostname-as-role in some cells
+and migrate to canonical roles gradually; `strict` architectures must use
+canonical role names in the Function / System Role cells.
 
 ### Default-IP stride limit
 
-A known limit: auto-defaults for OOB/INBAND/EXIT VRF loopbacks collide at >3
-cores/csl per role (current 4 archs are within bounds). The
-Loopbacks sheet (`docs/LOOPBACKS.md`) is the workaround until a
-focused MR widens the stride.
+Auto-assigned OOB/INBAND/EXIT VRF loopbacks collide at more than 3 core/CSL
+switches per role. If you hit that, set explicit loopbacks on the **Loopbacks**
+sheet (see [`LOOPBACKS.md`](LOOPBACKS.md)).
 
 ## Adding a new role
 

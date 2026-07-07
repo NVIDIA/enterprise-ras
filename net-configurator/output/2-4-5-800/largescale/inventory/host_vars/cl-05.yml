@@ -1,0 +1,301 @@
+---
+# Host variables for cl-05 (Generated from Excel)
+ansible_host: 172.20.0.22
+hostname: cl-05
+mac_address: 48:b0:2d:c7:34:12
+ip_assignment_mode: dhcp
+router_id: 172.16.1.15
+lo_ip: 172.16.1.15/32
+bgp_asn: 4200100406
+vlan_interfaces:
+- id: vlan300
+  ip: 172.16.178.6/24
+  vrr: 172.16.178.1/24
+  vlan: '300'
+  vrf: INBAND
+- id: vlan400
+  ip: 172.16.179.6/24
+  vrr: 172.16.179.1/24
+  vlan: '400'
+  vrf: INBAND
+- id: vlan500
+  ip: 172.16.180.6/24
+  vrr: 172.16.180.1/24
+  vlan: '500'
+  vrf: STORAGE
+vrf_loopbacks:
+  EXIT: 172.16.1.9/32
+  INBAND: 172.16.1.7/32
+  OOB: 172.16.1.5/32
+prefix_list:
+- id: ALL_PREFIXES
+  rule:
+  - id: '10'
+    match: 0.0.0.0/0
+    max_len: '32'
+- id: EXIT_LOCAL_IF
+  rule:
+  - id: '10'
+    match: 172.16.1.9/32
+    max_len: '32'
+- id: INBAND_LOCAL_IF
+  rule:
+  - id: '10'
+    match: 172.16.1.7/32
+    max_len: '32'
+  - id: '20'
+    match: 172.16.178.6/32
+    max_len: '32'
+  - id: '30'
+    match: 172.16.179.6/32
+    max_len: '32'
+- id: INBAND_PREFIXES
+  rule:
+  - id: '10'
+    match: 172.16.178.0/24
+    max_len: '32'
+  - id: '20'
+    match: 172.16.179.0/24
+    max_len: '32'
+  - id: '30'
+    match: 172.16.1.7/32
+    max_len: '32'
+- id: ERA_PREFIXES
+  rule:
+  - id: '10'
+    match: 172.16.1.0/21
+    max_len: '24'
+  - id: '20'
+    match: 172.16.1.0/24
+    max_len: '32'
+  - id: '30'
+    match: 172.16.178.0/24
+    max_len: '32'
+  - id: '40'
+    match: 172.16.179.0/24
+    max_len: '32'
+  - id: '50'
+    match: 172.16.177.0/24
+    max_len: '32'
+  - id: '60'
+    match: 192.168.200.0/24
+    max_len: '32'
+- id: LOCAL_OOB_LOOPBACK
+  rule:
+  - id: '10'
+    match: 172.16.1.5/32
+    max_len: '32'
+- id: OOB_LOCAL_IF
+  rule:
+  - id: '10'
+    match: 172.16.1.5/32
+    max_len: '32'
+- id: OOB_PREFIXES
+  rule:
+  - id: '10'
+    match: 172.16.177.0/24
+    max_len: '32'
+  - id: '20'
+    match: 172.16.1.5/32
+    max_len: '32'
+- id: VTEP_PREFIXES
+  rule:
+  - id: '5'
+    match: 172.16.1.8/29
+    max_len: '32'
+bond_descriptions:
+  bond1s0: su-01-node-04
+  bond1s1: su-01-node-05
+  bond1s2: su-01-node-11
+  bond1s3: su-01-node-12
+  bond2s0: su-01-node-18
+  bond2s1: su-02-node-01
+  bond2s2: su-02-node-07
+  bond2s3: su-02-node-08
+  bond3s0: su-02-node-14
+  bond3s1: su-02-node-15
+  bond3s2: su-03-node-03
+  bond3s3: su-03-node-04
+  bond4s0: su-03-node-10
+  bond4s1: su-03-node-11
+  bond4s2: su-03-node-17
+  bond4s3: su-03-node-18
+  bond5s0: su-04-node-06
+  bond5s1: su-04-node-07
+  bond5s2: su-04-node-13
+  bond5s3: su-04-node-14
+  bond6s0: su-05-node-02
+  bond6s1: su-05-node-03
+  bond6s2: su-05-node-09
+  bond6s3: su-05-node-10
+  bond7s0: su-05-node-16
+  bond7s1: su-05-node-17
+  bond7s2: su-06-node-05
+  bond7s3: su-06-node-06
+  bond8s0: su-06-node-12
+  bond8s1: su-06-node-13
+  bond8s2: su-07-node-01
+  bond8s3: su-07-node-02
+  bond9s0: su-07-node-08
+  bond9s1: su-07-node-09
+  bond9s2: su-07-node-15
+  bond9s3: su-07-node-16
+  bond10s0: su-08-node-04
+  bond10s1: su-08-node-05
+  bond10s2: su-08-node-11
+  bond10s3: su-08-node-12
+  bond11s0: su-08-node-18
+  bond13s0: support-03
+  bond13s1: support-06
+  bond12s0: storage-02
+  bond12s1: storage-03
+  bond12s2: storage-05
+network_roles:
+  cpu:
+    ports:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 13
+    breakout: 4
+    lanes: 2
+    vlan: 300,400
+    lacp_bypass: true
+    port_overrides:
+      11:
+        subports:
+        - 0
+      13:
+        subports:
+        - 0
+        - 1
+    bond_overrides:
+      bond1s0:
+        segment_id: 1004
+      bond1s1:
+        segment_id: 1005
+      bond1s2:
+        segment_id: 1011
+      bond1s3:
+        segment_id: 1012
+      bond2s0:
+        segment_id: 1018
+      bond2s1:
+        segment_id: 2001
+      bond2s2:
+        segment_id: 2007
+      bond2s3:
+        segment_id: 2008
+      bond3s0:
+        segment_id: 2014
+      bond3s1:
+        segment_id: 2015
+      bond3s2:
+        segment_id: 3003
+      bond3s3:
+        segment_id: 3004
+      bond4s0:
+        segment_id: 3010
+      bond4s1:
+        segment_id: 3011
+      bond4s2:
+        segment_id: 3017
+      bond4s3:
+        segment_id: 3018
+      bond5s0:
+        segment_id: 4006
+      bond5s1:
+        segment_id: 4007
+      bond5s2:
+        segment_id: 4013
+      bond5s3:
+        segment_id: 4014
+      bond6s0:
+        segment_id: 5002
+      bond6s1:
+        segment_id: 5003
+      bond6s2:
+        segment_id: 5009
+      bond6s3:
+        segment_id: 5010
+      bond7s0:
+        segment_id: 5016
+      bond7s1:
+        segment_id: 5017
+      bond7s2:
+        segment_id: 6005
+      bond7s3:
+        segment_id: 6006
+      bond8s0:
+        segment_id: 6012
+      bond8s1:
+        segment_id: 6013
+      bond8s2:
+        segment_id: 7001
+      bond8s3:
+        segment_id: 7002
+      bond9s0:
+        segment_id: 7008
+      bond9s1:
+        segment_id: 7009
+      bond9s2:
+        segment_id: 7015
+      bond9s3:
+        segment_id: 7016
+      bond10s0:
+        segment_id: 8004
+      bond10s1:
+        segment_id: 8005
+      bond10s2:
+        segment_id: 8011
+      bond10s3:
+        segment_id: 8012
+      bond11s0:
+        segment_id: 8018
+      bond13s0:
+        segment_id: 800003
+      bond13s1:
+        segment_id: 800006
+    vlan_untagged: 300
+  storage:
+    ports:
+    - 12
+    breakout: 4
+    lanes: 2
+    vlan: 400,500
+    lacp_bypass: true
+    port_overrides:
+      12:
+        subports:
+        - 0
+        - 1
+        - 2
+    bond_overrides:
+      bond12s0:
+        segment_id: 900002
+      bond12s1:
+        segment_id: 1900003
+      bond12s2:
+        segment_id: 1900005
+    vlan_untagged: 300
+vrf_config_extra:
+- id: STORAGE
+  vni: '5005'
+  route_export: true
+  bgp:
+    address_family:
+      ipv4_unicast:
+        enable: true
+        redistribute_connected: true
+        route_export_to_evpn: true
+      l2vpn_evpn:
+        enable: true
+  vlan: 3005

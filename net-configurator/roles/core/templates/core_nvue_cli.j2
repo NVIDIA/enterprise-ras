@@ -19,6 +19,7 @@
 {% endfor -%}
 {{ result | join(',') }}
 {%- endmacro -%}
+{% set gpu_on_core = (convergence | default('full')) != 'dedicated_gpu' %}
 #!/bin/bash
 # NVUE CLI Configuration for {{ hostname }}
 # Generated: {{ ansible_date_time.iso8601 }}
@@ -52,7 +53,13 @@ nv set evpn multihoming state enabled
 {% endif %}
 {% endfor %}
 {% endif %}
-{% if gpu_interfaces is defined and gpu_interfaces.breakout is defined and convergence | default('full') == 'full' %}
+{% if gpu_rail_interfaces is defined and gpu_on_core %}
+{% for rail_key, rail in gpu_rail_interfaces.items() %}
+{% if rail.breakout is defined %}
+{% set _ = all_iface_defs.append(rail) %}
+{% endif %}
+{% endfor %}
+{% elif gpu_interfaces is defined and gpu_interfaces.breakout is defined and gpu_on_core %}
 {% set _ = all_iface_defs.append(gpu_interfaces) %}
 {% endif %}
 {% if isl_interfaces is defined and isl_interfaces.breakout is defined %}
@@ -87,6 +94,18 @@ nv set evpn multihoming state enabled
 {% endif %}
 {% endfor %}
 {% endfor %}
+{# A port may appear in MULTIPLE iface_defs with different breakout levels
+   (e.g. swp7 in both `isl_interfaces` at 4x and `edge_interfaces` at 2x).
+   NVUE applies the three `link breakout` commands in 4x → 2x → 8x order
+   with last-wins per port, so the earlier mention silently loses and
+   validate-config flags it as "Missing on switch". Filter earlier buckets
+   to drop ports that also appear in a later bucket — so the generated
+   config matches the running config exactly. #}
+{% set breakout_4x_2lanes = breakout_4x_2lanes
+                            | reject('in', breakout_2x_4lanes)
+                            | reject('in', breakout_8x_1lane) | list %}
+{% set breakout_2x_4lanes = breakout_2x_4lanes
+                            | reject('in', breakout_8x_1lane) | list %}
 {# Output grouped breakout configurations #}
 {% if breakout_4x_2lanes | length > 0 %}
 {% set ports_list = [] %}
@@ -162,6 +181,7 @@ nv set interface {{ ports_list | join(',') }} link breakout disabled
 #============================================================================
 {% if network_roles is defined %}
 {% for role_name, role in network_roles.items() %}
+{% if role_name != 'isl' %}
 {# Generate individual bonds for this role #}
 {% for port in role.ports %}
 {% set port_overrides = role.port_overrides | default({}) %}
@@ -205,14 +225,14 @@ nv set interface {{ bond_name }} description {{ bond_descriptions[bond_name] }}
 nv set interface {{ role_bonds | join(',') }} evpn multihoming segment state enabled
 nv set interface {{ role_bonds | join(',') }} evpn multihoming segment mac-address {{ mh_mac }}
 nv set interface {{ role_bonds | join(',') }} type bond
-{% if role.vlan is defined and role.vlan_untagged is defined %}
+{% if role.vlan is defined and role.vlan is not none and role.vlan_untagged is defined %}
 {# If both vlan and vlan_untagged, use 'vlan' for tagged + 'untagged' for native #}
 nv set interface {{ role_bonds | join(',') }} bridge domain br_default vlan {{ role.vlan }}
-{% elif role.vlan is defined %}
+{% elif role.vlan is defined and role.vlan is not none %}
 {# If only vlan, use 'access' for untagged-only traffic #}
 nv set interface {{ role_bonds | join(',') }} bridge domain br_default access {{ role.vlan }}
 {% endif %}
-{% if role.vlan_untagged is defined %}
+{% if role.vlan_untagged is defined and role.vlan_untagged is not none %}
 nv set interface {{ role_bonds | join(',') }} bridge domain br_default untagged {{ role.vlan_untagged }}
 {% endif %}
 {% if role.lacp_bypass | default(false) %}
@@ -220,6 +240,7 @@ nv set interface {{ role_bonds | join(',') }} bond lacp-bypass enabled
 {% endif %}
 {% endif %}
 
+{% endif %}{# end if role_name != 'isl' #}
 {% endfor %}
 {% endif %}
 
@@ -253,7 +274,7 @@ nv set interface {{ interfaces_up }} link state up
    per_rail_per_plane), emit one access line per (rail [, plane]) entry
    instead of bundling all GPU ports into a single VLAN. Keys are either
    `rail<R>` or `rail<R>_plane<P>`; emission is the same shape either way. #}
-{% if gpu_rail_interfaces is defined and convergence | default('full') == 'full' %}
+{% if gpu_rail_interfaces is defined and gpu_on_core %}
 # GPU role - direct interfaces (per-rail VLAN)
 {% for rail_key, rail in gpu_rail_interfaces.items() | sort %}
 {% set rail_ifs = expand_subports(rail) | trim %}
@@ -261,7 +282,7 @@ nv set interface {{ interfaces_up }} link state up
 nv set interface {{ rail_ifs }} bridge domain br_default access {{ rail.vlan }}
 {% endif %}
 {% endfor %}
-{% elif gpu_interfaces is defined and convergence | default('full') == 'full' %}
+{% elif gpu_interfaces is defined and gpu_on_core %}
 {% set gpu_ifs = expand_subports(gpu_interfaces) | trim %}
 {% if gpu_ifs | length > 0 %}
 # GPU role - direct interfaces
@@ -270,7 +291,15 @@ nv set interface {{ gpu_ifs }} bridge domain br_default access {{ gpu_interfaces
 {% endif %}
 
 {# GPU Interfaces - QoS #}
-{% if gpu_interfaces is defined and convergence | default('full') == 'full' %}
+{% if gpu_rail_interfaces is defined and gpu_on_core %}
+# GPU role - QoS PFC watchdog
+{% for rail_key, rail in gpu_rail_interfaces.items() | sort %}
+{% set rail_ifs = expand_subports(rail) | trim %}
+{% if rail_ifs | length > 0 %}
+nv set interface {{ rail_ifs }} qos pfc-watchdog state enable
+{% endif %}
+{% endfor %}
+{% elif gpu_interfaces is defined and gpu_on_core %}
 {% set gpu_ifs = expand_subports(gpu_interfaces) | trim %}
 {% if gpu_ifs | length > 0 %}
 # GPU role - QoS PFC watchdog
@@ -339,8 +368,14 @@ nv set interface {{ interfaces_down }} link state down
 {% set _ = all_iface_sources.append(role) %}
 {% endfor %}
 {% endif %}
-{% set _gpu_iface_def = gpu_interfaces if (gpu_interfaces is defined and convergence | default('full') == 'full') else none %}
-{% for iface_def in [_gpu_iface_def, isl_interfaces | default(none), oob_uplink_interfaces | default(none), edge_interfaces | default(none)] %}
+{% if gpu_rail_interfaces is defined and gpu_on_core %}
+{% for rail_key, rail in gpu_rail_interfaces.items() %}
+{% set _ = all_iface_sources.append(rail) %}
+{% endfor %}
+{% elif gpu_interfaces is defined and gpu_on_core %}
+{% set _ = all_iface_sources.append(gpu_interfaces) %}
+{% endif %}
+{% for iface_def in [isl_interfaces | default(none), oob_uplink_interfaces | default(none), edge_interfaces | default(none)] %}
 {% if iface_def is not none %}
 {% set _ = all_iface_sources.append(iface_def) %}
 {% endif %}
@@ -368,7 +403,13 @@ nv set interface {{ interfaces_down }} link state down
 {% set _ = _existing_parents.append('swp' ~ _n) %}
 {% endif %}
 {% endfor %}
-nv set interface {{ _existing_parents | join(',') }}{% if all_sub_interfaces | length > 0 %},{{ all_sub_interfaces | join(',') }}{% endif %} type swp
+{# Build the typed-port list from non-empty parts so a fully-broken-out
+   switch (empty _existing_parents) doesn't emit a leading comma:
+   `nv set interface ,swpNsM ...`. Mirrors roles/gl/templates/gl_nvue_cli.j2. #}
+{%- set _swp_typed_parts = [] %}
+{%- if _existing_parents %}{%- set _ = _swp_typed_parts.append(_existing_parents | join(',')) %}{%- endif %}
+{%- if all_sub_interfaces | length > 0 %}{%- set _ = _swp_typed_parts.append(all_sub_interfaces | join(',')) %}{%- endif %}
+nv set interface {{ _swp_typed_parts | join(',') }} type swp
 
 {# Telemetry histograms for all sub-interfaces #}
 nv set interface {{ all_sub_interfaces | join(',') }} telemetry histogram counter counter-type rx-packet
@@ -449,8 +490,8 @@ nv set vrf default router bgp address-family ipv4-unicast multipaths ebgp 128
 {% for pl in prefix_list %}
 {% if pl.rule is defined %}
 {% for rule in pl.rule %}
-nv set router policy prefix-list {{ pl.id }} rule {{ rule.id }} action permit
-nv set router policy prefix-list {{ pl.id }} rule {{ rule.id }} match {{ rule.match }}{% if rule.max_len is defined %} max-prefix-len {{ rule.max_len }}{% endif %}
+nv set router policy prefix-list {{ pl.id | quote }} rule {{ rule.id | quote }} action permit
+nv set router policy prefix-list {{ pl.id | quote }} rule {{ rule.id | quote }} match {{ rule.match | quote }}{% if rule.max_len is defined %} max-prefix-len {{ rule.max_len }}{% endif %}
 
 {% endfor %}
 {% endif %}
@@ -674,6 +715,9 @@ nv set vrf {{ vrf.id }} table auto
 nv set vrf default router bgp address-family ipv4-unicast state {{ 'enabled' if af.enable else 'disabled' }}
 {% if af.redistribute_connected is defined and af.redistribute_connected %}
 nv set vrf default router bgp address-family ipv4-unicast redistribute connected state enabled
+{% if af.route_map is defined %}
+nv set vrf default router bgp address-family ipv4-unicast redistribute connected route-map {{ af.route_map }}
+{% endif %}
 {% endif %}
 {% endif %}
 {% if default_vrf_bgp.address_family.l2vpn_evpn is defined %}
@@ -906,10 +950,10 @@ nv set system hostname {{ hostname }}
    escape-reopen) pattern so the rendered .sh stays safe to apply.
    See docs/plans/2026-05-26-switch-login-messages-design.md. #}
 {% if common is defined and common.get('pre_login_message') %}
-nv set system message pre-login '{{ common.get('pre_login_message') | replace("'", "'\\''") | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) }}'
+nv set system message pre-login '{{ common.get('pre_login_message') | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) | replace("'", "'\\''") }}'
 {% endif %}
 {% if common is defined and common.get('post_login_message') %}
-nv set system message post-login '{{ common.get('post_login_message') | replace("'", "'\\''") | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) }}'
+nv set system message post-login '{{ common.get('post_login_message') | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) | replace("'", "'\\''") }}'
 {% endif %}
 nv set system ssh-server state enabled
 {% if telemetry is defined and telemetry.enabled | default(false) %}

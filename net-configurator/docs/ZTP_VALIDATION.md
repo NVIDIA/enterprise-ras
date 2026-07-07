@@ -9,7 +9,7 @@ This document describes how to validate that ZTP configuration was successfully 
 
 ZTP validation verifies that switches have been properly configured via ZTP. There are **two** playbooks for two network-access scenarios:
 
-- **`validate-ztp`** (canonical, recommended) — runs on `dhcp-oob` and uses sshpass to reach each switch. Works from your laptop (Ansible connects to dhcp-oob, which connects to switches) or from dhcp-oob itself (e.g. inside an Air simulation). No requirement that the control host can reach switches directly.
+- **`validate-ztp`** (canonical, recommended) — runs on the inventory jump host (the `[jump]` group: `dhcp-oob` in L2 OOB mode, `utility` in L3 OOB mode) and uses sshpass to reach each switch. Works from your laptop (Ansible connects to the jump host, which connects to switches) or from the jump host itself (e.g. inside an Air simulation). No requirement that the control host can reach switches directly.
 - **`validate-ztp-direct`** — Ansible connects directly from the control host to each switch's `ansible_host`. Use this on-prem when your workstation is on the management network, or in an Air laptop flow where `ansible_host` points to Air's external SSH jump.
 
 ### One-Command Validation
@@ -20,16 +20,32 @@ To run all validations at once:
 make validate-all ARCH=<type>
 ```
 
-This runs four checks in sequence:
+This runs **five phases** in sequence:
 
 1. **Topology validation** (`make validate-topology`) -- Compares the generated Air topology JSON against the Excel Wire Map to ensure all connections, interfaces, and node definitions match.
-2. **ZTP validation** (`make validate-ztp`) -- Connects to each switch (via the ZTP server) and verifies SSH access, hostname, Cumulus version, NVUE config, BGP/EVPN status, and interface state.
-3. **Config comparison** (`make validate-config`) -- Compares the running NVUE configuration on each switch against the generated config scripts to detect drift or missing commands.
-4. **Server validation** (`make validate-servers`) -- Checks server network config (bonds, VLANs, LLDP, gateway/internet connectivity) and cross-pings between server roles.
+2. **Config comparison** (`make validate-config`) -- Compares the running NVUE configuration on each switch against the generated config scripts to detect drift or missing commands.
+3. **ZTP validation** (`make validate-ztp`) -- Connects to each switch (via the jump host) and verifies SSH access, hostname, Cumulus version, NVUE config, BGP/EVPN status, and interface state.
+4. **Switch operational health** (`make validate-switch-health`) -- Clean config apply + BGP sessions Established + EVPN ES/VNI + interface state, in a single per-switch SSH session.
+5. **Server validation** (`make validate-servers`) -- Checks server network config (bonds, VLANs, LLDP, gateway/internet connectivity) and cross-pings between server roles. Auto-reported **N/A** on switches-only sims.
 
-Reports from each check are saved to `output/<arch>/<site>/reports/`. If `status_page_enabled=Yes` is set in the Excel Settings tab, the reports are also uploaded to the ZTP server's HTTP status page.
+Reports from each check are saved to `output/<arch>/<site>/reports/`. If `status_page_enabled=Yes` is set in the Excel Settings tab, the reports are also uploaded to the status page.
 
-To access the status page when enabled, open a browser to the ZTP server's HTTP service URL (shown in `make air-list` output). The page uses basic auth -- default credentials are username `era` and the password from `switch_password` in `secrets.yml`.
+To access the status page when enabled, open a browser to the HTTP service URL (shown in `make air-list` output). The page uses basic auth -- default credentials are username `era` and the `status_page_password` from `secrets.yml` (default `CHANGE_ME` — set a real value; it does **not** fall back to `switch_password`).
+
+### All validation commands
+
+| Command | What it checks |
+|---------|----------------|
+| `make validate-all` | Runs the five phases above in order (via the jump host). |
+| `make validate-excel EXCEL=<file>` | Pre-import Excel checks: structure, IPs, ports, duplicates, single-tier SU cap, mgmt-IP collisions, OOB-uplink port rules. |
+| `make validate-topology` | Generated Air topology JSON matches the Excel Wire Map. |
+| `make validate-config` | Running switch config vs the generated config (drift). |
+| `make validate-ztp` | ZTP success on switches via the jump host (SSH/hostname/version/NVUE/BGP/EVPN/interfaces). |
+| `make validate-ztp-direct` | Same as `validate-ztp` but Ansible connects directly to each switch (on-prem / same-network use). |
+| `make validate-switch-health` | Tier-1 operational health: clean apply + BGP Established + EVPN ES/VNI + interface state. STORAGE-VRF external-eBGP down peers are a non-gating WARN (see `make fix-ext-storage`). |
+| `make validate-oob-bgp` | Gating OOB↔CSL BGP check — asserts every OOB-switch BGP neighbor is Established (L3 OOB only; N/A otherwise). Runs as part of `validate-ztp`. |
+| `make validate-servers` | Server config: bonds, VLANs, LLDP, gateway/internet connectivity, cross-role pings. |
+| `make validate-ping-matrix` | Full server-to-server ping matrix across all VLANs. |
 
 The individual commands below are available for targeted troubleshooting.
 

@@ -6,6 +6,7 @@ Provides SSH argument building, key-based access checking,
 and public key / fingerprint derivation.
 """
 
+import os
 import shlex
 import shutil
 import socket
@@ -174,7 +175,7 @@ def check_password_access(
         )
 
     cmd = [
-        "sshpass", "-p", password,
+        "sshpass", "-e",
         "ssh",
         *SSH_STRICT_OFF,
         "-p", str(port),
@@ -187,6 +188,7 @@ def check_password_access(
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
+            env={**os.environ, "SSHPASS": password},
         )
         return result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
@@ -239,7 +241,7 @@ def verify_key_in_authorized_keys(
     key_body = key_parts[1]
 
     cmd = [
-        "sshpass", "-p", password,
+        "sshpass", "-e",
         "ssh",
         *SSH_STRICT_OFF,
         "-p", str(port),
@@ -251,6 +253,7 @@ def verify_key_in_authorized_keys(
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
+            env={**os.environ, "SSHPASS": password},
         )
         return result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
@@ -301,7 +304,7 @@ def inject_key_via_password(
     )
 
     cmd = [
-        "sshpass", "-p", password,
+        "sshpass", "-e",
         "ssh",
         *SSH_STRICT_OFF,
         "-p", str(port),
@@ -314,6 +317,7 @@ def inject_key_via_password(
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
+            env={**os.environ, "SSHPASS": password},
         )
         return result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):

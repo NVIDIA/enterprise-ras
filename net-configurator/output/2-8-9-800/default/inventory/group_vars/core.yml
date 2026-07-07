@@ -58,7 +58,7 @@ network_roles:
     - 4
     breakout: 4
     lanes: 2
-    vlan: 200,400
+    vlan: 300,400
     lacp_bypass: true
     port_overrides:
       1:
@@ -230,6 +230,7 @@ default_vrf_bgp:
     address_family:
       ipv4_unicast:
         enable: true
+        policy_outbound_route_map: WEIGHTED_ECMP
   - id: overlay
     remote_as: external
     bfd_enable: true
@@ -349,6 +350,13 @@ route_map:
       value: ERA_PREFIXES
     - type: type
       value: ipv4
+- id: WEIGHTED_ECMP
+  rule:
+  - id: '10'
+    action: permit
+    set:
+    - type: ext-community-bw
+      value: multipaths
 vrf_config:
 - id: EXIT
   vlan: 3004

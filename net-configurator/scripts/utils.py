@@ -24,21 +24,23 @@ def generate_mac(node: str, interface: str, seed: str = "era") -> str:
     MAC in the 48:b0:2d:xx:xx:xx range. This ensures topology JSON MACs
     and DHCP reservation MACs always match for the same node/interface.
 
-    Raises ValueError if a collision is detected (different inputs producing
-    the same MAC).
+    On hash collision (3-byte NIC portion has only ~16M values), retries
+    with an incremented suffix until a free slot is found.
     """
-    h = hashlib.md5(f"{seed}:{node}:{interface}".encode()).hexdigest()
-    mac = f"48:b0:2d:{h[0:2]}:{h[2:4]}:{h[4:6]}"
-
     key = f"{seed}:{node}:{interface}"
-    existing = _mac_registry.get(mac)
-    if existing is not None and existing != key:
-        raise ValueError(
-            f"MAC collision detected: {mac} generated for both "
-            f"'{existing}' and '{key}'"
-        )
-    _mac_registry[mac] = key
-    return mac
+    for attempt in range(64):
+        tag = key if attempt == 0 else f"{key}#{attempt}"
+        h = hashlib.md5(tag.encode()).hexdigest()
+        mac = f"48:b0:2d:{h[0:2]}:{h[2:4]}:{h[4:6]}"
+        existing = _mac_registry.get(mac)
+        if existing is None:
+            _mac_registry[mac] = key
+            return mac
+        if existing == key:
+            return mac
+    raise ValueError(
+        f"MAC exhaustion: could not resolve collision for '{key}' after 64 attempts"
+    )
 
 
 def reset_mac_registry():
@@ -68,9 +70,15 @@ def classify_node(name: str) -> str:
     # gsl-plane1/2 collapse to 'gsl' for the topology defaults.
     if n in ('core',):
         return 'core'
-    if n in ('csl',):
+    # csl + the post-rename compute leaf/spine short names (cl/cs). These are
+    # SN56xx 64-port compute-fabric switches and must get the switch resource
+    # defaults (4096 MB) — Air rejects switches below its 2048 MB minimum, and
+    # we standardise switches at 4096. Bare 'cs' is the 2-8-9-800 N/S spine
+    # function (model ns_spine_function: cs); without this it fell through to
+    # 'unknown' (1024 MB) and the sim imported INVALID.
+    if n in ('csl', 'cl', 'cs'):
         return 'csl'
-    if n in ('gsl', 'gsl-plane1', 'gsl-plane2'):
+    if n in ('gsl', 'gsl-plane1', 'gsl-plane2', 'gl', 'gs'):
         return 'gsl'
     if n in ('oob-switch',):
         return 'oob'
@@ -91,9 +99,9 @@ def classify_node(name: str) -> str:
     # Legacy hostname-prefix fallbacks
     if n.startswith('core-'):
         return 'core'
-    if n.startswith('csl-'):
+    if n.startswith('csl-') or n.startswith('cl-') or n.startswith('cs-'):
         return 'csl'
-    if n.startswith('gsl-'):
+    if n.startswith('gsl-') or n.startswith('gl-') or n.startswith('gs-'):
         return 'gsl'
     if n == 'air-oob-switch':
         return 'air-oob'
@@ -139,7 +147,8 @@ def is_switch(name: str) -> bool:
     """
     n = (name or '').strip().lower()
     # Canonical role direct match (post-step-4 Excels)
-    if n in ('core', 'csl', 'gsl', 'gsl-plane1', 'gsl-plane2',
+    if n in ('core', 'csl', 'cs', 'cl', 'gsl', 'gsl-plane1', 'gsl-plane2',
+             'gl-plane1', 'gl-plane2', 'gs-plane1', 'gs-plane2',
              'oob-switch', 'edge', 'air-oob'):
         return True
     # Legacy hostname-as-role fallback (3 live archs pre-migration)

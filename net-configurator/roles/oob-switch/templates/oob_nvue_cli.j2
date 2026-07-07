@@ -144,10 +144,10 @@ nv set system hostname {{ hostname }}
    encoding rationale and the design doc at
    docs/plans/2026-05-26-switch-login-messages-design.md. #}
 {% if common is defined and common.get('pre_login_message') %}
-nv set system message pre-login '{{ common.get('pre_login_message') | replace("'", "'\\''") | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) }}'
+nv set system message pre-login '{{ common.get('pre_login_message') | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) | replace("'", "'\\''") }}'
 {% endif %}
 {% if common is defined and common.get('post_login_message') %}
-nv set system message post-login '{{ common.get('post_login_message') | replace("'", "'\\''") | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) }}'
+nv set system message post-login '{{ common.get('post_login_message') | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) | replace("'", "'\\''") }}'
 {% endif %}
 nv set system ssh-server state enabled
 nv set system date-time timezone {{ timezone | quote }}

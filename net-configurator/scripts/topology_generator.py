@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 import openpyxl
+import yaml
 
 from utils import generate_mac, classify_node, is_switch, is_valid_hostname
 from excel_parser import (build_wiremap_column_map, _wm_cell_ws,
@@ -76,7 +77,7 @@ NODE_DEFAULTS = {
     "gsl":     {"cpu": 4, "memory": 4096, "storage": 20},
     "oob":     {"cpu": 1, "memory": 2048, "storage": 20},
     "air-oob": {"cpu": 1, "memory": 2048, "storage": 20},
-    "edge":    {"cpu": 1, "memory": 2048, "storage": 20},
+    "edge":    {"cpu": 4, "memory": 4096, "storage": 20},  # cust-net-edge: SN5600-class L2 bridge + eBGP underlay; 2GB/1CPU left it unable to boot the bridge config
     "compute": {"cpu": 1, "memory": 1024, "storage": 20},
     "storage": {"cpu": 1, "memory": 1024, "storage": 20},
     "support": {"cpu": 1, "memory": 1024, "storage": 20},
@@ -397,10 +398,20 @@ def parse_switch_versions(wb) -> dict:
 class TopologyGenerator:
     """Generate an Air 2.0 topology JSON from the Excel wiremap."""
 
-    def __init__(self, excel_path: Path, arch: str, site: str = "default"):
+    # Infra/jump nodes that must survive a switches-only strip — the Ansible
+    # jump host + L3-OOB plumbing that validation needs to reach the switches.
+    # (Cumulus nodes are kept by OS; these are the Ubuntu nodes we keep.)
+    SWITCHES_ONLY_INFRA_KEEP = (
+        "oob-server", "dhcp-oob", "dhcp-edge", "utility",
+        "external-conn", "external-dhcp", "cust-net-edge", "air-oob",
+    )
+
+    def __init__(self, excel_path: Path, arch: str, site: str = "default",
+                 switches_only: bool = False):
         self.excel_path = excel_path
         self.arch = arch
         self.site = site
+        self.switches_only = switches_only
 
         wb = openpyxl.load_workbook(excel_path, data_only=True)
         new_format = "Air_Only" in wb.sheetnames
@@ -452,6 +463,18 @@ class TopologyGenerator:
             if r.switch_name and r.switch_role and r.switch_name != r.switch_role:
                 self._name_to_role[r.switch_name] = r.switch_role
 
+        # Supplement from Nodes tab (Function → Name) when Wire Map lacks role columns.
+        # This handles OEM-named deployments where the Wire Map only has System Name.
+        if "Nodes" in wb.sheetnames:
+            wb_nodes = openpyxl.load_workbook(str(self.excel_path), data_only=True, read_only=True)
+            ws_n = wb_nodes["Nodes"]
+            for row in ws_n.iter_rows(min_row=2, max_row=ws_n.max_row, values_only=True):
+                func = str(row[0]).strip() if row[0] else ''
+                name = str(row[1]).strip() if row[1] else ''
+                if func and name and name not in self._name_to_role:
+                    self._name_to_role[name] = func
+            wb_nodes.close()
+
         # Per-server counter for sequential ethN assignment
         self._server_eth_counter: Dict[str, int] = defaultdict(int)
 
@@ -494,6 +517,8 @@ class TopologyGenerator:
                 nodes, links, switch_connected,
             )
         links += self._build_unconnected_stubs(switch_connected)
+        if self.switches_only:
+            nodes, links = self._strip_to_switches(nodes, links)
         # Re-run layout now that all infra/injected nodes exist.
         self._apply_layout(nodes)
 
@@ -511,6 +536,43 @@ class TopologyGenerator:
             "_l3_oob": getattr(self, '_l3_oob_metadata', {}),
             "_oob_uplink_mode": self._oob_uplink_mode,
         }
+
+    def _strip_to_switches(self, nodes: dict, links: list) -> tuple:
+        """Drop server VMs for a switches-only sim, keeping every switch + the
+        infra/jump nodes validation needs.
+
+        Server-facing switch ports are preserved as ``unconnected`` stubs so the
+        generated switch configs still reference existing interfaces (Air rolls
+        back the whole apply if a referenced port is missing). The bulk server
+        VMs (compute/gpu/storage/support/…) are what we shed — at 2-tier scale
+        they're most of the node count, so dropping them frees the budget to run
+        much larger switch fabrics. Breakout parents are turned into sub-port
+        stubs afterwards by patch-air-breakout-stubs.py.
+        """
+        def _keep(name: str, node: dict) -> bool:
+            if "cumulus" in (node.get("os") or "").lower():
+                return True  # any switch
+            return name.startswith(self.SWITCHES_ONLY_INFRA_KEEP)
+
+        kept = {n: v for n, v in nodes.items() if _keep(n, v)}
+        dropped = set(nodes) - set(kept)
+
+        new_links = []
+        for link in links:
+            if not isinstance(link, list):
+                new_links.append(link)
+                continue
+            eps = [e for e in link if isinstance(e, dict)]
+            if not any(e.get("node") in dropped for e in eps):
+                new_links.append(link)  # untouched (switch↔switch, infra, etc.)
+                continue
+            # A dropped server sat on one end; keep each surviving endpoint as an
+            # unconnected stub so its switch interface still exists in the sim.
+            for e in eps:
+                if e.get("node") in kept:
+                    new_links.append([e, "unconnected"])
+
+        return kept, new_links
 
     def write(self, output_path: Path) -> None:
         """Generate and write topology JSON to *output_path*."""
@@ -604,11 +666,15 @@ class TopologyGenerator:
         role = classify_node(role_name)  # 'core', 'oob', 'edge', …
         if role in self._switch_os:
             return self._switch_os[role]
-        # air-oob and edge switches share the same image as oob (both SN2201)
-        if role in ("edge", "air-oob") and "oob" in self._switch_os:
+        # air-oob shares the oob image (SN2201 Air OOB switch)
+        if role == "air-oob" and "oob" in self._switch_os:
             return self._switch_os["oob"]
-        # csl and gsl share the same image as core (all SN5610)
-        if role in ("csl", "gsl") and "core" in self._switch_os:
+        # cust-net-edge (edge) is an SN5600-class L2-bridge + eBGP-underlay node
+        # that runs the same heavy config as core/csl, so it tracks core's image
+        # (5.16.1) — NOT oob's 5.15.1. (It previously inherited oob and shipped
+        # 5.15.1, which under the 2GB 'edge' default left edge01 unable to boot
+        # the bridge → the whole air-mgmt plane stayed isolated.)
+        if role in ("edge", "csl", "gsl") and "core" in self._switch_os:
             return self._switch_os["core"]
         return SWITCH_OS_FALLBACK
 
@@ -908,37 +974,66 @@ class TopologyGenerator:
         nodes sit on a row above the switches to keep the data plane (CSL/GSL
         + servers) visually grouped.
         """
-        # ---- Switch row (y = 0): CSLs + GSLs ----
+        # Split spine vs leaf per fabric — in 2-tier archs (e.g. 2-4-5-800)
+        # the `gs-*` nodes are dedicated GPU spines and `cs-*` are dedicated
+        # compute spines, which should sit visually ABOVE their respective
+        # leaves. In converged 1-tier archs (e.g. 2-8-9-800) the gsl/csl
+        # nodes contain everything and these "spine" lists are empty, so
+        # layout stays as it was.
+        gpu_spines_p1 = [n for n in gsls_p1 if n.lower().startswith('gs-')]
+        gpu_leaves_p1 = [n for n in gsls_p1 if not n.lower().startswith('gs-')]
+        gpu_spines_p2 = [n for n in gsls_p2 if n.lower().startswith('gs-')]
+        gpu_leaves_p2 = [n for n in gsls_p2 if not n.lower().startswith('gs-')]
+        cpu_spines    = [n for n in csls if n.lower().startswith('cs-')]
+        cpu_leaves    = [n for n in csls if not n.lower().startswith('cs-')]
+        has_two_tier = bool(gpu_spines_p1 or gpu_spines_p2 or cpu_spines)
+        leaf_y  = 0
+        spine_y = -G            # only populated in 2-tier archs
+        air_y   = -2 * G if has_two_tier else -G
+
+        # ---- Leaf row (y = 0): CSLs + GSL leaves ----
         # CSLs use even-spaced columns so the control-plane column can slot
         # between them.
         csl_start = 6
         csl_step = 2
-        for i, name in enumerate(csls):
-            nodes[name]["positioning"] = {"x": (csl_start + i * csl_step) * G, "y": 0}
+        for i, name in enumerate(cpu_leaves):
+            nodes[name]["positioning"] = {"x": (csl_start + i * csl_step) * G, "y": leaf_y}
 
-        # OOB switch column sits 2 cols to the right of the last CSL.
-        csl_end = csl_start + (len(csls) - 1) * csl_step if csls else csl_start
+        # OOB switch column sits 2 cols to the right of the last CSL leaf.
+        csl_end = csl_start + (len(cpu_leaves) - 1) * csl_step if cpu_leaves else csl_start
         oob_col = csl_end + 2
 
-        # GSL plane1 — adjacent leaves, starting 2 cols after the OOB column.
+        # GPU leaf plane1 — adjacent leaves, starting 2 cols after the OOB column.
         gsl_p1_start = oob_col + 2
-        for i, name in enumerate(gsls_p1):
-            nodes[name]["positioning"] = {"x": (gsl_p1_start + i) * G, "y": 0}
+        for i, name in enumerate(gpu_leaves_p1):
+            nodes[name]["positioning"] = {"x": (gsl_p1_start + i) * G, "y": leaf_y}
 
-        # GPU column sits between GSL plane1 and plane2.
-        gpu_col = gsl_p1_start + len(gsls_p1)
+        # GPU column sits between plane1 and plane2.
+        gpu_col = gsl_p1_start + len(gpu_leaves_p1)
 
-        # GSL plane2 — adjacent leaves, one column past the GPU column.
+        # GPU leaf plane2 — adjacent leaves, one column past the GPU column.
         gsl_p2_start = gpu_col + 1
-        for i, name in enumerate(gsls_p2):
-            nodes[name]["positioning"] = {"x": (gsl_p2_start + i) * G, "y": 0}
+        for i, name in enumerate(gpu_leaves_p2):
+            nodes[name]["positioning"] = {"x": (gsl_p2_start + i) * G, "y": leaf_y}
 
-        # ---- Air infra row (y = -G) ----
+        # ---- Spine row (y = -G) — 2-tier archs only ----
+        # Place GPU spines centered above their plane's leaves.
+        for i, name in enumerate(gpu_spines_p1):
+            # Spine columns centered in the leaf block (4 leaves -> spines span
+            # cols 0..1 of that block); for typical 2 spines they sit cleanly.
+            nodes[name]["positioning"] = {"x": (gsl_p1_start + i) * G, "y": spine_y}
+        for i, name in enumerate(gpu_spines_p2):
+            nodes[name]["positioning"] = {"x": (gsl_p2_start + i) * G, "y": spine_y}
+        # CPU spines above their CSL leaves (cs-* sits over cl-*).
+        for i, name in enumerate(cpu_spines):
+            nodes[name]["positioning"] = {"x": (csl_start + i * csl_step) * G, "y": spine_y}
+
+        # ---- Air infra row (y = -G in 1-tier, y = -2G in 2-tier) ----
         # L2 mode: dhcp-edge | oob-server | air-oob | dhcp-oob
         # L3 mode: external-conn | external-dhcp | (cust-net-edge already
         # placed in edges row) | utility (sits above OOB column on VLAN 200)
         ctrl_col = csl_start + 1   # between CSL-01 and CSL-02
-        air_y = -G
+        # air_y was computed above based on has_two_tier.
         placements = {
             # L2 mode infra
             'dhcp-edge':       ctrl_col,
@@ -979,36 +1074,67 @@ class TopologyGenerator:
             nodes[name]["positioning"] = {
                 "x": oob_col * G, "y": (server_row_start + i) * G,
             }
-        # GPU column
-        for i, name in enumerate(compute):
-            nodes[name]["positioning"] = {
-                "x": gpu_col * G, "y": (server_row_start + i) * G,
-            }
+        # GPU servers — grouped by SU, each SU a vertical column (its nodes stack
+        # downward, matching the collapsed-arch convention). SU columns are laid
+        # out in a grid `num_leaves` wide so the row of SUs lines up with the
+        # rail-leaf block above; once the row fills it wraps to a new band below
+        # (SU 9 sits under SU 1 for 8 leaves), with a blank spacer row between
+        # bands. Flat gpu-NN naming (no SU structure) falls back to one column.
+        gpu_leaf_cols = [gsl_p1_start + i for i in range(len(gpu_leaves_p1))]
+        block_x = gpu_leaf_cols[0] if gpu_leaf_cols else gpu_col
+        num_leaves = len(gpu_leaves_p1) or 1
+        gpu_su_groups: Dict[str, list] = {}
+        for name in compute:
+            m = re.match(r"(su-\d+)", name.lower())
+            gpu_su_groups.setdefault(m.group(1) if m else "", []).append(name)
+        if len(gpu_su_groups) == 1 and "" in gpu_su_groups:
+            for i, name in enumerate(compute):
+                nodes[name]["positioning"] = {
+                    "x": gpu_col * G, "y": (server_row_start + i) * G,
+                }
+        else:
+            su_ids = sorted(gpu_su_groups)
+            su_height = max((len(v) for v in gpu_su_groups.values()), default=1)
+            band_stride = su_height + 1  # +1 = blank spacer row between bands
+            for idx, su_id in enumerate(su_ids):
+                band, col = divmod(idx, num_leaves)
+                x = (block_x + col) * G
+                y0 = server_row_start + band * band_stride
+                for j, name in enumerate(sorted(gpu_su_groups[su_id])):
+                    nodes[name]["positioning"] = {"x": x, "y": (y0 + j) * G}
 
         # L3 OOB layout overrides for dedicated-GPU arches.
-        # Hierarchy (top to bottom):
-        #   y = -2G : external-conn, external-dhcp
-        #   y =  -G : cust-net-edge-01, cust-net-edge-02
-        #   y =   0 : CSLs and GSLs (existing row)
+        # The cust-net-edge row must clear the spine row. In 2-tier archs
+        # (cs-*/gs-* present) the spine row occupies y = -G, so the edges sit
+        # one row higher; in 1-tier (converged csl/gsl) there is no spine row,
+        # so edges keep the legacy y = -G. external-* always sits one row above
+        # the edges.
+        #   2-tier (e.g. 2-4-5-800)       1-tier (e.g. 2-8-9-800)
+        #     y = -3G : external-conn/dhcp   y = -2G : external-conn/dhcp
+        #     y = -2G : cust-net-edge-*      y =  -G : cust-net-edge-*
+        #     y =  -G : cs/gs spines         y =   0 : CSLs and GSLs
+        #     y =   0 : cl/gl leaves
         if self._oob_uplink_mode == "l3":
             edges = sorted(
                 n for n in nodes
                 if classify_node(self._name_to_role.get(n, n)) == "edge"
             )
-            # cust-net-edge above CSLs.
-            if len(edges) >= 1 and edges[0] in nodes:
-                nodes[edges[0]]["positioning"] = {"x": csl_start * G, "y": -G}
-            if len(edges) >= 2 and edges[1] in nodes:
-                # Right-side edge above the second CSL (or above GSL plane2 if no
-                # second CSL exists, but dedicated-GPU arches always have 2 CSLs).
-                target_x = (csl_start + csl_step) * G if len(csls) > 1 else (csl_start + 4) * G
-                nodes[edges[1]]["positioning"] = {"x": target_x, "y": -G}
-            # external-conn above cust-net-edge-01 (top), external-dhcp LEFT
-            # of cust-net-edge-01 (same row as edges).
+            edge_y = (spine_y - G) if has_two_tier else -G
+            ext_y = edge_y - G
+            # Place every cust-net-edge on its own row (handles the N-edge star
+            # at max scale, not just the first two), spread across columns.
+            for i, name in enumerate(edges):
+                nodes[name]["positioning"] = {
+                    "x": (csl_start + i * csl_step) * G, "y": edge_y,
+                }
+            # external-conn / external-dhcp one row above the edges. In 1-tier
+            # the legacy layout kept external-dhcp on the edge row; preserve that
+            # so existing 1-tier topologies don't shift.
             if "external-conn" in nodes:
-                nodes["external-conn"]["positioning"] = {"x": csl_start * G, "y": -2 * G}
+                nodes["external-conn"]["positioning"] = {"x": csl_start * G, "y": ext_y}
             if "external-dhcp" in nodes:
-                nodes["external-dhcp"]["positioning"] = {"x": (csl_start - 1) * G, "y": -G}
+                dhcp_y = ext_y if has_two_tier else -G
+                nodes["external-dhcp"]["positioning"] = {"x": (csl_start - 1) * G, "y": dhcp_y}
             # utility sits to the LEFT of the OOB column (one col left of oob_col).
             if "utility" in nodes:
                 nodes["utility"]["positioning"] = {
@@ -1350,39 +1476,103 @@ class TopologyGenerator:
     ) -> Tuple[dict, list, Dict[str, Set[str]]]:
         """Inject L3-OOB Ubuntu trio (external-conn, external-dhcp, utility).
 
-        In L3 mode every cluster switch's eth0 is rerouted to cust-net-edge-01's
+        In L3 mode every cluster switch's eth0 is rerouted to a cust-net-edge
         L2 Air-mgmt bridge (so ZTP works without the OOB switches being
-        pre-configured). external-conn provides outbound NAT, external-dhcp
-        answers switch ZTP DHCP, utility sits on the OOB VLAN 200 plane as
-        jump host + server-ZTP DHCP server.
+        pre-configured). external-conn provides routed outbound NAT,
+        external-dhcp answers switch ZTP DHCP, utility sits on the OOB VLAN
+        200 plane as jump host + server-ZTP DHCP server.
 
         Design doc: docs/plans/2026-05-20-l3-oob-air-topology.md
         """
         EDGE = "cust-net-edge-01"
         OOB = "oob-switch-01"
+        if OOB not in nodes:
+            for n in nodes:
+                role = self._name_to_role.get(n, '')
+                if role == 'oob-switch' or classify_node(n) == 'oob':
+                    OOB = n
+                    break
 
-        # Required anchor nodes must exist in the Wire Map. If they don't,
-        # bail out with a warning rather than mangle the topology.
-        if EDGE not in nodes or OOB not in nodes:
-            print(f"    [WARN] L3 OOB mode requested but anchor nodes missing "
-                  f"(need {EDGE} and {OOB}); skipping L3 injection.")
+        if OOB not in nodes:
+            print(f"    [WARN] L3 OOB mode requested but OOB switch anchor "
+                  f"missing (need at least one oob-switch); skipping L3 injection.")
             return nodes, links, switch_connected
+        sw_defaults = NODE_DEFAULTS.get("edge", NODE_DEFAULTS["core"])
+        edge_os = nodes.get(OOB, {}).get("os", SWITCH_OS_FALLBACK)
 
-        # Reserve cust-net-edge-01:swp1 / swp2 for external-conn / external-dhcp.
-        # Switch eth0s start at swp3 to keep the fixed ports stable.
-        edge_used = switch_connected.setdefault(EDGE, set())
-        edge_next_port = 3
-        edge_ext_conn_port = "swp1"
-        edge_ext_dhcp_port = "swp2"
+        def _make_edge_node() -> dict:
+            return {
+                "cpu": sw_defaults["cpu"],
+                "memory": sw_defaults["memory"],
+                "storage": sw_defaults["storage"],
+                "positioning": {"x": 0, "y": 0},
+                "os": edge_os,
+                "features": {"uefi": False, "tpm": False},
+                "pxehost": False,
+                "secureboot": False,
+                "oob": False,
+                "emulation_type": None,
+                "network_pci": {},
+            }
+
+        # --- Multi-edge mgmt bridge (ADR-0002) -------------------------------
+        # A single cust-net-edge bridging every switch eth0 overflows the 64-port
+        # switch limit past ~60 switches (maxscale 2-4-5-800=93, 2-8-9-800=112).
+        # Spread switch eth0s across N edges and span the air-mgmt L2 as a
+        # hub-and-spoke star centred on cust-net-edge-01: each spoke trunks to
+        # the hub (loop-free, no RSTP). The hub owns the bridge SVI and the
+        # external-dhcp/utility management legs; external-conn is separate
+        # routed EXIT egress. N grows sub-linearly with the switch count.
+        def _is_cluster_sw(n: str) -> bool:
+            r = classify_node(self._name_to_role.get(n, n))
+            return r in SWITCH_ROLES and r not in ("edge", "air-oob")
+
+        _cluster_switches = sorted(n for n in nodes if _is_cluster_sw(n))
+
+        # Start with the two EXIT/HA edges (-01 hub, -02); the final edge count
+        # is sized below from the REAL load (EXIT uplinks land on -01/-02 in
+        # Pass 1b, so we must size after that — see _ensure_edges()).
+        edge_names = ["cust-net-edge-01", "cust-net-edge-02"]
+        for _en in edge_names:
+            if _en not in nodes:
+                nodes[_en] = _make_edge_node()
+        # Per-edge used-port sets, shared with switch_connected so Pass 1b's
+        # EXIT-uplink allocations are reflected when we balance eth0s.
+        edge_used_map = {en: switch_connected.setdefault(en, set()) for en in edge_names}
+        edge_used = edge_used_map[EDGE]  # hub set, used by the legs below
+
+        def _alloc_port_on(en: str) -> str:
+            used = edge_used_map[en]
+            k = 1
+            while f"swp{k}" in used:
+                k += 1
+            port = f"swp{k}"
+            used.add(port)
+            return port
+
+        def _least_loaded_edge() -> str:
+            return min(edge_names, key=lambda e: len(edge_used_map[e]))
 
         def _alloc_edge_port() -> str:
-            nonlocal edge_next_port
-            while f"swp{edge_next_port}" in edge_used:
-                edge_next_port += 1
-            port = f"swp{edge_next_port}"
-            edge_used.add(port)
-            edge_next_port += 1
-            return port
+            # Hub (cust-net-edge-01) allocator for infra legs that must land
+            # on the management hub or edge-01 EXIT egress.
+            return _alloc_port_on(EDGE)
+
+        def _ensure_edges_for_load(pending_eth0: int) -> None:
+            # Size the edge count from the actual load so no edge exceeds the
+            # 64-port limit: total = EXIT uplinks already placed + eth0s to home
+            # + infra headroom; keep each edge near SAFE_CAP, balanced by
+            # _least_loaded.
+            SAFE_CAP = 50
+            placed = sum(len(edge_used_map[e]) for e in edge_names)
+            total = placed + pending_eth0 + 3
+            need = max(2, -(-total // SAFE_CAP))
+            for i in range(len(edge_names) + 1, need + 1):
+                en = f"cust-net-edge-{i:02d}"
+                if en not in nodes:
+                    nodes[en] = _make_edge_node()
+                edge_names.append(en)
+                edge_used_map[en] = switch_connected.setdefault(en, set())
 
         oob_used = switch_connected.setdefault(OOB, set())
 
@@ -1494,19 +1684,25 @@ class TopologyGenerator:
             for ep in link:
                 if ep.get("interface") == "eth0":
                     already_on_edge.add(ep["node"])
-        for sw_name in sorted(nodes):
-            role = classify_node(self._name_to_role.get(sw_name, sw_name))
-            if role not in SWITCH_ROLES or role in ("edge", "air-oob"):
-                continue
-            if sw_name in already_on_edge:
-                continue
-            port = _alloc_edge_port()
-            new_links.append(self._make_link(sw_name, "eth0", EDGE, port))
+        _pending = [s for s in _cluster_switches if s not in already_on_edge]
+        _ensure_edges_for_load(len(_pending))
+        for sw_name in _pending:
+            en = _least_loaded_edge()
+            port = _alloc_port_on(en)
+            new_links.append(self._make_link(sw_name, "eth0", en, port))
             switch_connected.setdefault(sw_name, set()).add("eth0")
 
-        # Mark the reserved fixed ports as occupied on EDGE.
-        edge_used.add(edge_ext_conn_port)
-        edge_used.add(edge_ext_dhcp_port)
+        # Star trunks (ADR-0002): each spoke edge gets one trunk to the hub
+        # (cust-net-edge-01) so the air-mgmt L2 bridge spans all edges. Loop-free
+        # star → RSTP not relied upon. air-deploy detects these edge↔edge links
+        # and puts both ends in br_default.
+        for en in edge_names[1:]:
+            spoke_port = _alloc_port_on(en)
+            hub_port = _alloc_port_on(EDGE)
+            new_links.append(self._make_link(en, spoke_port, EDGE, hub_port))
+
+        # Infra ports (external-conn, external-dhcp, utility) allocated
+        # dynamically in Pass 3 after Pass 1b populates edge_used from Wire Map.
 
         # --- Pass 3: create the three Ubuntu nodes ---------------------------
         infra_defaults = NODE_DEFAULTS.get("infra", NODE_DEFAULTS["unknown"])
@@ -1526,12 +1722,13 @@ class TopologyGenerator:
                 "network_pci": {},
             }
 
-        # external-conn: NAT egress. eth1 → cust-net-edge-01 (primary path),
-        # eth2 → cust-net-edge-02 (HA path). Both edges advertise default-
-        # route-origination, cores ECMP between them; each edge has its own
-        # bridge SVI + static 0/0 toward external-conn on its respective
-        # subnet (172.20.0.0/24 via -01, 172.20.1.0/24 via -02).
+        # external-conn: NAT egress. eth1 -> cust-net-edge-01 and eth2 ->
+        # cust-net-edge-02 are dedicated routed EXIT legs, not bridge members.
+        # The first two edges advertise default-route-origination, cores ECMP
+        # between them, and each edge has a static 0/0 toward external-conn on
+        # its own egress subnet (172.20.1.0/24 via -01, 172.20.2.0/24 via -02).
         EDGE2 = "cust-net-edge-02"
+        edge_ext_conn_port = _alloc_edge_port()
         nodes["external-conn"] = _ubuntu_node()
         new_links.append([
             {"interface": "eth0", "node": "external-conn",
@@ -1541,13 +1738,23 @@ class TopologyGenerator:
         new_links.append(self._make_link("external-conn", "eth1", EDGE, edge_ext_conn_port))
         if EDGE2 in nodes:
             edge2_used = switch_connected.setdefault(EDGE2, set())
-            edge2_ext_conn_port = "swp1"
+            # Pick the next FREE port — don't hardcode swp1. The Wire Map may
+            # already use swp1.. on cust-net-edge-02 for fabric EXIT uplinks
+            # (e.g. the dense 2-4-5-800 edge uses swp1-4), and a duplicate
+            # (node, interface) makes Air reject the whole topology (INVALID).
+            # On arches where swp1 is free (e.g. 2-8-9-800) this still picks
+            # swp1, so their topology is unchanged.
+            edge2_port_n = 1
+            while f"swp{edge2_port_n}" in edge2_used:
+                edge2_port_n += 1
+            edge2_ext_conn_port = f"swp{edge2_port_n}"
             edge2_used.add(edge2_ext_conn_port)
             new_links.append(self._make_link(
                 "external-conn", "eth2", EDGE2, edge2_ext_conn_port,
             ))
 
         # external-dhcp: switch ZTP DHCP + EXIT-VRF relay scopes
+        edge_ext_dhcp_port = _alloc_edge_port()
         nodes["external-dhcp"] = _ubuntu_node()
         new_links.append([
             {"interface": "eth0", "node": "external-dhcp",
@@ -1578,7 +1785,8 @@ class TopologyGenerator:
         # bridge as every cluster switch's eth0 (172.20.0.0/24). Without
         # this link, validate-config and any Ansible play that connects
         # from the jump host to switches gets "no route to host" — utility
-        # has no path to the Air-mgmt subnet otherwise.
+        # has no path to the Air-mgmt subnet otherwise. Its on-link gateway
+        # is the cust-net-edge-01 bridge SVI (.254).
         nodes["utility"] = _ubuntu_node()
         new_links.append([
             {"interface": "eth0", "node": "utility",
@@ -1593,9 +1801,10 @@ class TopologyGenerator:
         # ext-storage-*: customer-side simulated storage aggregate, wired to
         # CSL swp63 ports via Wire Map (eth1, eth2 for BGP unnumbered). They
         # also need an eth0 on the Air-mgmt bridge (cust-net-edge-01) so
-        # they can DHCP a 172.20.0.x lease, get a default route via
-        # external-conn NAT, and resolve archive.ubuntu.com to apt-install
-        # FRR at first boot. Without this, the NI's apt-get hangs on DNS.
+        # they can use a 172.20.0.x management address, route through the
+        # cust-net-edge-01 SVI to external-conn NAT, and resolve
+        # archive.ubuntu.com to apt-install FRR at first boot. Without this,
+        # the NI's apt-get hangs on DNS.
         # Pattern mirrors how every switch eth0 lands on cust-net-edge-01.
         ext_storage_names = sorted(
             n for n in nodes if n.startswith("ext-storage-")
@@ -1619,10 +1828,12 @@ class TopologyGenerator:
             "utility_air_mgmt_iface": "eth2",
         }
 
-        print(f"    L3 OOB topology: "
-              f"{len([n for n in nodes if classify_node(self._name_to_role.get(n, n)) in SWITCH_ROLES and classify_node(self._name_to_role.get(n, n)) not in ('edge', 'air-oob')])} "
-              f"switch eth0s on {EDGE}, "
-              f"utility on {OOB}:{utility_port}")
+        edge_loads = ", ".join(
+            f"{en}={len(edge_used_map[en])}" for en in edge_names
+        )
+        print(f"    L3 OOB topology: {len(_cluster_switches)} switch eth0s "
+              f"across {len(edge_names)} cust-net-edge nodes "
+              f"({edge_loads}), utility on {OOB}:{utility_port}")
 
         return nodes, new_links, switch_connected
 
@@ -1675,6 +1886,12 @@ class TopologyGenerator:
     ) -> Tuple[Dict[int, int], Set[int]]:
         """Scan ALL rows (including Display=No) for breakout/disabled info.
 
+        Also supplements from generated inventory group_vars when the Wire Map
+        lacks server rows (e.g. switches-only Excel). The generated
+        gpu_breakout_parents / isl_breakout_parents in group_vars tell us which
+        ports the rendered config will break out, so the topology must create
+        sub-port stubs rather than parent-port stubs for those ports.
+
         Returns:
             breakout_map: {base_port_num: max_sub_port_index}
             disabled_ports: set of port numbers marked 'Port Disabled by Neighbor'
@@ -1692,7 +1909,101 @@ class TopologyGenerator:
                     r.switch_port, r.net_profile,
                     breakout_map, disabled_ports)
 
+        self._supplement_breakouts_from_inventory(switch_name, breakout_map)
         return breakout_map, disabled_ports
+
+    def _supplement_breakouts_from_inventory(
+        self, switch_name: str, breakout_map: Dict[int, int]
+    ) -> None:
+        """Add breakout parents from generated host_vars/group_vars.
+
+        When the Wire Map omits server rows (switches-only deploy), the
+        breakout_map won't include GPU access ports. But the Jinja2 config
+        template uses gpu_breakout_parents from group_vars and will emit
+        'link breakout 2x' for those ports. ifreload-nvue needs the sub-port
+        interfaces to exist in the Air topology, so we must create sub-port
+        stubs — not parent-port stubs.
+        """
+        inv_dir = Path("output") / self.arch / self.site / "inventory"
+        if not inv_dir.exists():
+            return
+
+        if not hasattr(self, "_inv_breakout_cache"):
+            self._inv_breakout_cache = self._load_inventory_breakouts(inv_dir)
+
+        for base_num in self._inv_breakout_cache.get(switch_name, []):
+            breakout_map.setdefault(base_num, 1)
+
+    def _load_inventory_breakouts(
+        self, inv_dir: Path
+    ) -> Dict[str, Set[int]]:
+        """Build {switch_name: {base_port_nums}} from generated inventory.
+
+        Reads the hosts file for group membership, then reads each group's
+        group_vars (and per-host host_vars) for *_breakout_parents keys.
+        """
+        result: Dict[str, Set[int]] = {}
+        hosts_file = inv_dir / "hosts"
+        if not hosts_file.exists():
+            return result
+
+        breakout_keys = (
+            "gpu_breakout_parents", "isl_breakout_parents",
+            "cpu_breakout_parents",
+        )
+
+        def _extract_ports(val: str) -> Set[int]:
+            ports: Set[int] = set()
+            for token in val.split(","):
+                parsed = parse_swp_port(token.strip())
+                if parsed and parsed[1] is None:
+                    ports.add(parsed[0])
+            return ports
+
+        group_members: Dict[str, list] = {}
+        current_group = ""
+        for line in hosts_file.read_text().splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            if s.startswith("[") and s.endswith("]"):
+                current_group = s[1:-1].split(":")[0]
+                continue
+            if ":" not in s.split("]", 1)[0] if "]" in s else True:
+                group_members.setdefault(current_group, []).append(s)
+
+        for group_name, members in group_members.items():
+            gv_path = inv_dir / "group_vars" / f"{group_name}.yml"
+            if not gv_path.exists():
+                continue
+            try:
+                with open(gv_path) as f:
+                    gv = yaml.safe_load(f) or {}
+            except Exception:
+                continue
+            ports: Set[int] = set()
+            for key in breakout_keys:
+                if key in gv and gv[key]:
+                    ports |= _extract_ports(str(gv[key]))
+            if ports:
+                for member in members:
+                    result.setdefault(member, set()).update(ports)
+
+        for hv_file in sorted((inv_dir / "host_vars").iterdir()):
+            if not hv_file.name.endswith(".yml"):
+                continue
+            hostname = hv_file.stem
+            try:
+                with open(hv_file) as f:
+                    hv = yaml.safe_load(f) or {}
+            except Exception:
+                continue
+            for key in breakout_keys:
+                if key in hv and hv[key]:
+                    result.setdefault(hostname, set()).update(
+                        _extract_ports(str(hv[key])))
+
+        return result
 
     @staticmethod
     def _scan_port_info(
@@ -1790,10 +2101,14 @@ class TopologyGenerator:
 class TopologyValidator:
     """Compare an existing topology JSON against the Excel wiremap."""
 
-    def __init__(self, excel_path: Path, topology_json: Path, arch: str):
+    def __init__(self, excel_path: Path, topology_json: Path, arch: str,
+                 switches_only: bool = False):
         self.excel_path = excel_path
         self.topology_json = topology_json
         self.arch = arch
+        # When the topology was generated switches-only, the server VMs were
+        # intentionally dropped — don't flag them as "missing nodes".
+        self.switches_only = switches_only
         wb = openpyxl.load_workbook(excel_path, data_only=True)
         self.rows = parse_wiremap_excel(excel_path)
         if "Air_Only" in wb.sheetnames:
@@ -1875,6 +2190,17 @@ class TopologyValidator:
             # L3 mode
             "external-conn", "external-dhcp", "utility",
         }
+
+        # Switches-only: the server VMs were intentionally dropped, so only
+        # switches + kept infra are expected in the topology. Mirror the
+        # generator's _strip_to_switches keep rule (switch by role, or infra by
+        # name prefix) so dropped servers are not flagged as missing/extra.
+        if self.switches_only:
+            def _kept(n: str) -> bool:
+                return (is_switch(self._name_to_role.get(n, n))
+                        or n.startswith(TopologyGenerator.SWITCHES_ONLY_INFRA_KEEP))
+            wiremap_devices = {n for n in wiremap_devices if _kept(n)}
+            air_only_devices = {n for n in air_only_devices if _kept(n)}
 
         # All devices the topology should contain
         all_expected = wiremap_devices | air_only_devices | auto_injected
@@ -2051,6 +2377,10 @@ def main() -> int:
                      help="Architecture (e.g., 2-8-5-200)")
     gen.add_argument("--site", default="default",
                      help="Site name (default: default)")
+    gen.add_argument("--switches-only", action="store_true",
+                     help="Omit server VMs from the topology (switches + jump "
+                          "infra only) to test switch configs at larger scale "
+                          "within a tighter Air budget")
 
     val = sub.add_parser("validate",
                          help="Validate topology against wiremap")
@@ -2058,6 +2388,9 @@ def main() -> int:
     val.add_argument("--site", default="default", help="Site name")
     val.add_argument("--topology",
                      help="Path to topology JSON (default: auto-detect)")
+    val.add_argument("--switches-only", action="store_true",
+                     help="Topology was generated switches-only; do not flag "
+                          "intentionally-dropped server VMs as missing nodes")
 
     args = ap.parse_args()
 
@@ -2078,7 +2411,8 @@ def main() -> int:
         )
         print(f"  Generating topology for {args.arch} (site: {args.site})")
         print(f"  Source: {excel_path}")
-        generator = TopologyGenerator(excel_path, args.arch, args.site)
+        generator = TopologyGenerator(excel_path, args.arch, args.site,
+                                      switches_only=getattr(args, "switches_only", False))
         generator.write(output_path)
         return 0
 
@@ -2097,7 +2431,8 @@ def main() -> int:
 
         print(f"  Validating {topo_path}")
         print(f"  Against wiremap {excel_path}")
-        validator = TopologyValidator(excel_path, topo_path, args.arch)
+        validator = TopologyValidator(excel_path, topo_path, args.arch,
+                                      switches_only=getattr(args, "switches_only", False))
         return 0 if validator.validate() else 1
 
     return 1

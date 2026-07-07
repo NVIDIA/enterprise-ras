@@ -5,7 +5,8 @@
 architecture: 2-8-9-800
 scalable_units: 8
 nodes_per_su: 4
-tiers: 1
+ns_tiers: 1
+ew_tiers: 1
 convergence: dedicated_gpu
 gpu_planes: 2
 oob_uplink_mode: l3
@@ -18,21 +19,28 @@ common:
   oob_network: 172.16.177.0/24
   oob_gateway: 172.16.177.1
   oob_vlan: 200
+  oob_vrf: OOB
   cpu_network: 172.16.178.0/24
   cpu_gateway: 172.16.178.1
   cpu_vlan: 300
+  cpu_vrf: INBAND
   support_network: 172.16.179.0/24
   support_gateway: 172.16.179.1
   support_vlan: 400
+  support_vrf: INBAND
   storage_network: 172.16.180.0/24
   storage_gateway: 172.16.180.1
   storage_vlan: 500
+  storage_vrf: STORAGE
   gpu_plane1_network: 192.168.0.0/20
   gpu_plane1_gateway: 192.168.0.1
   gpu_plane1_vlan: 900
+  gpu_plane1_vrf: GPU
   gpu_plane2_network: 192.168.16.0/20
   gpu_plane2_gateway: 192.168.16.1
   gpu_plane2_vlan: 900
+  gpu_plane2_vrf: GPU
+  storage_vlan_tagged: false
   pre_login_message: '##############################################################################
 
     #      You are accessing an Information System (IS) that is provided for authorized
@@ -86,9 +94,9 @@ devices:
   gsl-plane2-02:
     eth0_ip: ''
     mac: 48:b0:2d:c3:11:86
-  gpu-01:
+  su-01-node-01:
     eth0_ip: 192.168.200.30
-    mac: 48:b0:2d:fc:a1:51
+    mac: 48:b0:2d:79:6c:d7
     interfaces:
       cpu:
       - eth1
@@ -194,9 +202,9 @@ devices:
       ip: 192.168.16.208/20
       gateway: 192.168.16.1
       table: 1007
-  gpu-02:
+  su-01-node-02:
     eth0_ip: 192.168.200.31
-    mac: 48:b0:2d:d1:a6:da
+    mac: 48:b0:2d:7a:db:6b
     interfaces:
       cpu:
       - eth1
@@ -302,9 +310,9 @@ devices:
       ip: 192.168.16.224/20
       gateway: 192.168.16.1
       table: 1007
-  gpu-03:
+  su-01-node-03:
     eth0_ip: 192.168.200.32
-    mac: 48:b0:2d:e2:d0:2b
+    mac: 48:b0:2d:f5:bd:25
     interfaces:
       cpu:
       - eth1
@@ -410,9 +418,9 @@ devices:
       ip: 192.168.16.240/20
       gateway: 192.168.16.1
       table: 1007
-  gpu-04:
+  su-01-node-04:
     eth0_ip: 192.168.200.33
-    mac: 48:b0:2d:b5:e7:6a
+    mac: 48:b0:2d:fc:01:bf
     interfaces:
       cpu:
       - eth1
@@ -518,9 +526,9 @@ devices:
       ip: 192.168.17.0/20
       gateway: 192.168.16.1
       table: 1007
-  gpu-05:
+  su-02-node-01:
     eth0_ip: 192.168.200.34
-    mac: 48:b0:2d:c3:a5:09
+    mac: 48:b0:2d:03:2b:62
     interfaces:
       cpu:
       - eth1
@@ -626,9 +634,9 @@ devices:
       ip: 192.168.17.16/20
       gateway: 192.168.16.1
       table: 1007
-  gpu-06:
+  su-02-node-02:
     eth0_ip: 192.168.200.35
-    mac: 48:b0:2d:0f:e1:29
+    mac: 48:b0:2d:97:d9:c1
     interfaces:
       cpu:
       - eth1
@@ -734,9 +742,9 @@ devices:
       ip: 192.168.17.32/20
       gateway: 192.168.16.1
       table: 1007
-  gpu-07:
+  su-02-node-03:
     eth0_ip: 192.168.200.36
-    mac: 48:b0:2d:9d:c4:8b
+    mac: 48:b0:2d:cb:e1:18
     interfaces:
       cpu:
       - eth1
@@ -842,9 +850,9 @@ devices:
       ip: 192.168.17.48/20
       gateway: 192.168.16.1
       table: 1007
-  gpu-08:
+  su-02-node-04:
     eth0_ip: 192.168.200.37
-    mac: 48:b0:2d:0c:97:05
+    mac: 48:b0:2d:9a:2e:74
     interfaces:
       cpu:
       - eth1
@@ -950,9 +958,9 @@ devices:
       ip: 192.168.17.64/20
       gateway: 192.168.16.1
       table: 1007
-  bcm-01:
+  support-01:
     eth0_ip: 192.168.200.38
-    mac: 48:b0:2d:38:29:6d
+    mac: 48:b0:2d:be:40:ad
     interfaces:
       support:
       - eth1
@@ -961,9 +969,9 @@ devices:
       - eth0
     bond_ip1: 172.16.179.101/24
     bond_ip2: 172.16.179.102/24
-  bcm-02:
+  support-02:
     eth0_ip: 192.168.200.39
-    mac: 48:b0:2d:b4:97:57
+    mac: 48:b0:2d:92:d8:4d
     interfaces:
       support:
       - eth1
@@ -972,9 +980,9 @@ devices:
       - eth0
     bond_ip1: 172.16.179.103/24
     bond_ip2: 172.16.179.104/24
-  k8s-01:
+  support-03:
     eth0_ip: 192.168.200.40
-    mac: 48:b0:2d:8e:37:86
+    mac: 48:b0:2d:de:e6:5f
     interfaces:
       support:
       - eth1
@@ -983,9 +991,9 @@ devices:
       - eth0
     bond_ip1: 172.16.179.105/24
     bond_ip2: 172.16.179.106/24
-  k8s-02:
+  support-04:
     eth0_ip: 192.168.200.41
-    mac: 48:b0:2d:52:5f:a7
+    mac: 48:b0:2d:5c:a9:e5
     interfaces:
       support:
       - eth1
@@ -994,9 +1002,9 @@ devices:
       - eth0
     bond_ip1: 172.16.179.107/24
     bond_ip2: 172.16.179.108/24
-  k8s-03:
+  support-05:
     eth0_ip: 192.168.200.42
-    mac: 48:b0:2d:f9:f3:d2
+    mac: 48:b0:2d:64:1c:99
     interfaces:
       support:
       - eth1
@@ -1005,9 +1013,9 @@ devices:
       - eth0
     bond_ip1: 172.16.179.109/24
     bond_ip2: 172.16.179.110/24
-  slurm-01:
+  support-06:
     eth0_ip: 192.168.200.43
-    mac: 48:b0:2d:e5:7c:7b
+    mac: 48:b0:2d:36:2f:63
     interfaces:
       support:
       - eth1
@@ -1016,9 +1024,9 @@ devices:
       - eth0
     bond_ip1: 172.16.179.111/24
     bond_ip2: 172.16.179.112/24
-  slurm-02:
+  support-07:
     eth0_ip: 192.168.200.44
-    mac: 48:b0:2d:c8:95:07
+    mac: 48:b0:2d:b4:db:9e
     interfaces:
       support:
       - eth1
@@ -1038,7 +1046,7 @@ ztp_interfaces:
 - name: eth1
   ip: 172.20.0.77
   network: 172.20.0.0/24
-  gateway: 172.20.0.1
+  gateway: 172.20.0.254
   purpose: air-mgmt
   dnsmasq_listen: true
 ztp_allow_subnets:
@@ -1050,6 +1058,7 @@ inter_vrf_dhcp_scopes:
   subnet: 172.16.179.0/24
   gateway: 172.16.179.1
   name: Support
+tiers: 1
 target_cumulus_version: 5.13.0
 nvue_syntax:
   '5.13':

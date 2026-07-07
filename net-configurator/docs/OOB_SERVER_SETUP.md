@@ -3,6 +3,12 @@
 
 # OOB Server Setup for Air/Lab Environments
 
+> ⚠️ **Legacy (L2 OOB only).** This describes the older L2 out-of-band path built
+> around `oob-server-01`. The **default OOB mode is now L3** (routed OOB with an
+> EXIT/OOB VRF and a `utility` jump host) — see the main README and
+> [`AIR_DEPLOYMENT_GUIDE.md`](AIR_DEPLOYMENT_GUIDE.md). Use this document only if
+> you are intentionally running the legacy L2 OOB topology.
+
 ## Overview
 
 The OOB (Out-of-Band) server acts as a gateway and router for isolated management networks in NVIDIA Air simulations or physical lab environments. It provides routing between multiple OOB networks and can forward traffic to external networks.

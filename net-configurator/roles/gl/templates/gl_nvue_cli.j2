@@ -1,0 +1,417 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: MIT #}
+{#
+  GSL (GPU Spine/Leaf) NVUE CLI template.
+
+  Used by the dedicated_gpu convergence mode (e.g. 2-8-9-800 dual plane).
+  Each plane is an independent fabric:
+    * plane 1 default-VRF ASN  : asn
+    * plane 1 GPU VRF + loopback subnets are plane-specific
+  Switches within a plane peer with each other over an "overlay" BGP peer
+  (numbered, lo->lo) and over an "internal_isl" peer-group on the uplink ports.
+  Planes do NOT BGP-peer with each other; load balancing is at the host.
+
+  Required host_vars:
+    hostname              - e.g. gsl-plane1-01
+    lo_ip                 - default-VRF loopback, e.g. 10.1.1.1/32
+    vlan900_ip            - GPU SVI address, e.g. 192.168.0.2/20
+    vrf_gpu_loopback      - GPU VRF loopback, e.g. 10.1.1.11/32
+    plane_mate_lo_ip      - plane-mate's lo IP for overlay peer, e.g. 10.1.1.2
+
+  Required group_vars (typically per-plane):
+    asn                   - e.g. 4260397297 (plane1) or 4260397298 (plane2)
+    vlan900_vrr            - e.g. 192.168.0.1/20
+
+  Optional group_vars (with defaults):
+    gpu_vlan: 900
+    gpu_vni : 289900
+    gpu_vrf_name : GPU
+    gpu_evpn_vlan: 3003
+    gpu_evpn_vni : 289003
+    gpu_access_ports : "swp1-16"   - GPU NIC ports (with 2x breakout)
+    isl_ports        : "swp49-64"  - internal_isl ports (with 2x breakout)
+#}
+{#
+  Macro: port_range_ints
+  Convert "swp49-64" / "49-64" / "swp50" / "50" to a comma-separated string
+  of integer port numbers, e.g. "49,50,51,...,64".
+#}
+{%- macro port_range_ints(token) -%}
+{%- set t = token | string -%}
+{%- if t.startswith('swp') -%}{%- set t = t[3:] -%}{%- endif -%}
+{%- if '-' in t -%}
+{%- set parts = t.split('-') -%}
+{%- set lo = parts[0] | int -%}
+{%- set hi = (parts[1] | int) + 1 -%}
+{%- set out = [] -%}
+{%- for p in range(lo, hi) -%}{%- set _ = out.append(p | string) -%}{%- endfor -%}
+{{ out | join(',') }}
+{%- else -%}
+{{ t | int }}
+{%- endif -%}
+{%- endmacro -%}
+#!/bin/bash
+# NVUE CLI Configuration for {{ hostname }}
+# Generated: {{ ansible_date_time.iso8601 }}
+# Format: NVUE CLI commands (GSL - GPU Spine/Leaf, plane {{ plane | default('?') }})
+
+{%- set _gpu_vlan = gpu_vlan | default(900) %}
+{%- set _gpu_vni  = gpu_vni  | default(289900) %}
+{%- set _gpu_vrf  = gpu_vrf_name | default('GPU') %}
+{%- set _gpu_evpn_vlan = gpu_evpn_vlan | default(3003) %}
+{%- set _gpu_evpn_vni  = gpu_evpn_vni  | default(289003) %}
+{# Wire Map–derived (preferred when present): per-host lists of breakout
+   parents and active sub-ports. Falls back to legacy whole-range defaults
+   only when the parser didn't produce a per-host config (i.e. real HW
+   without a topology JSON to honor). #}
+{%- set _gpu_breakout_parents = gpu_breakout_parents | default('') %}
+{%- set _gpu_subports_str     = gpu_subports         | default('') %}
+{%- set _isl_breakout_parents = isl_breakout_parents | default('') %}
+{%- set _isl_subports_str     = isl_subports         | default('') %}
+
+{%- if not _gpu_subports_str %}
+{#- The parser populates gpu_subports / isl_subports per-host from the
+    Wire Map. If they're missing here, `make generate` wasn't run (or
+    the Wire Map doesn't list this switch's wired GPU/ISL ports).
+    Emit a config that fails loudly on apply rather than silently
+    using a hard-coded port range that may not match the actual HW. #}
+echo "ERROR: {{ hostname }} rendered without Wire Map-derived gpu_subports/isl_subports." >&2
+echo "       Run 'make generate ARCH=<arch>' first so the parser emits" >&2
+echo "       gpu_subports + gpu_breakout_parents + isl_subports + isl_breakout_parents" >&2
+echo "       into this host's host_vars. Hardcoded fallback was removed because it" >&2
+echo "       silently produced wrong port enumeration on non-standard SN5610 layouts." >&2
+exit 1
+{%- endif %}
+
+#============================================================================
+# Bridge and VLAN
+#============================================================================
+nv set bridge domain br_default type vlan-aware
+{% if gpu_rail_planes is defined %}
+{# Per-rail-per-plane mode: emit one bridge-domain VLAN entry per (rail, plane)
+   the switch physically owns. Without this, the per-rail SVIs would be configured
+   but the bridge wouldn't extend EVPN to those VLANs. #}
+{% for key, rp in gpu_rail_planes.items() | sort %}
+nv set bridge domain br_default vlan {{ rp.vlan_id }} vni {{ rp.vni }}
+{% endfor %}
+{% elif gpu_rails is defined %}
+{# Single-plane per-rail mode: emit one bridge-domain VLAN entry per rail
+   the switch physically owns. #}
+{% for key, rp in gpu_rails.items() | sort %}
+nv set bridge domain br_default vlan {{ rp.vlan_id }} vni {{ rp.vni }}
+{% endfor %}
+{% else %}
+nv set bridge domain br_default vlan {{ _gpu_vlan }} vni {{ _gpu_vni }}
+{% endif %}
+
+#============================================================================
+# EVPN
+#============================================================================
+nv set evpn state enabled
+nv set evpn route-advertise svi-ip enabled
+
+#============================================================================
+# Interfaces - eth0 (mgmt), loopback, breakout, GPU access ports, SVI
+#============================================================================
+nv set interface eth0 type eth
+nv set interface eth0 vrf mgmt
+
+nv set interface lo ipv4 address {{ lo_ip }}
+nv set interface lo type loopback
+
+{# Combined breakout list: GPU parents + ISL parents (only those that
+   actually have sub-port wiremap rows on this host). #}
+{%- set _breakout_parts = [] %}
+{%- if _gpu_breakout_parents %}{%- set _ = _breakout_parts.append(_gpu_breakout_parents) %}{%- endif %}
+{%- if _isl_breakout_parents %}{%- set _ = _breakout_parts.append(_isl_breakout_parents) %}{%- endif %}
+{# Breakout level is per-arch via group_vars `gpu_breakout` (default '2x'). #}
+{% set _gpu_breakout = gpu_breakout | default('2x') %}
+{% if _breakout_parts -%}
+{% if _isl_breakout_parents -%}
+# {{ _gpu_breakout }} breakout on GPU access ports + ISL ports
+{% else -%}
+# {{ _gpu_breakout }} breakout on GPU access ports
+{% endif -%}
+nv set interface {{ _breakout_parts | join(',') }} link breakout {{ _gpu_breakout }}
+{% endif %}
+
+{# Cumulus auto-sets `type swp` on every swp interface after it's rendered.
+   We emit the same list explicitly so `validate-config` doesn't surface them
+   as "extras on switch". Excludes parent ports that are broken out (those
+   don't exist post-breakout — including them causes ifreload-nvue rollback,
+   see feedback_topology_config_consistency). #}
+{%- set _broken_parents = [] -%}
+{%- for src in [_gpu_breakout_parents, _isl_breakout_parents] %}
+{%- if src %}
+{%- for part in src.split(',') %}
+{%- set p = part.strip() %}
+{%- if p.startswith('swp') and 's' not in p[3:] %}
+{%- set _ = _broken_parents.append(p[3:] | int) %}
+{%- elif p.startswith('swp') and '-' in p[3:] %}
+{%- set _start = p[3:].split('-')[0] | int %}
+{%- set _end = p[3:].split('-')[1] | int %}
+{%- for n in range(_start, _end + 1) %}{%- set _ = _broken_parents.append(n) %}{%- endfor %}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+{%- endfor %}
+{%- set _all_swp_parents = [] -%}
+{%- for n in range(1, 65) %}
+{%- if n not in _broken_parents %}{%- set _ = _all_swp_parents.append('swp' ~ n) %}{%- endif %}
+{%- endfor %}
+{%- set _all_subports = [] -%}
+{%- if _gpu_subports_str %}{%- set _ = _all_subports.append(_gpu_subports_str) %}{%- endif %}
+{%- if _isl_subports_str %}{%- set _ = _all_subports.append(_isl_subports_str) %}{%- endif %}
+{%- set _swp_typed_parts = [] %}
+{%- if _all_swp_parents %}{%- set _ = _swp_typed_parts.append(_all_swp_parents | join(',')) %}{%- endif %}
+{%- if _all_subports %}{%- set _ = _swp_typed_parts.append(_all_subports | join(',')) %}{%- endif %}
+{%- set _swp_typed = _swp_typed_parts | join(',') %}
+nv set interface {{ _swp_typed }} type swp
+
+{# Bridge sub-ports must be those present in topology - no extras.
+
+   When `gpu_rail_planes` is defined (gpu_vlan_mode = per_rail_per_plane),
+   emit one bridge-access line + full SVI/VRR block per (rail, plane).
+   Sub-port lists per (rail, plane) come from `gpu_rail_plane_subports`,
+   pre-computed by parse_gsl_port_config from "GPU Rail R Plane P"
+   Wire Map profiles.
+
+   When `gpu_rail_planes` is NOT defined, fall back to legacy single-VLAN
+   block: all GPU sub-ports -> _gpu_vlan and one SVI per switch. #}
+{% if gpu_rail_planes is defined %}
+# GPU access ports per (rail, plane) - gpu_vlan_mode = per_rail_per_plane
+{# Only emit SVI + bridge-access for (rail, plane) combos that this switch
+   physically owns (has sub-ports for). Without ports in the bridge domain
+   the SVI would dangle without an actual L2 forwarding path. #}
+{% for key, rp in gpu_rail_planes.items() | sort %}
+{% if gpu_rail_plane_subports is defined and key in gpu_rail_plane_subports %}
+nv set interface {{ gpu_rail_plane_subports[key] }} bridge domain br_default access {{ rp.vlan_id }}
+# vlan{{ rp.vlan_id }} SVI (rail {{ key }})
+nv set interface vlan{{ rp.vlan_id }} ipv4 address {{ rp.ip }}
+nv set interface vlan{{ rp.vlan_id }} vrf {{ rp.vrf }}
+nv set interface vlan{{ rp.vlan_id }} ipv4 vrr address {{ rp.vrr }}
+nv set interface vlan{{ rp.vlan_id }} ipv4 vrr state enabled
+nv set interface vlan{{ rp.vlan_id }} ipv4 vrr vrr-state up
+nv set interface vlan{{ rp.vlan_id }} type svi
+nv set interface vlan{{ rp.vlan_id }} vlan {{ rp.vlan_id }}
+{% endif %}
+{% endfor %}
+{% elif gpu_rails is defined %}
+# GPU access ports per rail - gpu_vlan_mode = per_rail
+{% for key, rp in gpu_rails.items() | sort %}
+{% if gpu_rail_subports is defined and key in gpu_rail_subports %}
+nv set interface {{ gpu_rail_subports[key] }} bridge domain br_default access {{ rp.vlan_id }}
+# vlan{{ rp.vlan_id }} SVI ({{ key }})
+nv set interface vlan{{ rp.vlan_id }} ipv4 address {{ rp.ip }}
+nv set interface vlan{{ rp.vlan_id }} vrf {{ rp.vrf }}
+nv set interface vlan{{ rp.vlan_id }} ipv4 vrr address {{ rp.vrr }}
+nv set interface vlan{{ rp.vlan_id }} ipv4 vrr state enabled
+nv set interface vlan{{ rp.vlan_id }} ipv4 vrr vrr-state up
+nv set interface vlan{{ rp.vlan_id }} type svi
+nv set interface vlan{{ rp.vlan_id }} vlan {{ rp.vlan_id }}
+{% endif %}
+{% endfor %}
+{% else %}
+# GPU access ports -> VLAN {{ _gpu_vlan }} (untagged / access)
+nv set interface {{ _gpu_subports_str }} bridge domain br_default access {{ _gpu_vlan }}
+
+# vlan{{ _gpu_vlan }} SVI (GPU VRF + VRR)
+# 5.16 NVUE: SVI uses ipv4/ipv6 sub-objects; vrf is set without "ip" prefix.
+nv set interface vlan{{ _gpu_vlan }} ipv4 address {{ vlan900_ip }}
+nv set interface vlan{{ _gpu_vlan }} vrf {{ _gpu_vrf }}
+nv set interface vlan{{ _gpu_vlan }} ipv4 vrr address {{ vlan900_vrr }}
+nv set interface vlan{{ _gpu_vlan }} ipv4 vrr state enabled
+nv set interface vlan{{ _gpu_vlan }} ipv4 vrr vrr-state up
+nv set interface vlan{{ _gpu_vlan }} type svi
+nv set interface vlan{{ _gpu_vlan }} vlan {{ _gpu_vlan }}
+{% endif %}
+
+#============================================================================
+# NVE / VxLAN
+#============================================================================
+nv set nve vxlan arp-nd-suppress enabled
+nv set nve vxlan decapsulation dscp action preserve
+nv set nve vxlan state enabled
+nv set nve vxlan encapsulation dscp action copy
+nv set nve vxlan source address {{ lo_ip.split('/')[0] }}
+
+#============================================================================
+# QoS - RoCE lossless for GPU traffic
+#============================================================================
+nv set qos roce state enabled
+nv set qos roce mode lossless
+nv set qos traffic-pool default-lossy memory-percent 10
+nv set qos traffic-pool roce-lossless memory-percent 90
+
+{# RoCE PFC watchdog on GPU access ports. Mirrors the collapsed-core
+   pattern in roles/core/templates/core_nvue_cli.j2 (which watchdogs
+   gpu_ifs only, not ISL/fabric). On the dedicated-GPU leaf the GPU
+   access subports are the host-facing RoCE ports — the direct analog
+   of core's GPU access ports. Emitted on the same port set as the
+   bridge-access lines above, following the same per-rail-per-plane /
+   per-rail / legacy-single-VLAN split. NOTE: customer REFERENCES for
+   2-4-5-800 / 2-8-9-800 omit this line; turning it on here is a
+   deliberate divergence (best-practice deadlock recovery) — the
+   customer should mirror it into prod. Tracked in
+   docs/internal/TODO-audit-findings.md. #}
+# GPU role - QoS PFC watchdog
+{% if gpu_rail_planes is defined %}
+{% for key, rp in gpu_rail_planes.items() | sort %}
+{% if gpu_rail_plane_subports is defined and key in gpu_rail_plane_subports %}
+nv set interface {{ gpu_rail_plane_subports[key] }} qos pfc-watchdog state enable
+{% endif %}
+{% endfor %}
+{% elif gpu_rails is defined %}
+{% for key, rp in gpu_rails.items() | sort %}
+{% if gpu_rail_subports is defined and key in gpu_rail_subports %}
+nv set interface {{ gpu_rail_subports[key] }} qos pfc-watchdog state enable
+{% endif %}
+{% endfor %}
+{% elif _gpu_subports_str %}
+nv set interface {{ _gpu_subports_str }} qos pfc-watchdog state enable
+{% endif %}
+
+#============================================================================
+# Router policy
+#============================================================================
+nv set router bgp autonomous-system {{ asn }}
+nv set router bgp state enabled
+nv set router bgp router-id {{ lo_ip.split('/')[0] }}
+nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
+nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
+{% set _ew_tiers = (ew_tiers | default(tiers | default(1))) | int %}
+{% if _ew_tiers > 1 %}
+{# W-ECMP only works over eBGP (NVIDIA Cumulus Linux docs: "W-ECMP is only
+   supported in EBGP fabrics"). At ew_tiers > 1 this leaf's internal_isl
+   uplink to the gs spine is eBGP (see remote-as below), not the
+   converged-plane horizontal iBGP peer-link, so it qualifies -- mirrors
+   the identical fix on core/cl's internal-isl (excel_parser.py
+   _apply_oob_l3_uplink_mode). Verified via a generated SU16 (ew_tiers=2)
+   workbook; no live 2-tier GPU deployment exists to verify byte-for-byte. #}
+nv set router policy route-map WEIGHTED_ECMP rule 10 action permit
+nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths
+{% endif %}
+nv set router vrr state enabled
+
+#============================================================================
+# NTP
+#============================================================================
+{% for server in ntp_servers %}
+nv set system ntp server {{ server | quote }}
+{% endfor %}
+
+#============================================================================
+# AAA - local user 'cumulus' (password set via ZTP)
+#============================================================================
+nv set system aaa class nvapply action allow
+nv set system aaa class nvapply command-path / permission all
+nv set system aaa class nvshow action allow
+nv set system aaa class nvshow command-path / permission ro
+nv set system aaa class sudo action allow
+nv set system aaa class sudo command-path / permission all
+nv set system aaa role nvue-admin class nvapply
+nv set system aaa role nvue-monitor class nvshow
+nv set system aaa role system-admin class nvapply
+nv set system aaa role system-admin class sudo
+nv set system aaa user cumulus full-name cumulus,,,
+nv set system aaa user cumulus role system-admin
+nv set system aaa user cumulus state enabled
+
+#============================================================================
+# System
+#============================================================================
+nv set system api state enabled
+nv set system config auto-save state enabled
+nv set system control-plane acl acl-default-dos inbound
+nv set system control-plane acl acl-default-whitelist inbound
+nv set system hostname {{ hostname }}
+{# Operator-configurable SSH login banners sourced from the Excel
+   `Settings.pre_login_message` / `post_login_message` fields. See
+   the comment in roles/core/templates/core_nvue_cli.j2 for the
+   encoding rationale and the design doc at
+   docs/plans/2026-05-26-switch-login-messages-design.md. #}
+{% if common is defined and common.get('pre_login_message') %}
+nv set system message pre-login '{{ common.get('pre_login_message') | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) | replace("'", "'\\''") }}'
+{% endif %}
+{% if common is defined and common.get('post_login_message') %}
+nv set system message post-login '{{ common.get('post_login_message') | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) | replace("'", "'\\''") }}'
+{% endif %}
+nv set system ssh-server state enabled
+
+#============================================================================
+# WJH - what just happened, forwarding triggers
+#============================================================================
+nv set system wjh channel forwarding trigger l2
+nv set system wjh channel forwarding trigger l3
+nv set system wjh channel forwarding trigger tunnel
+nv set system wjh state enabled
+
+#============================================================================
+# GPU VRF - EVPN, BGP
+#============================================================================
+nv set vrf {{ _gpu_vrf }} evpn state enabled
+nv set vrf {{ _gpu_vrf }} evpn vlan {{ _gpu_evpn_vlan }}
+nv set vrf {{ _gpu_vrf }} evpn vni {{ _gpu_evpn_vni }}
+nv set vrf {{ _gpu_vrf }} loopback ip address {{ vrf_gpu_loopback }}
+nv set vrf {{ _gpu_vrf }} router bgp address-family ipv4-unicast state enabled
+nv set vrf {{ _gpu_vrf }} router bgp address-family ipv4-unicast redistribute connected state enabled
+nv set vrf {{ _gpu_vrf }} router bgp address-family ipv4-unicast route-export to-evpn state enabled
+nv set vrf {{ _gpu_vrf }} router bgp address-family l2vpn-evpn state enabled
+nv set vrf {{ _gpu_vrf }} router bgp autonomous-system {{ asn }}
+nv set vrf {{ _gpu_vrf }} router bgp state enabled
+nv set vrf {{ _gpu_vrf }} router bgp router-id {{ lo_ip.split('/')[0] }}
+nv set vrf {{ _gpu_vrf }} table auto
+
+#============================================================================
+# Default VRF - BGP underlay + overlay (plane-internal)
+#============================================================================
+nv set vrf default router bgp address-family ipv4-unicast state enabled
+nv set vrf default router bgp address-family ipv4-unicast redistribute connected state enabled
+nv set vrf default router bgp address-family ipv4-unicast redistribute connected route-map LOOPBACK_BGP
+nv set vrf default router bgp address-family l2vpn-evpn state enabled
+nv set vrf default router bgp autonomous-system {{ asn }}
+nv set vrf default router bgp state enabled
+
+# Overlay peers (numbered, loopback-to-loopback)
+{% if overlay_peers is defined -%}
+{% for peer_ip in overlay_peers -%}
+nv set vrf default router bgp neighbor {{ peer_ip }} peer-group overlay
+nv set vrf default router bgp neighbor {{ peer_ip }} type numbered
+{% endfor -%}
+{% else -%}
+nv set vrf default router bgp neighbor {{ plane_mate_lo_ip }} peer-group overlay
+nv set vrf default router bgp neighbor {{ plane_mate_lo_ip }} type numbered
+{% endif -%}
+
+{% if _isl_subports_str -%}
+# internal_isl peers - every breakout subport on the ISL trunk ports (unnumbered)
+{% for sub in _isl_subports_str.split(',') -%}
+nv set vrf default router bgp neighbor {{ sub }} peer-group internal_isl
+nv set vrf default router bgp neighbor {{ sub }} type unnumbered
+{% endfor -%}
+{% endif %}
+
+nv set vrf default router bgp path-selection multipath aspath-ignore enabled
+
+# Peer-group definitions
+{% if _isl_subports_str -%}
+nv set vrf default router bgp peer-group internal_isl address-family ipv4-unicast state enabled
+{% if _ew_tiers > 1 -%}
+nv set vrf default router bgp peer-group internal_isl address-family ipv4-unicast policy outbound route-map WEIGHTED_ECMP
+{% endif -%}
+nv set vrf default router bgp peer-group internal_isl remote-as {{ 'external' if _ew_tiers > 1 else 'internal' }}
+{% endif -%}
+nv set vrf default router bgp peer-group overlay address-family ipv4-unicast state disabled
+nv set vrf default router bgp peer-group overlay address-family l2vpn-evpn state enabled
+{# 5.16: BFD intervals are set on a profile at `nv set router bfd profile <n> ...`,
+   then peer-groups reference the profile by name. Inline `bfd min-rx-interval`
+   on a peer-group is rejected (`'min-rx-interval' is not one of ['profile']`). #}
+nv set router bfd state enabled
+nv set router bfd profile overlay min-rx-interval 1000
+nv set router bfd profile overlay min-tx-interval 1000
+nv set vrf default router bgp peer-group overlay bfd profile overlay
+nv set vrf default router bgp peer-group overlay multihop-ttl 2
+nv set vrf default router bgp peer-group overlay remote-as {{ 'external' if (ew_tiers | default(tiers | default(1))) | int > 1 else 'internal' }}
+nv set vrf default router bgp peer-group overlay update-source lo
+nv set vrf default router bgp router-id {{ lo_ip.split('/')[0] }}

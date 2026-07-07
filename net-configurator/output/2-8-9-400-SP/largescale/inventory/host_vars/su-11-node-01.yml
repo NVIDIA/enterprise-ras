@@ -1,0 +1,4 @@
+---
+# Host variables for su-11-node-01 (Generated from Excel)
+ansible_host: 192.168.200.106
+hostname: su-11-node-01

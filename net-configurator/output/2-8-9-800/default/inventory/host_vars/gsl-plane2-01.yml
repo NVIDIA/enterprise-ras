@@ -7,6 +7,7 @@ ip_assignment_mode: dhcp
 plane: 2
 lo_ip: 10.2.1.1/32
 vrf_gpu_loopback: 10.2.1.11/32
+asn: 4260396888
 plane_mate_lo_ip: 10.2.1.2
 vlan900_ip: 192.168.16.2/20
 vlan900_vrr: 192.168.16.1/20

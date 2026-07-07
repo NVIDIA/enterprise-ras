@@ -25,28 +25,28 @@ oob-switch-01
 oob-switch-02
 
 [nodes]
-gpu-01
-gpu-02
-gpu-03
-gpu-04
-gpu-05
-gpu-06
-gpu-07
-gpu-08
+su-01-node-01
+su-01-node-02
+su-01-node-03
+su-01-node-04
+su-02-node-01
+su-02-node-02
+su-02-node-03
+su-02-node-04
 
 [support]
-bcm-01
-bcm-02
-k8s-01
-k8s-02
-k8s-03
-slurm-01
-slurm-02
+support-01
+support-02
+support-03
+support-04
+support-05
+support-06
+support-07
 
 [dhcp]
 external-dhcp
 
-[oob-server]
+[oob_server]
 external-conn
 
 [jump]
@@ -64,7 +64,7 @@ ansible_user=cumulus
 nodes
 support
 dhcp
-oob-server
+oob_server
 jump
 
 [servers:vars]

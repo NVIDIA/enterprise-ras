@@ -294,16 +294,28 @@ def write_encrypted_vault(vault_path: Path, data: dict, password: str) -> None:
         plaintext_path.chmod(0o600)
 
         pass_file = _write_password_tempfile(password)
+        # Encrypt to a temp file in the same dir, then atomically swap it onto
+        # vault_path. This way the existing vault survives intact if encrypt
+        # fails — the old code unlinked vault_path BEFORE encrypt, so a failed
+        # encrypt destroyed the credentials with no replacement written.
+        encrypted_fd, encrypted_tmp = tempfile.mkstemp(
+            prefix="air-secrets-enc-", suffix=".yml", dir=vault_path.parent,
+        )
+        os.close(encrypted_fd)
+        encrypted_path = Path(encrypted_tmp)
+        # ansible-vault `encrypt --output` refuses to overwrite an existing
+        # file, so hand it a fresh (non-existent) name in the same filesystem.
+        encrypted_path.unlink()
         try:
-            if vault_path.exists():
-                vault_path.unlink()
             subprocess.run(
                 ["ansible-vault", "encrypt",
                  "--vault-password-file", str(pass_file),
-                 "--output", str(vault_path),
+                 "--output", str(encrypted_path),
                  str(plaintext_path)],
                 check=True, capture_output=True, text=True,
             )
+            encrypted_path.chmod(0o600)
+            os.replace(encrypted_path, vault_path)  # atomic; old vault kept until now
         except subprocess.CalledProcessError as exc:
             err(f"ansible-vault encrypt failed:\n{exc.stderr.strip()}")
             sys.exit(1)
@@ -312,6 +324,11 @@ def write_encrypted_vault(vault_path: Path, data: dict, password: str) -> None:
                 pass_file.unlink()
             except OSError:
                 pass
+            if encrypted_path.exists():
+                try:
+                    encrypted_path.unlink()
+                except OSError:
+                    pass
     finally:
         if plaintext_path.exists():
             plaintext_path.unlink()
@@ -371,10 +388,21 @@ def prompt_api_key() -> str:
 
 
 def prompt_username(current: str | None = None) -> str:
-    print("  For NGC Air 2.0 (air.nvidia.com), leave empty and press Enter.")
-    print("  For legacy Air instances, enter your email address.")
+    print("  NGC Air 2.0 authenticates with the API key alone — leave this")
+    print("  blank and press Enter. (Legacy Air has been retired.)")
     default = f" [{current}]" if current else ""
     val = input(f"  Air username (blank for NGC){default}: ").strip()
+    if not val and current is not None:
+        return current
+    return val
+
+
+def prompt_ngc_org(current: str | None = None) -> str:
+    print("  NGC organization id, sent as the Air API `nv-ngc-org` header.")
+    print("  OPTIONAL — leave blank unless your Air gateway requires it (the")
+    print("  current air-inside gateway accepts bearer-only requests).")
+    default = f" [{current}]" if current else ""
+    val = input(f"  NGC org (blank = none){default}: ").strip()
     if not val and current is not None:
         return current
     return val
@@ -429,6 +457,7 @@ def choose_fields_to_update(existing: dict) -> list[str]:
     print(f"    air_url:           {existing.get('air_url') or '(none)'}")
     print(f"    air_username:      {existing.get('air_username') or '(empty)'}")
     print(f"    air_ssh_key_path:  {existing.get('air_ssh_key_path') or '(none)'}")
+    print(f"    air_org:           {existing.get('air_org') or '(none)'}")
     print()
     print("  Which fields do you want to update?")
     print("    [1] All")
@@ -510,7 +539,12 @@ def run_interactive() -> int:
         banner("SSH Key")
         new_data["air_ssh_key_path"] = prompt_ssh_key(existing_data.get("air_ssh_key_path"))
 
-    for k in ("air_api_key", "air_url", "air_username", "air_ssh_key_path"):
+    # Optional NGC org (nv-ngc-org header). Blank preserves the existing value,
+    # so this is a no-op Enter on partial updates that don't touch it.
+    banner("NGC Org (optional)")
+    new_data["air_org"] = prompt_ngc_org(existing_data.get("air_org"))
+
+    for k in ("air_api_key", "air_url", "air_username", "air_ssh_key_path", "air_org"):
         new_data.setdefault(k, existing_data.get(k, ""))
 
     banner("Vault Password")
@@ -563,6 +597,7 @@ def run_non_interactive(args: argparse.Namespace) -> int:
         "air_url": (args.air_url or "").rstrip("/"),
         "air_username": args.username or "",
         "air_ssh_key_path": args.ssh_key,
+        "air_org": getattr(args, "org", "") or "",
     }
 
     write_encrypted_vault(vault_path, data, args.vault_password)
@@ -587,6 +622,7 @@ def main() -> int:
     ap.add_argument("--air-url", help=argparse.SUPPRESS)
     ap.add_argument("--username", help=argparse.SUPPRESS)
     ap.add_argument("--ssh-key", help=argparse.SUPPRESS)
+    ap.add_argument("--org", help=argparse.SUPPRESS)
     ap.add_argument("--vault-password", help=argparse.SUPPRESS)
     ap.add_argument("--save-password", action="store_true",
                     help=argparse.SUPPRESS)

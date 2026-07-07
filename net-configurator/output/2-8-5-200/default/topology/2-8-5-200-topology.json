@@ -43,14 +43,14 @@
                 "network_pci": {}
             },
             "cust-net-edge-01": {
-                "cpu": 1,
-                "memory": 2048,
+                "cpu": 4,
+                "memory": 4096,
                 "storage": 20,
                 "positioning": {
                     "x": 550,
                     "y": -275
                 },
-                "os": "cumulus-vx-5.15.1",
+                "os": "cumulus-vx-5.16.1",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -62,14 +62,14 @@
                 "network_pci": {}
             },
             "cust-net-edge-02": {
-                "cpu": 1,
-                "memory": 2048,
+                "cpu": 4,
+                "memory": 4096,
                 "storage": 20,
                 "positioning": {
                     "x": 1650,
                     "y": -275
                 },
-                "os": "cumulus-vx-5.15.1",
+                "os": "cumulus-vx-5.16.1",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -2654,9 +2654,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp3",
+                    "interface": "swp1",
                     "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:d7:78:6b",
+                    "mac": "48:b0:2d:9f:a2:f5",
                     "network_pci": null
                 }
             ],
@@ -2668,9 +2668,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp4",
-                    "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:be:5b:54",
+                    "interface": "swp1",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:0d:c7:0f",
                     "network_pci": null
                 }
             ],
@@ -2682,9 +2682,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp5",
+                    "interface": "swp2",
                     "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:be:6f:fc",
+                    "mac": "48:b0:2d:82:2b:b1",
                     "network_pci": null
                 }
             ],
@@ -2696,9 +2696,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp6",
-                    "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:c7:b3:fb",
+                    "interface": "swp2",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:f1:05:35",
                     "network_pci": null
                 }
             ],
@@ -2710,9 +2710,23 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp7",
+                    "interface": "swp3",
                     "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:cd:15:1c",
+                    "mac": "48:b0:2d:d7:78:6b",
+                    "network_pci": null
+                }
+            ],
+            [
+                {
+                    "interface": "swp3",
+                    "node": "cust-net-edge-02",
+                    "mac": "48:b0:2d:2a:26:d5",
+                    "network_pci": null
+                },
+                {
+                    "interface": "swp4",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:be:5b:54",
                     "network_pci": null
                 }
             ],
@@ -2733,9 +2747,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp1",
+                    "interface": "swp5",
                     "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:9f:a2:f5",
+                    "mac": "48:b0:2d:be:6f:fc",
                     "network_pci": null
                 }
             ],
@@ -2747,9 +2761,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp1",
+                    "interface": "swp4",
                     "node": "cust-net-edge-02",
-                    "mac": "48:b0:2d:0d:c7:0f",
+                    "mac": "48:b0:2d:73:d2:d6",
                     "network_pci": null
                 }
             ],
@@ -2770,9 +2784,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp2",
+                    "interface": "swp6",
                     "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:82:2b:b1",
+                    "mac": "48:b0:2d:c7:b3:fb",
                     "network_pci": null
                 }
             ],
@@ -2784,9 +2798,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp8",
+                    "interface": "swp7",
                     "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:61:79:07",
+                    "mac": "48:b0:2d:cd:15:1c",
                     "network_pci": null
                 }
             ],
@@ -2821,9 +2835,9 @@
                     "network_pci": null
                 },
                 {
-                    "interface": "swp9",
+                    "interface": "swp8",
                     "node": "cust-net-edge-01",
-                    "mac": "48:b0:2d:39:62:fc",
+                    "mac": "48:b0:2d:61:79:07",
                     "network_pci": null
                 }
             ],
@@ -3981,6 +3995,15 @@
             ],
             [
                 {
+                    "interface": "swp9",
+                    "node": "cust-net-edge-01",
+                    "mac": "48:b0:2d:39:62:fc",
+                    "network_pci": null
+                },
+                "unconnected"
+            ],
+            [
+                {
                     "interface": "swp10",
                     "node": "cust-net-edge-01",
                     "mac": "48:b0:2d:dd:34:7c",
@@ -4209,33 +4232,6 @@
                     "interface": "eth0",
                     "node": "cust-net-edge-01",
                     "mac": "48:b0:2d:cc:ba:11",
-                    "network_pci": null
-                },
-                "unconnected"
-            ],
-            [
-                {
-                    "interface": "swp2",
-                    "node": "cust-net-edge-02",
-                    "mac": "48:b0:2d:f1:05:35",
-                    "network_pci": null
-                },
-                "unconnected"
-            ],
-            [
-                {
-                    "interface": "swp3",
-                    "node": "cust-net-edge-02",
-                    "mac": "48:b0:2d:2a:26:d5",
-                    "network_pci": null
-                },
-                "unconnected"
-            ],
-            [
-                {
-                    "interface": "swp4",
-                    "node": "cust-net-edge-02",
-                    "mac": "48:b0:2d:73:d2:d6",
                     "network_pci": null
                 },
                 "unconnected"

@@ -5,7 +5,8 @@
 architecture: 2-8-9-400
 scalable_units: 8
 nodes_per_su: 4
-tiers: 1
+ns_tiers: 1
+ew_tiers: 1
 convergence: full
 gpu_planes: 1
 oob_uplink_mode: l3
@@ -18,18 +19,24 @@ common:
   oob_network: 172.16.177.0/24
   oob_gateway: 172.16.177.1
   oob_vlan: 200
+  oob_vrf: OOB
   cpu_network: 172.16.178.0/24
   cpu_gateway: 172.16.178.1
   cpu_vlan: 300
+  cpu_vrf: INBAND
   support_network: 172.16.179.0/24
   support_gateway: 172.16.179.1
   support_vlan: 400
+  support_vrf: INBAND
   storage_network: 172.16.180.0/24
   storage_gateway: 172.16.180.1
   storage_vlan: 500
+  storage_vrf: INBAND
   gpu_network: 192.168.110.0/24
   gpu_gateway: 192.168.110.1
   gpu_vlan: 900
+  gpu_vrf: GPU
+  storage_vlan_tagged: false
   pre_login_message: '##############################################################################
 
     #      You are accessing an Information System (IS) that is provided for authorized
@@ -314,7 +321,7 @@ ztp_interfaces:
 - name: eth1
   ip: 172.20.0.77
   network: 172.20.0.0/24
-  gateway: 172.20.0.1
+  gateway: 172.20.0.254
   purpose: air-mgmt
   dnsmasq_listen: true
 ztp_allow_subnets:

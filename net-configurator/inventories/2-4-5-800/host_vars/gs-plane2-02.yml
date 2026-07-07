@@ -1,0 +1,11 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
+# ============================================================================
+# E/W Plane 2 Spine 2 - gs-plane2-02
+# ============================================================================
+hostname: gs-plane2-02-ipp6
+lo_ip: 10.1.2.6/32
+router_id: 10.1.2.6
+asn: 4200102100

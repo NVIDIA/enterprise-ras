@@ -84,11 +84,21 @@ function load_configuration() {
     # Install LDAP packages if needed (before applying config)
     install_ldap_packages
     
-    # Source the CLI commands to load into pending config
+    # Source the CLI commands to load into pending config.
+    # Disable xtrace around the source: with 'set -x' (line 6) active, bash
+    # echoes every sourced command -- including secret-bearing NVUE lines such
+    # as 'nv set system aaa ldap secret ...' and the cumulus user password --
+    # to stderr, which exec(line 14) redirects into /var/log/autoprovision.
+    # Re-enable 'set -x' inside each branch; the ERR trap (line 17) is
+    # unaffected by 'set +x'. Source output goes only to config-load.log (not
+    # the journal); the apply step below still tees its errors normally since
+    # 'nv config apply' takes no secret arguments.
     log "Loading CLI configuration..."
-    if source /tmp/${hostname}-config.sh 2>&1 | tee /tmp/config-load.log; then
+    set +x
+    if source /tmp/${hostname}-config.sh > /tmp/config-load.log 2>&1; then
+        set -x
         log "✅ CLI configuration loaded successfully"
-        
+
         # Apply the configuration
         log "Applying configuration..."
         if nv config apply -y 2>&1 | tee /tmp/config-apply.log; then
@@ -101,8 +111,11 @@ function load_configuration() {
             exit 1
         fi
     else
+        set -x
         log "ERROR: Failed to load CLI configuration"
-        cat /tmp/config-load.log
+        # config-load.log may echo a failed secret-bearing command, so do not
+        # cat it back into the (logged) journal — point the operator at it.
+        log "See /tmp/config-load.log on the switch for details."
         exit 1
     fi
 }

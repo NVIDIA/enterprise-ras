@@ -319,6 +319,13 @@ route_map:
         value: ERA_PREFIXES
       - type: type
         value: ipv4
+- id: WEIGHTED_ECMP
+  rule:
+  - id: '10'
+    action: permit
+    set:
+      - type: ext-community-bw
+        value: multipaths
 
 # ============================================================================
 # VRF Configuration

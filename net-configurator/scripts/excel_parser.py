@@ -20,19 +20,61 @@ Usage:
 
 import ipaddress
 import openpyxl
+import hashlib
 import re
+import sys
 import yaml
+import zipfile
 from collections import defaultdict
 from pathlib import Path
 
 from utils import (
     generate_mac,
+    reset_mac_registry,
     classify_node as _classify_node,
     is_switch,
     build_interface_map,
     build_nic_destinations,
     plane_for_switch,
 )
+from oob_reserved import AIR_MGMT_RESERVED_OCTETS
+
+# RFC1123-ish: node name used as a host_vars filename + a bare INI hosts token.
+_INV_HOSTNAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
+
+
+def assert_valid_inv_hostname(name):
+    """Reject node names that aren't safe as a filesystem path component / INI
+    inventory token (security review #10). This is a hard gate independent of
+    validate_excel, which `--skip-validate` bypasses on the documented
+    switch-ztp-deploy/import paths. Returns the name on success.
+    """
+    if not _INV_HOSTNAME_RE.fullmatch(name or ''):
+        raise SystemExit(
+            f"❌ Invalid node name {name!r} (Nodes sheet 'Name'): only letters, "
+            f"digits, dot, hyphen, and underscore are allowed, starting with a "
+            f"letter or digit. Path separators, newlines, and shell/INI "
+            f"metacharacters are rejected — this value becomes a file path and an "
+            f"Ansible inventory entry. Fix the Name cell."
+        )
+    return name
+
+
+def load_workbook_safe(path, **kwargs):
+    """openpyxl.load_workbook wrapper that turns a corrupt/non-xlsx file into a
+    friendly SystemExit instead of an uncaught traceback (issue #7)."""
+    try:
+        return openpyxl.load_workbook(path, **kwargs)
+    except (openpyxl.utils.exceptions.InvalidFileException,
+            zipfile.BadZipFile, KeyError, OSError) as exc:
+        raise SystemExit(
+            f"❌ Could not open Excel file: {path}\n"
+            f"   The file appears to be corrupt, not a valid .xlsx workbook, "
+            f"or unreadable.\n"
+            f"   ({type(exc).__name__}: {exc})\n"
+            f"   → Re-export it from the ERA template and try again."
+        )
+
 
 # Default disabled interfaces (fallback if not in Settings)
 DEFAULT_DISABLED_INTERFACES = {
@@ -43,6 +85,32 @@ DEFAULT_DISABLED_INTERFACES = {
 
 # Loopback network base
 LOOPBACK_BASE = '172.16.176'
+
+# Per-tier BGP ASN allocation: one base ASN (Settings.bgp_asn) + a fixed,
+# NON-OVERLAPPING offset block per switch tier, so tiers never share an ASN.
+# Cores/CSL leaves use the base itself (offset 0). Keep these stable and
+# disjoint — changing an offset silently renumbers already-shipped arches.
+#   core/csl   : base + 0
+#   oob        : base + OOB_ASN_OFFSET   + oob_idx    (1..N)
+#   csl-spine  : base + CSL_SPINE_ASN_OFFSET + spine_idx
+#   gsl leaves : base + 1100 + (plane-1)*GSL_PLANE_ASN_STRIDE   (per-plane)
+#   gsl-spine  : base + GSL_SPINE_ASN_OFFSET + (plane-1)*GSL_PLANE_ASN_STRIDE
+#                (= leaf-1 per plane → eBGP, no collision; reproduces the old
+#                 hardcoded 4200101100/4200102100 when base is 4200100001)
+OOB_ASN_OFFSET = 0          # OOB sits just above the base (base+1, base+2, …)
+CSL_LEAF_ASN_OFFSET = 400   # dedicated N/S leaves (cl) get UNIQUE per-leaf ASNs in
+                            # a block clear of OOB (base+1..N) and the spine block
+                            # (base+500+). Only applied when ns_tiers > 1 (a real
+                            # cl/cs spine-leaf): an eBGP Clos underlay needs distinct
+                            # leaf ASNs so routes transit cs without an AS-path loop.
+                            # Converged csl (ns_tiers=1) keeps the shared base ASN
+                            # (iBGP internal-isl) — golden, unchanged. See ADR-0005.
+CSL_SPINE_ASN_OFFSET = 500  # dedicated N/S spines get their own block, clear of OOB
+GSL_PLANE_ASN_STRIDE = 1000  # ASN spacing between GPU planes (leaf+spine share it)
+GSL_SPINE_ASN_OFFSET = 1099  # dedicated E/W (GPU) spines, one below the per-plane leaf
+GSL_LEAF_ASN_OFFSET = 1100   # GPU leaves: base + 1100 + (plane-1)*STRIDE + (leaf_idx-1)
+                             # — UNIQUE per leaf (eBGP Clos underlay needs distinct
+                             #   leaf ASNs; spines share GSL_SPINE_ASN_OFFSET per plane)
 
 # Role-based host octet ranges for management IP assignment.
 # Ranges are spaced to avoid overlap even with large compute counts (up to ~40 nodes).
@@ -92,6 +160,11 @@ def ports_to_range_string(port_nums):
 CANONICAL_ROLES = frozenset({
     'gpu', 'support', 'storage', 'core', 'csl',
     'gsl', 'gsl-plane1', 'gsl-plane2',
+    # Leaf/spine taxonomy: cl=compute leaf, cs=compute spine,
+    # gl=GPU leaf, gs=GPU spine. The branch-only legacy spine names
+    # csl-spine / gsl-spine-plane* have been purged — no arch references
+    # them anymore.
+    'cl', 'cs', 'gl-plane1', 'gl-plane2', 'gs-plane1', 'gs-plane2',
     'oob-switch', 'oob-server', 'dhcp', 'edge', 'air-oob',
     'ext-storage',
     # L3 OOB Ubuntu trio — singleton Air-only nodes. Each is its own
@@ -113,6 +186,14 @@ _CANONICAL_TO_INTERNAL = {
     'gsl':         'gsl',
     'gsl-plane1':  'gsl',
     'gsl-plane2':  'gsl',
+    # Leaf/spine taxonomy — same internal classification as the
+    # converged names they correspond to.
+    'cl':          'csl',
+    'cs':          'csl-spine',
+    'gl-plane1':   'gsl',
+    'gl-plane2':   'gsl',
+    'gs-plane1':   'gsl-spine',
+    'gs-plane2':   'gsl-spine',
     'oob-switch':  'switch',
     'oob-server':  'infra',
     'dhcp':        'infra',
@@ -144,6 +225,13 @@ _CANONICAL_TO_PATTERN = {
     'gsl':         'gsl',
     'gsl-plane1':  'gsl-plane1',
     'gsl-plane2':  'gsl-plane2',
+    # Leaf/spine taxonomy — each maps to its own pattern string.
+    'cl':          'cl',
+    'cs':          'cs',
+    'gl-plane1':   'gl-plane1',
+    'gl-plane2':   'gl-plane2',
+    'gs-plane1':   'gs-plane1',
+    'gs-plane2':   'gs-plane2',
     'oob-switch':  'oob-switch',
     'oob-server':  'oob-server',
     'dhcp':        'dhcp',
@@ -169,6 +257,12 @@ def canonical_category(function_value, name=None):
     promoted to 'gsl-plane1' / 'gsl-plane2' when `name` carries the
     plane suffix; otherwise it stays bare.
     """
+    # An explicit Function value that is already a canonical role wins as-is.
+    # New roles (cl / cs / gl-plane* / gs-plane*) and retained legacy roles
+    # (csl / gsl-plane*) each resolve to
+    # themselves. Adopting the new taxonomy for an arch is done by declaring
+    # the new Function value — NOT by silently rewriting the old one — so
+    # existing archs stay byte-identical until they opt in.
     v = (function_value or '').strip().lower()
     if v in CANONICAL_ROLES:
         # Promote bare 'gsl' if the hostname tells us which plane it is.
@@ -181,17 +275,29 @@ def canonical_category(function_value, name=None):
         return v
     # Legacy fallback: classify by hostname pattern. Try `name` first
     # (more specific), then `function_value` (which often holds the
-    # hostname on legacy Excels).
+    # hostname on legacy Excels). The hostname fallback returns the retained
+    # converged role names so existing archs (blank Function) stay
+    # byte-identical; spine hostnames now resolve to the new cs / gs roles.
     target = (name or function_value or '').strip().lower()
+    if target.startswith('gsl-spine-plane1') or target.startswith('gs-plane1'):
+        return 'gs-plane1'
+    if target.startswith('gsl-spine-plane2') or target.startswith('gs-plane2'):
+        return 'gs-plane2'
+    if target.startswith('gl-plane1'):
+        return 'gl-plane1'
+    if target.startswith('gl-plane2'):
+        return 'gl-plane2'
     if target.startswith('gsl-plane1'):
         return 'gsl-plane1'
     if target.startswith('gsl-plane2'):
         return 'gsl-plane2'
-    if target.startswith('gsl-'):
+    if target.startswith('gsl-') or target.startswith('gl-') or target.startswith('gs-'):
         return 'gsl'
     if target.startswith('core-'):
         return 'core'
-    if target.startswith('csl-'):
+    if target.startswith('csl-spine-') or target.startswith('cs-'):
+        return 'cs'
+    if target.startswith('csl-') or target.startswith('cl-'):
         return 'csl'
     if target.startswith('oob-switch'):
         return 'oob-switch'
@@ -533,10 +639,12 @@ def build_devices(nodes, vlans, mgmt_subnets, node_oob_mapping=None, wiremap_row
         - storage: bond_ip1/bond_ip2 (storage subnet)
         - support: bond_ip1/bond_ip2 (support subnet)
 
-    When node_oob_mapping is provided (from Wire Map 'Air - Management' rows),
-    eth0_ip is derived from the OOB switch's subnet rather than the Nodes tab.
-    This ensures each node gets an IP on the correct OOB subnet matching the
-    topology (source of truth pattern).
+    eth0_ip always comes from the Nodes-tab Mgmt IP cell (the spreadsheet is the
+    source of truth for the deployed management IP; see the build loop below
+    where ``eth0_ip = node.get('mgmt_ip', '')``). The node_oob_mapping argument
+    (from Wire Map 'Air - Management' rows) is accepted for backward
+    compatibility but is NOT used here to derive eth0_ip — an earlier design
+    derived the IP from the OOB switch's subnet; the live code does not.
 
     MACs are auto-generated deterministically (matching topology_generator.py)
     unless already present in the Excel Nodes tab.
@@ -575,7 +683,7 @@ def build_devices(nodes, vlans, mgmt_subnets, node_oob_mapping=None, wiremap_row
             key = vlan['name'].lower()
             subnet_map[key] = vlan['subnet']
             # Add short aliases for multi-word VLAN names
-            if 'cpu' in key or 'in-band' in key:
+            if 'cpu' in key or 'in-band' in key or 'inband' in key:
                 subnet_map['cpu'] = vlan['subnet']
             if 'gpu' in key:
                 subnet_map['gpu'] = vlan['subnet']
@@ -861,12 +969,13 @@ def build_devices(nodes, vlans, mgmt_subnets, node_oob_mapping=None, wiremap_row
                 entry['bond_ip2'] = f"{storage_base}.{host_offset + 1}/24"
             role_index['storage'] += 1
 
-        elif role in ('support', 'k8s', 'bcme') and support_base:
+        elif role in ('support', 'k8s', 'bcme') and (support_base or cpu_base):
+            base = support_base or cpu_base
             idx = role_index['support']
             host_offset = 101 + 2 * idx
             if host_offset + 1 <= 254:
-                entry['bond_ip1'] = f"{support_base}.{host_offset}/24"
-                entry['bond_ip2'] = f"{support_base}.{host_offset + 1}/24"
+                entry['bond_ip1'] = f"{base}.{host_offset}/24"
+                entry['bond_ip2'] = f"{base}.{host_offset + 1}/24"
             role_index['support'] += 1
 
         devices[name] = entry
@@ -877,7 +986,7 @@ def build_devices(nodes, vlans, mgmt_subnets, node_oob_mapping=None, wiremap_row
     return devices
 
 
-def parse_oob_switch_configs(ws, ws_air_only=None):
+def parse_oob_switch_configs(ws, ws_air_only=None, nodes_function_map=None):
     """Parse Wire Map (and optionally Air_Only) sheet to derive OOB switch port configs.
 
     Wire Map columns (0-based):
@@ -894,8 +1003,9 @@ def parse_oob_switch_configs(ws, ws_air_only=None):
     Logic:
       - Rows where Switch Role is 'oob-switch-*' and Switch Port is a plain swpN
         (no sub-port) are OOB switch port assignments.
-      - If the System Role on that row starts with 'core-', the port is an uplink
-        to a core switch → spine_bond_members.
+      - Uplink detection uses two independent signals (either is sufficient):
+        1. Network Profile is ISL / L3 / OOB Uplink (profile-first, hostname-agnostic)
+        2. Peer Function resolves to core/csl (Function-first via nodes_function_map)
       - All other ports are access ports serving BMC/IPMI connections.
       - Air_Only rows (dhcp-oob, oob-server-01, dhcp-edge) are always access ports.
       - The port on each OOB switch connected to dhcp-oob is tracked as dhcp_oob_port
@@ -909,9 +1019,12 @@ def parse_oob_switch_configs(ws, ws_air_only=None):
           'dhcp_oob_port': 'swp44',   # port connected to dhcp-oob (ZTP port)
       }}
     """
+    nfm = nodes_function_map or {}
     oob_access = defaultdict(set)
     oob_uplink = defaultdict(set)
     dhcp_oob_ports: dict = {}  # {oob_switch_function_name: port_str}
+
+    _UPLINK_PROFILES = frozenset({'isl', 'l3', 'oob uplink', 'sn2201 uplink'})
 
     col_map = build_wiremap_column_map(ws, sheet_kind='wiremap')
     for i, row in enumerate(ws.iter_rows(values_only=True), 1):
@@ -924,12 +1037,14 @@ def parse_oob_switch_configs(ws, ws_air_only=None):
         switch_role = _wm_cell(row, col_map, 'switch_role')
         switch_name = _wm_cell(row, col_map, 'switch_name') or switch_role
         switch_port = _wm_cell(row, col_map, 'switch_port')
+        net_prof = (_wm_cell(row, col_map, 'network_profile') or '').strip().lower()
         is_air_visible = (display_raw == 'yes')
 
-        # Canonicalize category checks so we accept both hostname-as-role
-        # (legacy) and canonical role strings ('core', 'csl', 'oob-switch').
-        sys_cat = canonical_category(system_role, system_name)
-        sw_cat  = canonical_category(switch_role, switch_name)
+        # Resolve via Nodes-tab Function map first, then hostname fallback.
+        sys_func = nfm.get(system_name, system_role)
+        sw_func  = nfm.get(switch_name, switch_role)
+        sys_cat = canonical_category(sys_func, system_name)
+        sw_cat  = canonical_category(sw_func, switch_name)
 
         # Branch 1: OOB switch is the right-hand side (typical case — node →
         # oob-switch). Captures access ports and dhcp-oob port reservations.
@@ -945,24 +1060,15 @@ def parse_oob_switch_configs(ws, ws_air_only=None):
             m = re.match(r'^swp(\d+)$', switch_port)
             if m:
                 port_num = int(m.group(1))
-                # Converged-fabric uplinks: peer is core (collapsed) or csl
-                # (dedicated_gpu). swpN on peer = uplink; eth0 = mgmt access.
-                if sys_cat in ('core', 'csl') and nic_port != 'eth0':
-                    # Spine_bond uplinks need the corresponding interface to
-                    # exist on the simulated switch. If the row is Display=No,
-                    # the topology generator drops the link, so the port
-                    # doesn't exist in Air → ifreload-nvue rejects the bond.
-                    # Only register uplinks that are actually in Air.
+                # Uplink detection: Network Profile OR peer role (Function-first).
+                is_uplink = (
+                    (net_prof in _UPLINK_PROFILES) or
+                    (sys_cat in ('core', 'csl', 'cl') and nic_port != 'eth0')
+                )
+                if is_uplink:
                     if is_air_visible:
                         oob_uplink[switch_name].add(port_num)
                 elif is_air_visible:
-                    # Same Display=Yes filter as the uplink branch. We use
-                    # access_nums to compute the air-oob-switch backdoor port
-                    # (first unused in 1..52). The topology generator filters
-                    # Display=No rows when picking that port, so we must too
-                    # — otherwise parser and topology disagree and the NVUE
-                    # config references a port (e.g. swp50) that doesn't
-                    # exist in Air, and the whole apply rolls back.
                     oob_access[switch_name].add(port_num)
 
         # Branch 2: OOB switch is the LEFT side (oob → core/csl uplinks). For
@@ -970,9 +1076,11 @@ def parse_oob_switch_configs(ws, ws_air_only=None):
         # OEM wiremap layout where OOB→CSL uplinks are written from the OOB
         # perspective.
         elif sys_cat == 'oob-switch' and nic_port:
-            if sw_cat in ('core', 'csl'):
-                # Same Display=Yes filter as Branch 1: only bond ports that
-                # actually exist in the Air topology.
+            is_uplink = (
+                (net_prof in _UPLINK_PROFILES) or
+                sw_cat in ('core', 'csl', 'cl')
+            )
+            if is_uplink:
                 if is_air_visible:
                     m = re.match(r'^swp(\d+)$', nic_port)
                     if m:
@@ -1188,6 +1296,8 @@ def _classify_node_profile(net_prof):
         return 'cpu'
     if 'gpu' in p:
         return 'gpu'
+    if 'oob' in p and 'uplink' in p:
+        return 'oob'
     if 'support' in p:
         return 'support'
     if 'storage' in p:
@@ -1214,7 +1324,7 @@ def _classify_core_profile(net_prof, sw_roles):
     """Return role type for a core-as-system Wire Map profile."""
     p = net_prof.lower()
     sw = ' '.join(r.lower() for r in sw_roles)
-    if 'isl' in p:
+    if 'isl' in p or 'peer' in p:
         return 'isl'
     # OOB uplinks: "OOB Uplink", "OOB...Uplink", "SN2201 Uplink", or uplink to oob-switch
     if ('oob' in p and 'uplink' in p) or ('sn2201' in p) or ('uplink' in p and 'oob-switch' in sw):
@@ -1257,6 +1367,163 @@ def _expand_subport_names(iface_def):
     return names
 
 
+def _supplement_vrf_config_from_excel(core_vars, vrfs, dhcp_relay_table, vlans):
+    """Append vrf_config entries for Excel-declared VRFs that the source
+    inventory omitted.
+
+    Level-1 of "Excel as source of truth" for VRF declarations. The source
+    inventory's vrf_config remains authoritative for whatever it declares
+    (preserving byte-identity on existing archs), and this function fills
+    the gaps that newer archs leave behind. A VRF gets a supplemental entry
+    when the Excel declares it AND something on this switch references it
+    (a VLAN's VRF assignment OR a DHCP Relay scope). Default VRF and GPU
+    VRF are skipped — they're emitted through other paths.
+
+    The generated entry mirrors the established ERA pattern: ipv4_unicast
+    + l2vpn_evpn enables, redistribute_connected, route_export_to_evpn,
+    and a route_import_from_vrf clause that imports from every other VRF
+    that carries a DHCP Relay scope (OOB ↔ EXIT ↔ INBAND topology). The
+    referenced <VRF>_FILTER route-maps must exist in the rendered
+    inventory — they do, because the source-inventory csl.yml carries
+    them as the ERA standard policy template.
+
+    Level-2 TODO (tracked in docs/internal/TODO-audit-findings.md):
+    move route_map / community_list / peer_groups generation into the
+    parser too so the source inventory can be retired entirely.
+    """
+    if not vrfs:
+        return
+    existing = core_vars.setdefault('vrf_config', [])
+    if not isinstance(existing, list):
+        return
+    existing_ids = {e.get('id') for e in existing if isinstance(e, dict)}
+
+    referenced = set()
+    for v in (vlans or []):
+        vrf = (v.get('vrf') or '').strip().upper()
+        if vrf:
+            referenced.add(vrf)
+    relay_vrfs = set()
+    for entry in (dhcp_relay_table or []):
+        vrf = (entry.get('vrf') or '').strip().upper()
+        if vrf:
+            relay_vrfs.add(vrf)
+            referenced.add(vrf)
+
+    for vrf_name, vrf_data in vrfs.items():
+        vrf_id = str(vrf_name).strip().upper()
+        # STORAGE is emitted via per-host vrf_config_extra by the
+        # external-storage-uplink path (`_build_storage_uplink_host_vars`
+        # near line 3819). Skipping here avoids a duplicate `nv set vrf
+        # STORAGE ...` block on archs that already use that path.
+        if vrf_id in ('', 'DEFAULT', 'GPU', 'STORAGE'):
+            continue
+        if vrf_id in existing_ids:
+            continue
+        if vrf_id not in referenced:
+            continue
+
+        l3_vni = vrf_data.get('l3_vni')
+        l3_vlan = vrf_data.get('vlan')
+        if not l3_vni or not l3_vlan:
+            continue
+
+        ipv4_af = {
+            'enable': 'on',
+            'redistribute_connected': 'on',
+            'route_export_to_evpn': 'on',
+        }
+        if vrf_id in relay_vrfs:
+            peers = sorted(relay_vrfs - {vrf_id})
+            if peers:
+                ipv4_af['route_import_from_vrf'] = {
+                    'enable': 'on',
+                    'list': peers,
+                    'route_map': f'{vrf_id}_FILTER',
+                }
+        entry = {
+            'id': vrf_id,
+            'vlan': int(l3_vlan) if str(l3_vlan).isdigit() else l3_vlan,
+            'vni': str(l3_vni),
+            'route_export': True,
+            'bgp': {
+                'address_family': {
+                    'ipv4_unicast': ipv4_af,
+                    'l2vpn_evpn': {'enable': 'on'},
+                },
+            },
+        }
+
+        # If this VRF terminates an external eBGP session — today only EXIT
+        # carries customer-net traffic via the Edge Uplink port profile —
+        # stitch in the underlay-esl-external peer-group so the L3 uplink
+        # ports actually peer. `_sync_edge_vrf_neighbors` (called from the
+        # same `_apply_oob_l3_uplink_mode` neighborhood) will overwrite the
+        # `interfaces` list with the Excel-driven edge_interfaces values.
+        # If a future arch adds a second external-peering VRF, generalize
+        # by detecting "Port Profile mode=L3 + vrf=<this>" from the Excel
+        # profile_config rather than hard-coding EXIT.
+        # Only seed the external eBGP neighbor when `edge_interfaces`
+        # actually expands to at least one subport name. If `ports: []`
+        # made it through but `_sync_edge_vrf_neighbors` early-returns on
+        # empty subports, we'd leave an `interfaces: []` placeholder that
+        # renders as a malformed `nv set vrf EXIT router bgp neighbor`
+        # block with zero peers.
+        if (vrf_id == 'EXIT'
+                and core_vars.get('edge_interfaces')
+                and _expand_subport_names(core_vars['edge_interfaces'])):
+            entry['bgp']['neighbors'] = [{
+                'interfaces': [],
+                'peer_group': 'underlay-esl-external',
+                'type': 'unnumbered',
+            }]
+            entry['bgp']['peer_groups'] = [{
+                'id': 'underlay-esl-external',
+                'remote_as': 'external',
+                'address_family': {
+                    'ipv4_unicast': {
+                        'enable': 'on',
+                        'policy': {
+                            'outbound_route_map': 'OUTBOUND_ERA_PREFIXES',
+                        },
+                    },
+                },
+            }]
+
+        existing.append(entry)
+        existing_ids.add(vrf_id)
+
+
+def _sync_edge_vrf_neighbors(core_vars):
+    """Keep inherited EXIT VRF neighbors aligned with Excel edge ports.
+
+    Source inventory group_vars carry the routing policy and peer-group
+    details, but their neighbor interface lists are tied to the reference
+    workbook. When the generated XLSX changes edge ports, the generated
+    edge_interfaces must be authoritative.
+    """
+    edge_interfaces = core_vars.get('edge_interfaces')
+    vrf_config = core_vars.get('vrf_config')
+    if not edge_interfaces or not isinstance(vrf_config, list):
+        return
+
+    edge_subports = _expand_subport_names(edge_interfaces)
+    if not edge_subports:
+        return
+
+    for vrf in vrf_config:
+        if not isinstance(vrf, dict):
+            continue
+        bgp = vrf.get('bgp')
+        if not isinstance(bgp, dict):
+            continue
+        for neighbor in bgp.get('neighbors') or []:
+            if not isinstance(neighbor, dict):
+                continue
+            if neighbor.get('peer_group') == 'underlay-esl-external':
+                neighbor['interfaces'] = list(edge_subports)
+
+
 def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=None,
                            vlans=None, oob_uplink_mode='l3'):
     """Derive core switch port configuration from the Wire Map sheet.
@@ -1293,9 +1560,12 @@ def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=Non
     # Both empty when not in the respective mode.
     gpu_rail_vlan_ids: dict = {}
     gpu_rail_plane_vlan_ids: dict = {}
+    oob_vlan_id = None
     if vlans:
         for vlan in vlans:
             name = (vlan.get('name') or '').lower()
+            if oob_vlan_id is None and name.startswith('oob') and vlan.get('id'):
+                oob_vlan_id = vlan['id']
             m_rp = re.match(r'^gpu_rail(\d+)_plane(\d+)$', name)
             if m_rp and vlan.get('id'):
                 gpu_rail_plane_vlan_ids[(int(m_rp.group(1)), int(m_rp.group(2)))] = vlan['id']
@@ -1372,6 +1642,9 @@ def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=Non
     node_profiles = defaultdict(lambda: defaultdict(set))
     # core_ports[prof] = [(base_port, subport, sw_role), ...]
     core_ports = defaultdict(list)
+    # role_core_entries also accepts switch-owned direct-interface rows that
+    # arrive with the external peer on side A and the core/CSL switch on side B.
+    role_core_entries = defaultdict(list)  # role_type→[(base, sub, sw_role)]
     disabled_ports = []
 
     wm_col_map = build_wiremap_column_map(ws_wiremap, sheet_kind='wiremap')
@@ -1403,7 +1676,7 @@ def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=Non
         # identical in shape, so we treat the first csl the same way as
         # the first core. Detect "first-of-its-kind" via index extraction so
         # hostname-as-role legacy AND canonical-with-arbitrary-name both work.
-        if sys_cat in ('core', 'csl') and extract_role_index(sys_name) == 1:
+        if sys_cat in ('core', 'csl', 'cl') and extract_role_index(sys_name) == 1:
             # Core/CSL is the "system" side — nic_port is the switch's own port
             prof_lower = net_prof.lower()
             if 'disabled' in prof_lower or 'neighbor' in prof_lower:
@@ -1417,8 +1690,30 @@ def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=Non
                 if m:
                     core_ports[net_prof].append((int(m.group(1)), int(m.group(2)), sw_role))
 
-        elif sys_cat not in ('core', 'csl') and sw_cat in ('core', 'csl'):
-            # Node/server connecting to core OR csl switch
+        elif sys_cat not in ('core', 'csl', 'cl') and sw_cat in ('core', 'csl', 'cl'):
+            # Node/server connecting to core OR csl switch. L3 uplink profiles
+            # (edge/OOB/storage-uplink) are switch-owned direct interfaces even
+            # when authored with the external device on side A and the switch on
+            # side B, so bucket those into the same path as core-as-system rows.
+            core_rt = _classify_core_profile(net_prof, [sys_role, sys_name])
+            prof = _profile_for_role(core_rt) if core_rt else {}
+            prof_mode = str(prof.get('mode') or '').strip().lower()
+            direct_l3 = (
+                core_rt == 'edge'
+                or (core_rt == 'oob' and oob_uplink_mode == 'l3')
+                or (core_rt == 'storage_uplink' and prof_mode == 'l3')
+            )
+            if direct_l3:
+                m = re.match(r'^swp(\d+)s(\d+)$', sw_port)
+                if m:
+                    role_core_entries[core_rt].append((int(m.group(1)), int(m.group(2)), sw_role))
+                    continue
+                m = re.match(r'^swp(\d+)$', sw_port)
+                if m:
+                    role_core_entries[core_rt].append((int(m.group(1)), 0, sw_role))
+                    continue
+
+            # Regular node/server bond into core/CSL.
             m = re.match(r'^swp(\d+)s(\d+)$', sw_port)
             if m:
                 node_profiles[net_prof][int(m.group(1))].add(int(m.group(2)))
@@ -1459,7 +1754,6 @@ def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=Non
                 role_node_ports[rt][base] |= subs
 
     # core side: merge entries per role type
-    role_core_entries = defaultdict(list)  # role_type→[(base, sub, sw_role)]
     for prof, entries in core_ports.items():
         rt = _classify_core_profile(prof, [e[2] for e in entries])
         if rt:
@@ -1494,6 +1788,8 @@ def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=Non
         lanes = prof.get('lanes') or hw['lanes']
         base_ports = sorted(port_data.keys())
         vlan = prof.get('native')
+        if rt == 'oob' and not vlan:
+            vlan = oob_vlan_id or 200
 
         if rt == 'gpu':
             gpu_interfaces = {
@@ -1578,7 +1874,7 @@ def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=Non
                     'ports': base_ports,
                     'breakout': breakout,
                     'lanes': lanes,
-                    'vlan': prof.get('native'),
+                    'vlan': prof.get('native') or oob_vlan_id or 200,
                     'lacp_bypass': prof.get('lacp_bypass', False),
                     'port_overrides': overrides,
                     'bond_overrides': {},
@@ -1590,8 +1886,15 @@ def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=Non
                 'lanes': lanes,
                 'port_overrides': overrides,
             }
-            if prof.get('vrf'):
-                edge_cfg['vrf'] = prof['vrf']
+            # Edge uplinks are the EXIT-VRF customer-edge links — the EXIT VRF
+            # BGP peers them (see the EXIT neighbor seeding in
+            # _supplement_vrf_config_from_excel / _sync_edge_vrf_neighbors). For
+            # unnumbered eBGP the interface must live in the SAME VRF as the BGP
+            # instance, so an edge profile VRF of 'default' (a stale generator
+            # default) leaves every EXIT session idle. Force EXIT unless the
+            # profile names a real non-default VRF. (ADR-0007)
+            _edge_vrf = (prof.get('vrf') or '').strip()
+            edge_cfg['vrf'] = _edge_vrf if (_edge_vrf and _edge_vrf.lower() != 'default') else 'EXIT'
             edge_interfaces = edge_cfg
         elif rt == 'storage_uplink':
             # If any storage_uplink port is already claimed by another role
@@ -1694,6 +1997,131 @@ def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=Non
     return result
 
 
+def segment_esi_for_node(node_name):
+    """Globally-unique EVPN-MH segment local-id for a multihomed endpoint.
+
+    Per ADR-0004 (Option A): on the dedicated multi-leaf N/S tier (cl/cs), the
+    ESI is derived from the ENDPOINT identity — not the switch port — so a
+    multihomed node carries the same ESI on every leaf that homes it (port-based
+    `port*10+sub` would mismatch across leaves and collide across leaf-pairs).
+    The shared `es-sys-mac` (group var `mh_mac`) plus this per-node local-id form
+    the Type-3 ESI. Distinct numeric bands per endpoint class avoid collisions;
+    all values stay well within NVUE's local-id range (1..16777215).
+    """
+    n = (node_name or '').strip().lower()
+    m = re.match(r'su-(\d+)-node-(\d+)', n)
+    if m:
+        # compute: su*1000+node -> 1001..N, unique per (su, node)
+        return int(m.group(1)) * 1000 + int(m.group(2))
+    m = re.match(r'storage-(\d+)', n)
+    if m:
+        return 900000 + int(m.group(1))
+    m = re.match(r'support-(\d+)', n)
+    if m:
+        return 800000 + int(m.group(1))
+    m = re.match(r'gpu-(\d+)', n)   # flat gpu-NN naming fallback
+    if m:
+        return 100000 + int(m.group(1))
+    # Last-resort stable mapping for any other endpoint name.
+    return 700000 + (int(hashlib.sha1(n.encode()).hexdigest(), 16) % 90000)
+
+
+def build_per_switch_server_roles(ws_wiremap, aggregated_network_roles,
+                                  nodes_function_map=None,
+                                  dedicated_ns_tier=False):
+    """Per-switch `network_roles` for the dedicated N/S compute leaf tier (ADR-0004).
+
+    The shared group `network_roles` (group_vars/csl.yml) is the UNION of every
+    leaf's server sub-ports; at scale a leaf that does not cable a given sub-port
+    still gets a bond enslaving it -> ifreload rolls the whole apply back. And
+    the port-derived ESI mismatches across a node's leaves -> EVPN-MH breaks.
+
+    This returns {switch_name: network_roles} carrying, for each dedicated leaf,
+    ONLY the server-facing (cpu/storage/support) bonds it ACTUALLY cables, each
+    with a per-node ESI (`bond_overrides[<bond>].segment_id`). Role metadata
+    (breakout, vlan, lanes, lacp_bypass, vrf, ...) is copied from the aggregated
+    config (uniform per role). Written into host_vars, overriding the group
+    `network_roles`.
+
+    Gating is by ROLE, not name. A dedicated N/S leaf is named `cl-*` on the
+    newer split (2-4-5-800) but `csl-*` on archs that kept the converged
+    combined-spine-leaf naming (2-8-9-800) — the same role with a legacy name.
+    So `csl-*` is included **only** when `dedicated_ns_tier` is true
+    (`ns_tiers > 1`). A truly converged `csl-*` leaf (`ns_tiers == 1`, e.g. the
+    2-8-9-800 default) is EXCLUDED so it keeps the golden port-derived ESI /
+    shared config byte-identical. `cs-`/`gs-` spines carry no server bonds and
+    never match the role filter below regardless.
+    """
+    nodes_function_map = nodes_function_map or {}
+    aggregated_network_roles = aggregated_network_roles or {}
+    wm_col_map = build_wiremap_column_map(ws_wiremap, sheet_kind='wiremap')
+    # per_switch[sw][rt][base][sub] = connected node name
+    per_switch = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+    for row in range(2, ws_wiremap.max_row + 1):
+        sys_role = _wm_cell_ws(ws_wiremap, row, wm_col_map, 'system_role')
+        sys_name = _wm_cell_ws(ws_wiremap, row, wm_col_map, 'system_name') or sys_role
+        net_prof = _wm_cell_ws(ws_wiremap, row, wm_col_map, 'network_profile')
+        sw_name = _wm_cell_ws(ws_wiremap, row, wm_col_map, 'switch_name') \
+            or _wm_cell_ws(ws_wiremap, row, wm_col_map, 'switch_role')
+        sw_port = _wm_cell_ws(ws_wiremap, row, wm_col_map, 'switch_port')
+        nic_port = _wm_cell_ws(ws_wiremap, row, wm_col_map, 'nic_port') or ''
+        _nm = re.search(r'(\d+)\s*$', str(nic_port))
+        nic_num = int(_nm.group(1)) if _nm else 1
+        if not net_prof or not sw_name:
+            continue
+        # Dedicated N/S compute leaves only. `cl-*` always; `csl-*` only on a
+        # dedicated tier (ns_tiers > 1) where the csl name is legacy for a cl
+        # role. cs/gs spines carry no server bonds (filtered by rt below too).
+        _leaf_prefixes = ('cl-', 'csl-') if dedicated_ns_tier else ('cl-',)
+        if not sw_name.startswith(_leaf_prefixes):
+            continue
+        rt = _classify_node_profile(net_prof)
+        if rt not in ('cpu', 'storage', 'support'):
+            continue
+        m = re.match(r'^swp(\d+)s(\d+)$', sw_port)
+        if not m:
+            continue
+        base, sub = int(m.group(1)), int(m.group(2))
+        per_switch[sw_name][rt][base][sub] = (sys_name, nic_num)
+
+    result = {}
+    for sw, roles in per_switch.items():
+        network_roles = {}
+        for rt, ports in roles.items():
+            meta = aggregated_network_roles.get(rt)
+            if not meta:
+                continue
+            breakout = meta.get('breakout') or 4
+            base_ports = sorted(ports.keys())
+            port_overrides = {}
+            bond_overrides = {}
+            for base, submap in ports.items():
+                active = sorted(submap.keys())
+                if active != list(range(breakout)):
+                    port_overrides[base] = {'subports': active}
+                for sub, (node, nic_num) in submap.items():
+                    # A multi-bond node (e.g. storage with bond0+bond1) lands on
+                    # several sub-ports; keying the ESI on node name alone gave all
+                    # its bonds the SAME local-id -> identical ESI -> FRR rejects
+                    # ("ESI already exists on a different interface") -> 0 Ethernet
+                    # Segments -> EVPN-MH protodowns every server bond -> in-band dead.
+                    # Offset by the node-local bond index (derived from the NIC pair,
+                    # so it is identical on both leaves of the pair but distinct per
+                    # bond). bond_idx>0 only for multi-bond (storage) nodes, so
+                    # single-bond cpu/support/gpu ESIs are unchanged.
+                    bond_idx = (nic_num - 1) // 2
+                    bond_overrides[f'bond{base}s{sub}'] = {
+                        'segment_id': segment_esi_for_node(node) + bond_idx * 1_000_000,
+                    }
+            role_cfg = dict(meta)            # copy uniform role metadata
+            role_cfg['ports'] = base_ports
+            role_cfg['port_overrides'] = port_overrides
+            role_cfg['bond_overrides'] = bond_overrides
+            network_roles[rt] = role_cfg
+        result[sw] = network_roles
+    return result
+
+
 def parse_gsl_port_config(ws_wiremap, nodes_function_map=None):
     """Derive per-host port configuration for GSL switches from the Wire Map.
 
@@ -1723,15 +2151,19 @@ def parse_gsl_port_config(ws_wiremap, nodes_function_map=None):
     that doesn't exist in topology, so `nv config apply` won't roll back.
     """
     # host -> { 'gpu': {parent: set(subs)}, 'isl': {parent: set(subs)},
+    #           'rail': {rail_idx: {parent: set(subs)}},
     #           'rail_plane': {(rail_idx, plane_idx): {parent: set(subs)}} }
     by_host = defaultdict(lambda: {
         'gpu': defaultdict(set),
         'isl': defaultdict(set),
+        'rail': defaultdict(lambda: defaultdict(set)),
         'rail_plane': defaultdict(lambda: defaultdict(set)),
     })
 
     sub_re = re.compile(r'^swp(\d+)s(\d+)$')
     bare_re = re.compile(r'^swp(\d+)$')
+    rail_prof_re = re.compile(
+        r'^gpu[\s_-]*rail[\s_-]*(\d+)$', re.IGNORECASE)
     rail_plane_prof_re = re.compile(
         r'^gpu[\s_-]*rail[\s_-]*(\d+)[\s_-]*plane[\s_-]*(\d+)$', re.IGNORECASE)
 
@@ -1764,7 +2196,9 @@ def parse_gsl_port_config(ws_wiremap, nodes_function_map=None):
         # hostname-as-role and post-step-4b canonical role strings.
         sys_cat = canonical_category(sys_role, sys_name)
         sw_cat  = canonical_category(sw_role, sw_name)
-        is_gsl = lambda c: c in ('gsl-plane1', 'gsl-plane2', 'gsl')
+        is_gsl = lambda c: c in ('gsl-plane1', 'gsl-plane2', 'gsl',
+                              'gl-plane1', 'gl-plane2',
+                              'gs-plane1', 'gs-plane2')
 
         # Use sw_name / sys_name as the per-host keys — sw_role becomes
         # ambiguous after canonical conversion (every GSL on a plane shares
@@ -1786,14 +2220,20 @@ def parse_gsl_port_config(ws_wiremap, nodes_function_map=None):
                 sub_int = -1
                 by_host[sw_name]['gpu'][parent_int].add(sub_int)
 
-            # Per-rail-per-plane mode: also bucket this port under (rail, plane)
-            # so the host_var emission can produce one bridge-access line per
-            # (rail, plane) VLAN rather than lumping all GPU ports into one.
+            # Per-rail modes: also bucket this port by rail so host_vars can
+            # produce one bridge-access line per rail VLAN rather than lumping
+            # all GPU ports into the legacy vlan900 block.
             if parent_int is not None and net_prof:
-                m_rp = rail_plane_prof_re.match(net_prof.strip())
+                profile = net_prof.strip()
+                m_rp = rail_plane_prof_re.match(profile)
                 if m_rp:
                     rp_key = (int(m_rp.group(1)), int(m_rp.group(2)))
                     by_host[sw_name]['rail_plane'][rp_key][parent_int].add(sub_int)
+                else:
+                    m_r = rail_prof_re.match(profile)
+                    if m_r:
+                        rail_key = int(m_r.group(1))
+                        by_host[sw_name]['rail'][rail_key][parent_int].add(sub_int)
 
         # Case B: GSL→GSL (both sides gsl-plane*); ISL trunk
         elif is_gsl(sys_cat) and is_gsl(sw_cat):
@@ -1847,12 +2287,21 @@ def parse_gsl_port_config(ws_wiremap, nodes_function_map=None):
         if isl:
             isl_subports = []
             isl_breakout_parents = []
+            # A physical port may carry BOTH GPU and ISL traffic on different
+            # sub-ports (mixed-role port). The `link breakout` command must be
+            # emitted exactly once per port — so suppress ISL parents that
+            # already appear in gpu_breakout_parents to avoid the template
+            # rendering a duplicate `swpN` in the breakout list (NVUE last-wins,
+            # silently dropping one of the breakout intents).
+            already_gpu = set(host_cfg.get('gpu_breakout_parents', '').split(',')) \
+                          if host_cfg.get('gpu_breakout_parents') else set()
             for parent in sorted(isl.keys()):
                 subs = isl[parent]
                 if subs == {-1}:
                     isl_subports.append(f'swp{parent}')
                 else:
-                    isl_breakout_parents.append(f'swp{parent}')
+                    if f'swp{parent}' not in already_gpu:
+                        isl_breakout_parents.append(f'swp{parent}')
                     for s in sorted(x for x in subs if x != -1):
                         isl_subports.append(f'swp{parent}s{s}')
             if isl_subports:
@@ -1863,6 +2312,27 @@ def parse_gsl_port_config(ws_wiremap, nodes_function_map=None):
         # Per-(rail, plane) sub-port lists. One entry per (rail, plane)
         # touching this GSL switch, used by the template to emit one
         # bridge-access line per rail. Key shape: 'rail<R>_plane<P>'.
+        r = data['rail']
+        if r:
+            rail_subports = {}
+            for rail_idx, ports in r.items():
+                sub_strs = []
+                for parent in sorted(ports.keys()):
+                    subs = ports[parent]
+                    if subs == {-1}:
+                        sub_strs.append(f'swp{parent}')
+                    else:
+                        for s in sorted(x for x in subs if x != -1):
+                            sub_strs.append(f'swp{parent}s{s}')
+                if sub_strs:
+                    rail_subports[f'rail{rail_idx}'] = ','.join(sub_strs)
+            if rail_subports:
+                host_cfg['gpu_rail_subports'] = rail_subports
+
+        # Per-(rail, plane) sub-port lists. One entry per (rail, plane)
+        # touching this GSL switch, used by the template to emit one
+        # bridge-access line per rail-plane VLAN. Key shape:
+        # 'rail<R>_plane<P>'.
         rp = data['rail_plane']
         if rp:
             rail_plane_subports = {}
@@ -1884,6 +2354,61 @@ def parse_gsl_port_config(ws_wiremap, nodes_function_map=None):
             result[host] = host_cfg
 
     return result
+
+
+def _port_groups_to_breakout_config(port_groups):
+    subports = []
+    breakout_parents = []
+    for parent in sorted(port_groups.keys()):
+        subs = port_groups[parent]
+        if subs == {-1}:
+            subports.append(f'swp{parent}')
+        else:
+            breakout_parents.append(f'swp{parent}')
+            for sub in sorted(x for x in subs if x != -1):
+                subports.append(f'swp{parent}s{sub}')
+
+    result = {}
+    if subports:
+        result['isl_subports'] = ','.join(subports)
+    if breakout_parents:
+        result['isl_breakout_parents'] = ','.join(breakout_parents)
+    return result
+
+
+def _derive_host_isl_port_config(wiremap_rows, host_name, profile_names=None):
+    """Derive one host's ISL port config from normalized Wire Map rows."""
+    if not wiremap_rows or not host_name:
+        return {}
+
+    profiles = {p.strip().lower() for p in (profile_names or ['isl'])}
+    sub_re = re.compile(r'^swp(\d+)s(\d+)$')
+    bare_re = re.compile(r'^swp(\d+)$')
+    port_groups = defaultdict(set)
+
+    for row in wiremap_rows:
+        prof = (row.get('net_profile') or '').strip().lower()
+        if prof not in profiles:
+            continue
+        if prof.startswith('air -') or 'disabled' in prof or 'unused' in prof:
+            continue
+
+        port = ''
+        if (row.get('system_name') or '').strip() == host_name:
+            port = (row.get('nic_port') or '').strip()
+        elif (row.get('switch_name') or '').strip() == host_name:
+            port = (row.get('switch_port') or '').strip()
+        if not port:
+            continue
+
+        m_sub = sub_re.match(port)
+        m_bare = bare_re.match(port)
+        if m_sub:
+            port_groups[int(m_sub.group(1))].add(int(m_sub.group(2)))
+        elif m_bare:
+            port_groups[int(m_bare.group(1))].add(-1)
+
+    return _port_groups_to_breakout_config(port_groups)
 
 
 def _parse_cidr(subnet_str, *, context=""):
@@ -2288,7 +2813,8 @@ def get_bond_descriptions_per_switch(ws_wiremap, nodes_function_map=None,
     # but for bond descriptions we want the SERVER hostname, never the
     # switch hostname.
     _SWITCH_FUNCS = {'core', 'csl', 'gsl', 'gsl-plane1', 'gsl-plane2',
-                      'oob-switch', 'edge'}
+                     'oob-switch', 'edge',
+                     'cl', 'cs', 'gl-plane1', 'gl-plane2', 'gs-plane1', 'gs-plane2'}
 
     def _is_switch(name):
         return canonical_category(nodes_function_map.get(name, ''), name) in _SWITCH_FUNCS
@@ -2504,8 +3030,51 @@ def parse_prefix_lists_sheet(ws):
     return overrides
 
 
+def _svi_gateway_ip(subnet, gateway):
+    """Anycast (VRR) gateway address for an SVI.
+
+    Returns the operator-declared Excel ``gateway`` when present, otherwise the
+    first usable host of ``subnet``. Bare IP string, no prefix. Falls back to
+    the legacy ``<base>.1`` only when the subnet can't be parsed, so callers
+    never crash on malformed input.
+    """
+    gw = (gateway or '').split('/')[0].strip()
+    if gw:
+        return gw
+    try:
+        return str(next(ipaddress.ip_network(subnet, strict=False).hosts()))
+    except (ValueError, StopIteration):
+        return f"{subnet.split('/')[0].rsplit('.', 1)[0]}.1"
+
+
+def _svi_switch_ip(subnet, gateway, core_num):
+    """Per-switch SVI host IP that always lands inside ``subnet``.
+
+    ``core_num`` is 1-based (core-01 -> 1). Host IPs are taken from
+    ``ip_network().hosts()`` with the gateway excluded, so a non-``.0``-aligned
+    subnet (e.g. ``100.82.254.128/27``) or a non-``.1`` gateway no longer
+    produces addresses in the wrong network. For a ``.0``-aligned /24 with a
+    ``.1`` gateway this reproduces the legacy ``<base>.<1+core_num>`` scheme
+    exactly, keeping the shipping default Excels byte-identical.
+
+    Falls back to the legacy scheme only when the subnet can't be parsed.
+    """
+    try:
+        net = ipaddress.ip_network(subnet, strict=False)
+    except ValueError:
+        return f"{subnet.split('/')[0].rsplit('.', 1)[0]}.{1 + core_num}"
+    gw = _svi_gateway_ip(subnet, gateway)
+    hosts = [str(h) for h in net.hosts() if str(h) != gw]
+    idx = core_num - 1
+    if 0 <= idx < len(hosts):
+        return hosts[idx]
+    # More switches than usable hosts (not expected for real mgmt subnets) —
+    # wrap rather than crash; the result is still inside the subnet.
+    return hosts[idx % len(hosts)] if hosts else str(net.network_address)
+
+
 def generate_prefix_lists(vlans, core_num, loopback_base=None, prefix_list_overrides=None,
-                          vrf_loopback_ips=None, mgmt_subnets=None):
+                          vrf_loopback_ips=None, mgmt_subnets=None, oob_uplink_mode='l2'):
     """Generate prefix_list configurations based on VLANs and switch number.
 
     vrf_loopback_ips: optional {VRF: 'a.b.c.d/32'} dict (already merged
@@ -2522,6 +3091,16 @@ def generate_prefix_lists(vlans, core_num, loopback_base=None, prefix_list_overr
     required for the L3 OOB return path. The VLAN sheet's OOB entry
     typically declares a different (legacy) subnet, so we plumb the
     real OOB subnets through here.
+
+    oob_uplink_mode: 'l2' (default) or 'l3'. This affects OOB_LOCAL_IF: in
+    l2 mode CSL owns a real, locally-connected SVI on the OOB VLAN itself
+    (the OOB switches are dumb L2 bridges in that design), which needs its
+    own anti-duplicate protection rule since nothing else in OOB_FILTER
+    covers it. In l3 mode that SVI doesn't exist (the OOB gateway lives on
+    the OOB/MG switches instead), so OOB_LOCAL_IF is just the OOB VRF
+    loopback with nothing else to add — see the inline comment at the
+    OOB_LOCAL_IF construction below for why INBAND SVIs are deliberately
+    NOT substituted in as a stand-in.
     """
     prefix_lists = []
 
@@ -2564,8 +3143,8 @@ def generate_prefix_lists(vlans, core_num, loopback_base=None, prefix_list_overr
         rule_id = 20
         for vlan in vrf_vlans['INBAND']:
             if vlan['subnet']:
-                subnet_base = vlan['subnet'].rsplit('.', 1)[0]
-                inband_rules.append({'id': str(rule_id), 'match': f'{subnet_base}.{1 + core_num}/32', 'max_len': '32'})
+                svi_ip = _svi_switch_ip(vlan['subnet'], vlan.get('gateway'), core_num)
+                inband_rules.append({'id': str(rule_id), 'match': f'{svi_ip}/32', 'max_len': '32'})
                 rule_id += 10
         prefix_lists.append({'id': 'INBAND_LOCAL_IF', 'rule': inband_rules})
 
@@ -2639,7 +3218,7 @@ def generate_prefix_lists(vlans, core_num, loopback_base=None, prefix_list_overr
     if 'OOB' in vrf_vlans:
         oob_vlan = vrf_vlans['OOB'][0]
         if oob_vlan['subnet']:
-            oob_subnet_base = oob_vlan['subnet'].rsplit('.', 1)[0]
+            oob_svi_ip = _svi_switch_ip(oob_vlan['subnet'], oob_vlan.get('gateway'), core_num)
             oob_ip = _vrf_ip('OOB', f'{lb}.{core_num}/32')
 
             prefix_lists.append({
@@ -2647,13 +3226,27 @@ def generate_prefix_lists(vlans, core_num, loopback_base=None, prefix_list_overr
                 'rule': [{'id': '10', 'match': oob_ip, 'max_len': '32'}]
             })
 
-            prefix_lists.append({
-                'id': 'OOB_LOCAL_IF',
-                'rule': [
-                    {'id': '10', 'match': oob_ip, 'max_len': '32'},
-                    {'id': '20', 'match': f'{oob_subnet_base}.{1 + core_num}/32', 'max_len': '32'},
-                ]
-            })
+            oob_local_rules = [{'id': '10', 'match': oob_ip, 'max_len': '32'}]
+            # l2 mode: CSL genuinely owns an SVI on the OOB VLAN itself (the
+            # OOB switches are dumb L2 bridges in that design), and nothing
+            # else in OOB_FILTER blocks it -- INBAND_PREFIXES only covers
+            # INBAND subnets, not the OOB VLAN's own subnet -- so it needs
+            # explicit anti-duplicate protection here.
+            #
+            # l3 mode: no such SVI exists on this switch (the OOB gateway
+            # lives on the OOB/MG switches instead), so there is nothing
+            # real left to protect here. We deliberately do NOT substitute
+            # this switch's INBAND SVI addresses instead: OOB_FILTER rule 10
+            # (INBAND_PREFIXES) already unconditionally denies the entire
+            # INBAND subnet range before OOB_LOCAL_IF (rule 15) is ever
+            # evaluated, so an INBAND-SVI /32 entry here would be dead,
+            # redundant config -- the same class of leftover mistake flagged
+            # in production's own OOB_LOCAL_IF rule 20 (see
+            # era-documentation/guides/csl-routing-policy-analysis.md).
+            if str(oob_uplink_mode).strip().lower() != 'l3':
+                oob_local_rules.append({'id': '20', 'match': f'{oob_svi_ip}/32', 'max_len': '32'})
+
+            prefix_lists.append({'id': 'OOB_LOCAL_IF', 'rule': oob_local_rules})
 
             prefix_lists.append({
                 'id': 'OOB_PREFIXES',
@@ -2708,6 +3301,8 @@ def _strip_gpu_plane(core_vars, vlans):
     if 'vrf_config' in stripped and isinstance(stripped['vrf_config'], list):
         stripped['vrf_config'] = [v for v in stripped['vrf_config']
                                   if v.get('id') != 'GPU']
+    for key in ('gpu_interfaces', 'gpu_rail_interfaces', 'gpu_rail_planes'):
+        stripped.pop(key, None)
     return stripped
 
 
@@ -2761,7 +3356,13 @@ def _apply_oob_l3_uplink_mode(core_vars, settings):
     if not isinstance(default_vrf_bgp, dict):
         return
 
-    overlay_peers = list(settings.get('_derived_oob_overlay_peers') or [])
+    # ADR-0006: dedicated cl/cs (ns_tiers > 1) overlay is hub-and-spoke via the
+    # cs spines — cl leaves peer the cs spine loopbacks (not the oob-switches).
+    # Converged csl (ns_tiers = 1, no cs spine) keeps the cl↔oob overlay mesh.
+    if int((settings or {}).get('ns_tiers') or 1) > 1 and settings.get('_derived_cs_spine_overlay_peers'):
+        overlay_peers = list(settings.get('_derived_cs_spine_overlay_peers') or [])
+    else:
+        overlay_peers = list(settings.get('_derived_oob_overlay_peers') or [])
     underlay_remote_as = 'external'
     overlay_remote_as = 'external'
     overlay_ttl = 2
@@ -2787,13 +3388,36 @@ def _apply_oob_l3_uplink_mode(core_vars, settings):
 
     peer_groups = []
     if isinstance(core_vars.get('isl_interfaces'), dict):
+        _ns_tiers = int((settings or {}).get('ns_tiers') or 1)
+        _isl_ipv4_unicast = {'enable': True}
+        if _ns_tiers > 1:
+            # W-ECMP only works over eBGP (NVIDIA Cumulus Linux docs:
+            # "W-ECMP is only supported in EBGP fabrics"). At ns_tiers > 1
+            # this ISL is a genuine leaf (cl) uplink to the cs spine, not a
+            # converged-csl horizontal peer-link, and it's eBGP -- so it
+            # qualifies the same way the underlay-to-MG peer-group does.
+            # Verified via a generated SU16 (ns_tiers=2) workbook: cl's
+            # internal-isl is eBGP with ipv4-unicast enabled, mirroring the
+            # cs spine's own 'underlay' downlink on the other end (see
+            # WEIGHTED_ECMP_CUMULATIVE in spine_nvue_cli.j2). No live 2-tier
+            # deployment exists to verify byte-for-byte, unlike the
+            # underlay-to-MG fix.
+            _isl_ipv4_unicast['policy_outbound_route_map'] = 'WEIGHTED_ECMP'
         peer_groups.append({
             'id': 'internal-isl',
-            'remote_as': 'internal',
+            # ADR-0005: a dedicated cl/cs spine-leaf (ns_tiers > 1) runs an eBGP
+            # Clos underlay — the cl↔cs ISL must be eBGP ('external') to match the
+            # cs side (peer-group 'underlay', remote-as external) or the OPEN is
+            # rejected and every cl↔cs session sits IDLE (no loopback propagation
+            # → no EVPN → OOB VLAN-200 stretch dead). Converged csl (ns_tiers=1)
+            # keeps iBGP ('internal') — the golden csl-pair peer-link, unchanged.
+            # Mirrors the proven gl/gs ew_tiers fix; design confirmed by the
+            # Common Networking RA (BGP-based ECMP underlay).
+            'remote_as': 'external' if _ns_tiers > 1 else 'internal',
             'bfd_enable': True,
             'description': 'internal_isl_interconnect',
             'address_family': {
-                'ipv4_unicast': {'enable': True},
+                'ipv4_unicast': _isl_ipv4_unicast,
                 'l2vpn_evpn': {'enable': True},
             },
         })
@@ -2803,7 +3427,14 @@ def _apply_oob_l3_uplink_mode(core_vars, settings):
         'bfd_enable': True,
         'description': 'oob_underlay_interconnect',
         'address_family': {
-            'ipv4_unicast': {'enable': True},
+            # W-ECMP (BGP link-bandwidth extended community) only works over
+            # eBGP (NVIDIA Cumulus Linux docs: "W-ECMP is only supported in
+            # EBGP fabrics") -- this peer-group's remote_as is always
+            # 'external' here, so it always qualifies. Mirrors the identical,
+            # already-correct WEIGHTED_ECMP outbound policy on the OOB/MG
+            # switch's own 'underlay' peer-group (the other end of this same
+            # link) in oob_nvue_cli.j2.
+            'ipv4_unicast': {'enable': True, 'policy_outbound_route_map': 'WEIGHTED_ECMP'},
         },
     })
     if overlay_peers:
@@ -2842,20 +3473,31 @@ def _derive_oob_overlay_peers(nodes=None, loopback_overrides=None):
 
 
 def _derive_core_overlay_peers(nodes=None, loopback_overrides=None):
-    """Return default-loopback IPs for core/csl switches, in node order."""
-    peers = []
+    """Return overlay peer loopback IPs that OOB switches should peer to.
+
+    In standard eBGP EVPN (Approach B — separate overlay/underlay), leaves
+    peer overlay to spines.  When dedicated spines exist (csl-spine), return
+    their loopbacks.  In collapsed designs (no spines — core or bare csl),
+    return the core/csl loopbacks since those switches act as both spine and
+    leaf.
+    """
     loopback_overrides = loopback_overrides or {}
+    spine_peers = []
+    leaf_peers = []
     for node in nodes or []:
         name = (node.get('name') or '').strip()
         if not name:
             continue
         cat = canonical_category(node.get('role'), name)
-        if cat not in ('core', 'csl'):
-            continue
         lo = (loopback_overrides.get(name) or {}).get('lo')
-        if lo:
-            peers.append(str(lo).split('/')[0].strip())
-    return peers
+        if not lo:
+            continue
+        ip = str(lo).split('/')[0].strip()
+        if cat == 'cs':
+            spine_peers.append(ip)
+        elif cat in ('core', 'csl', 'cl'):
+            leaf_peers.append(ip)
+    return spine_peers if spine_peers else leaf_peers
 
 
 def get_oob_nodes_for_inventory(nodes, settings):
@@ -2965,6 +3607,12 @@ def categorize_nodes(nodes, settings=None):
         'oob': [],
         'gsl_plane1': [],
         'gsl_plane2': [],
+        'cl': [],
+        'cs': [],
+        'gl_plane1': [],
+        'gl_plane2': [],
+        'gs_plane1': [],
+        'gs_plane2': [],
         'gpu_nodes': [],
         'support': [],
         'storage': [],
@@ -2983,6 +3631,18 @@ def categorize_nodes(nodes, settings=None):
             categories['gsl_plane1'].append(node)
         elif cat == 'gsl-plane2':
             categories['gsl_plane2'].append(node)
+        elif cat == 'cl':
+            categories['cl'].append(node)
+        elif cat == 'cs':
+            categories['cs'].append(node)
+        elif cat == 'gl-plane1':
+            categories['gl_plane1'].append(node)
+        elif cat == 'gl-plane2':
+            categories['gl_plane2'].append(node)
+        elif cat == 'gs-plane1':
+            categories['gs_plane1'].append(node)
+        elif cat == 'gs-plane2':
+            categories['gs_plane2'].append(node)
         elif cat == 'oob-switch':
             # Collected below via get_oob_nodes_for_inventory
             pass
@@ -3028,6 +3688,20 @@ def generate_hosts_file(settings, nodes, output_dir, air_virtual_nodes=None):
             lines.append(node['name'])
         lines.append("")
 
+    # CL group — split-role (non-converged) CPU/Storage leaf.
+    if categories.get('cl'):
+        lines.append("[cl]")
+        for node in sorted(categories['cl'], key=lambda x: x['name']):
+            lines.append(node['name'])
+        lines.append("")
+
+    # CS group — split-role (non-converged) CPU/Storage spine.
+    if categories.get('cs'):
+        lines.append("[cs]")
+        for node in sorted(categories['cs'], key=lambda x: x['name']):
+            lines.append(node['name'])
+        lines.append("")
+
     # GSL plane groups (dedicated_gpu only)
     if categories.get('gsl_plane1'):
         lines.append("[gsl_plane1]")
@@ -3045,6 +3719,37 @@ def generate_hosts_file(settings, nodes, output_dir, air_virtual_nodes=None):
             lines.append("gsl_plane1")
         if categories.get('gsl_plane2'):
             lines.append("gsl_plane2")
+        lines.append("")
+
+    # GL plane groups — split-role (non-converged) GPU leaf.
+    if categories.get('gl_plane1'):
+        lines.append("[gl_plane1]")
+        for node in sorted(categories['gl_plane1'], key=lambda x: x['name']):
+            lines.append(node['name'])
+        lines.append("")
+    if categories.get('gl_plane2'):
+        lines.append("[gl_plane2]")
+        for node in sorted(categories['gl_plane2'], key=lambda x: x['name']):
+            lines.append(node['name'])
+        lines.append("")
+    if categories.get('gl_plane1') or categories.get('gl_plane2'):
+        lines.extend(["[gl:children]"])
+        if categories.get('gl_plane1'):
+            lines.append("gl_plane1")
+        if categories.get('gl_plane2'):
+            lines.append("gl_plane2")
+        lines.append("")
+
+    # GS Spine plane groups — split-role (non-converged) GPU spine.
+    if categories.get('gs_plane1'):
+        lines.append("[gs_plane1]")
+        for node in sorted(categories['gs_plane1'], key=lambda x: x['name']):
+            lines.append(node['name'])
+        lines.append("")
+    if categories.get('gs_plane2'):
+        lines.append("[gs_plane2]")
+        for node in sorted(categories['gs_plane2'], key=lambda x: x['name']):
+            lines.append(node['name'])
         lines.append("")
 
     # OOB switches
@@ -3079,8 +3784,8 @@ def generate_hosts_file(settings, nodes, output_dir, air_virtual_nodes=None):
     # Both modes use the same group names so playbooks can target groups
     # (e.g., `hosts: dhcp`) without variable indirection. The group → host
     # mapping differs per mode:
-    #   L2: [dhcp] dhcp-oob, [oob-server] oob-server-01, [jump] dhcp-oob
-    #   L3: [dhcp] external-dhcp, [oob-server] external-conn, [jump] utility
+    #   L2: [dhcp] dhcp-oob, [oob_server] oob-server-01, [jump] dhcp-oob
+    #   L3: [dhcp] external-dhcp, [oob_server] external-conn, [jump] utility
     # The [jump] group is the Ansible SSH jump host (validate-* playbooks
     # run from this host). In L2 it co-locates with the DHCP server box;
     # in L3 they're separate Air nodes.
@@ -3104,7 +3809,7 @@ def generate_hosts_file(settings, nodes, output_dir, air_virtual_nodes=None):
         lines.append("")
 
     if oob_server_nodes:
-        lines.append("[oob-server]")
+        lines.append("[oob_server]")
         lines.extend(sorted(set(oob_server_nodes)))
         lines.append("")
 
@@ -3119,8 +3824,18 @@ def generate_hosts_file(settings, nodes, output_dir, air_virtual_nodes=None):
         switch_children.append("core")
     if csl_nodes:
         switch_children.append("csl")
+    if categories.get('cl'):
+        switch_children.append("cl")
+    if categories.get('cs'):
+        switch_children.append("cs")
     if categories.get('gsl_plane1') or categories.get('gsl_plane2'):
         switch_children.append("gsl")
+    if categories.get('gl_plane1') or categories.get('gl_plane2'):
+        switch_children.append("gl")
+    if categories.get('gs_plane1'):
+        switch_children.append("gs_plane1")
+    if categories.get('gs_plane2'):
+        switch_children.append("gs_plane2")
     if categories['oob']:
         switch_children.append("oob")
     lines.extend([
@@ -3135,7 +3850,7 @@ def generate_hosts_file(settings, nodes, output_dir, air_virtual_nodes=None):
     if dhcp_nodes:
         servers_children.append("dhcp")
     if oob_server_nodes:
-        servers_children.append("oob-server")
+        servers_children.append("oob_server")
     if jump_nodes:
         # Keep [jump] in the [servers] tree so jump hosts inherit
         # ansible_password / ansible_user from group_vars/servers.yml.
@@ -3159,15 +3874,20 @@ def generate_hosts_file(settings, nodes, output_dir, air_virtual_nodes=None):
     return output_file
 
 
-def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_overrides=None, oob_switch_configs=None, vrfs=None, air_settings=None, gsl_port_configs=None, loopback_overrides=None, wiremap_rows=None, storage_uplink_ports=None, bond_descriptions_per_switch=None):
+def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_overrides=None, oob_switch_configs=None, vrfs=None, air_settings=None, gsl_port_configs=None, loopback_overrides=None, wiremap_rows=None, storage_uplink_ports=None, bond_descriptions_per_switch=None, per_switch_network_roles=None):
     """Generate host_vars YAML files for each node. OOB count from Settings management_switches. prefix_list_overrides from Excel 'Prefix lists' sheet (Option C). oob_switch_configs derived from Wire Map. gsl_port_configs (per-host dict from parse_gsl_port_config) controls which GSL ports are bridged/broken-out."""
     host_vars_dir = output_dir / "host_vars"
     host_vars_dir.mkdir(exist_ok=True)
     generated_files = []
     categories = categorize_nodes(nodes, settings)
     nodes_to_process = (
-        categories['core'] + categories['oob']
+        categories['core']
+        + categories['oob']
+        + categories.get('cl', [])
+        + categories.get('cs', [])
         + categories['gsl_plane1'] + categories['gsl_plane2']
+        + categories.get('gl_plane1', []) + categories.get('gl_plane2', [])
+        + categories.get('gs_plane1', []) + categories.get('gs_plane2', [])
         + categories['gpu_nodes']
         + categories['storage'] + categories['support']
     )
@@ -3178,7 +3898,17 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_ove
     air_mgmt_subnet = air_settings.get('air_mgmt_subnet', '172.20.0.0/24')
     air_mgmt_base = air_mgmt_subnet.split('/')[0].rsplit('.', 1)[0]
     settings['_air_mgmt_base'] = air_mgmt_base  # pass to switch host_vars generation
-    air_switch_idx = 1  # .201, .202, .203, ...
+    # Switch eth0 mgmt IPs live in the air-mgmt /24. Historically assigned
+    # `.{200+idx}` starting at .201, which silently OVERFLOWS past .255 once
+    # there are >~53 switches (maxscale 2-4-5-800 = 71, 2-8-9-800 SU32 = 76):
+    # NVUE rejects the invalid octet (e.g. `172.20.0.260/24`), the deferred
+    # apply aborts, and the switch never configures → unreachable.
+    # Fix: keep the .201 base for archs that fit (byte-identical small/default
+    # output), but repack from .2 when .201+N would overflow; skip the IPs the
+    # air-deploy L3 trio + cust-net-edge reserve on this /24.
+    _AIR_MGMT_RESERVED = AIR_MGMT_RESERVED_OCTETS  # canonical set: scripts/oob_reserved.py
+    _n_switches = sum(1 for _n in nodes_to_process if is_switch(_n['role']))
+    _switch_octet = 201 if (201 + _n_switches) <= 254 else 2
 
     for node in nodes_to_process:
         role = node['role']
@@ -3198,17 +3928,29 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_ove
             topo_name = node['name'] or role
             host_vars['mac_address'] = generate_mac(topo_name, 'eth0')
             host_vars['ip_assignment_mode'] = 'dhcp'
-            host_vars['ansible_host'] = f"{air_mgmt_base}.{200 + air_switch_idx}"
-            air_switch_idx += 1
+            while _switch_octet in _AIR_MGMT_RESERVED:
+                _switch_octet += 1
+            if _switch_octet > 254:
+                raise ValueError(
+                    f"air_mgmt subnet {air_mgmt_subnet} too small for "
+                    f"{_n_switches} switches (ran past .254). Widen the subnet."
+                )
+            host_vars['ansible_host'] = f"{air_mgmt_base}.{_switch_octet}"
+            _switch_octet += 1
 
         # Add VLAN interfaces for core/csl switches (csl == core in
         # dedicated_gpu designs — same template, same vars).
         # CSL switches host CPU/storage/support/OOB traffic only; the GPU
         # plane lives on separate GSL switches, so we filter GPU-VRF VLANs
         # (and the GPU VRF loopback) out of csl host_vars.
-        if node.get('category') in ('core', 'csl'):
-            is_csl = node.get('category') == 'csl'
-            core_num = node.get('index') or 1
+        if node.get('category') in ('core', 'csl', 'cl'):
+            is_csl = node.get('category') in ('csl', 'cl')
+            # Use sequential position within the core list for SVI IP assignment,
+            # not hostname-derived index (which can collide for OEM names that
+            # share a trailing digit, e.g. two leaves both resolving to index 6).
+            # CSL nodes live in categories['core'] regardless of their category field.
+            core_list = categories.get('core', [])
+            core_num = next((i + 1 for i, n in enumerate(core_list) if n is node), node.get('index') or 1)
             # Excel Loopbacks sheet wins when present; fall back to computed.
             sw_loop = (loopback_overrides or {}).get(node['name'] or role, {})
             if sw_loop.get('lo'):
@@ -3218,20 +3960,38 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_ove
                 host_vars['router_id'] = f"{loopback_base}.{10 + core_num}"
                 host_vars['lo_ip'] = f"{loopback_base}.{10 + core_num}/32"
 
+            # ADR-0005: on a dedicated cl/cs spine-leaf (ns_tiers > 1) the underlay
+            # is eBGP Clos, so each cl leaf needs a UNIQUE ASN — otherwise routes
+            # from one cl, via a cs spine, to another cl hit an AS-path loop and
+            # never install (cl↔cs sessions also idle on the iBGP/eBGP mismatch).
+            # Converged csl (ns_tiers=1) leaves the ASN unset → shared base (iBGP),
+            # which is golden and unchanged. Spines already get CSL_SPINE_ASN_OFFSET.
+            if int((settings or {}).get('ns_tiers') or 1) > 1 and node.get('category') in ('csl', 'cl'):
+                # The core template renders `router bgp autonomous-system {{ bgp_asn }}`
+                # (default VRF + all VRFs), so override bgp_asn per-host (host_vars win
+                # over group_vars/csl.yml) to give each cl leaf a unique switch ASN.
+                _base_asn = int(settings.get('bgp_asn') or 4200100001)
+                host_vars['bgp_asn'] = _base_asn + CSL_LEAF_ASN_OFFSET + core_num
+
             vlan_interfaces = []
             for vlan in vlans:
                 if not vlan['subnet']:
                     continue
                 if is_csl and vlan.get('vrf') == 'GPU':
                     continue  # GPU plane lives on GSL; skip for CSL
-                # Parse subnet to get base IP
-                subnet_parts = vlan['subnet'].split('/')
-                base_ip = subnet_parts[0].rsplit('.', 1)[0]
+                if is_csl and vlan.get('vrf') == 'OOB':
+                    continue  # OOB VLANs live on OOB switches; skip for CSL
+                # Per-switch SVI IP + anycast VRR derived from the declared
+                # subnet's host range and the Excel gateway, so non-.0-aligned
+                # subnets / non-.1 gateways stay inside the network.
+                pfx = vlan['subnet'].split('/')[1]
+                svi_ip = _svi_switch_ip(vlan['subnet'], vlan.get('gateway'), core_num)
+                vrr_ip = _svi_gateway_ip(vlan['subnet'], vlan.get('gateway'))
 
                 vlan_interfaces.append({
                     'id': f"vlan{vlan['id']}",
-                    'ip': f"{base_ip}.{1 + core_num}/{subnet_parts[1]}",
-                    'vrr': f"{base_ip}.1/{subnet_parts[1]}",
+                    'ip': f"{svi_ip}/{pfx}",
+                    'vrr': f"{vrr_ip}/{pfx}",
                     'vlan': str(vlan['id']),
                     'vrf': vlan['vrf'],  # Use VRF from VLAN definition
                 })
@@ -3322,6 +4082,7 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_ove
                 vlans, core_num, loopback_base, prefix_list_overrides,
                 vrf_loopback_ips=host_vars['vrf_loopbacks'],
                 mgmt_subnets=mgmt_subnets_list,
+                oob_uplink_mode=_normalize_oob_uplink_mode(settings),
             )
             
             # Disabled interfaces - read from settings or use defaults
@@ -3343,25 +4104,50 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_ove
             sw_bond_descs = (bond_descriptions_per_switch or {}).get(host_name, {})
             if sw_bond_descs:
                 host_vars['bond_descriptions'] = sw_bond_descs
+            # ADR-0004: on the dedicated cl/cs tier, override the shared group
+            # network_roles with this switch's OWN server bonds (cpu/storage/
+            # support) carrying per-node ESIs. host_vars win over group_vars, so
+            # each cl-* emits only its cabled sub-ports (no ifreload rollback)
+            # and a node's ESI matches across its leaves (MH converges).
+            # per_switch_network_roles contains cl-* (+ csl-* on dedicated tiers,
+            # ns_tiers>1); converged csl-*/core (ns_tiers==1)
+            # are absent and keep the golden group config.
+            if per_switch_network_roles and host_name in per_switch_network_roles:
+                host_vars['network_roles'] = per_switch_network_roles[host_name]
             sw_storage_ports = (storage_uplink_ports or {}).get(host_name, [])
-            if sw_storage_ports:
+            # A switch needs the STORAGE VRF *defined* whenever it hosts a
+            # STORAGE-VRF SVI (the L2-stretched storage VLAN) OR terminates
+            # L3 STORAGE uplinks. The SVI alone emits `interface vlanN vrf
+            # STORAGE`; if the VRF is never defined, NVUE rejects the whole
+            # config ("map ... to a non-existent vrf.STORAGE") and rolls the
+            # apply back, leaving a bare switch. On dedicated-tier archs
+            # (ns_tiers=2, e.g. 2-8-9-800 maxscale) the storage SVI lives on
+            # the csl leaves while uplinks (if any) live elsewhere, so the two
+            # conditions diverge — converged archs happened to satisfy both on
+            # the same switch, which is why this only surfaced at max scale.
+            has_storage_svi = any(
+                (vi.get('vrf') or '').strip().upper() == 'STORAGE'
+                for vi in host_vars.get('vlan_interfaces', [])
+            )
+            if sw_storage_ports or has_storage_svi:
                 # Sort + dedup the port list for deterministic output.
                 ordered_ports = sorted(set(sw_storage_ports))
-                # Map swpNsM → parent N for breakout extraction. Storage
-                # uplinks are typically 100G break-out of a 400G port
-                # (4x lanes/port); record the parent in a parents set.
-                parents = set()
-                for p in ordered_ports:
-                    m = re.match(r'^swp(\d+)(?:s\d+)?$', p)
-                    if m:
-                        parents.add(int(m.group(1)))
-                host_vars['storage_interfaces'] = {
-                    'ports': sorted(parents),
-                    'breakout': 8,   # default; PR-c reads Port Profile breakout col
-                    'lanes': 1,
-                    'vrf': 'STORAGE',
-                    'subports': ordered_ports,
-                }
+                if sw_storage_ports:
+                    # Map swpNsM → parent N for breakout extraction. Storage
+                    # uplinks are typically 100G break-out of a 400G port
+                    # (4x lanes/port); record the parent in a parents set.
+                    parents = set()
+                    for p in ordered_ports:
+                        m = re.match(r'^swp(\d+)(?:s\d+)?$', p)
+                        if m:
+                            parents.add(int(m.group(1)))
+                    host_vars['storage_interfaces'] = {
+                        'ports': sorted(parents),
+                        'breakout': 8,   # default; PR-c reads Port Profile breakout col
+                        'lanes': 1,
+                        'vrf': 'STORAGE',
+                        'subports': ordered_ports,
+                    }
                 # Build STORAGE vrf_config_extra entry. L3 VNI + L2 VLAN
                 # come from the VRFs section (parse_vrfs) — pluck them
                 # from the `vrfs` parameter if available. parse_vrfs
@@ -3378,54 +4164,68 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_ove
                             storage_vrf_def = v
                             break
                 storage_l3_vni = (storage_vrf_def or {}).get('l3_vni') or 5005
-                # Look up the storage VLAN (the L2-stretched VLAN in
-                # STORAGE VRF) from the VLANs list.
-                storage_l2_vlan = None
-                for v in vlans:
-                    if (v.get('vrf') or '').strip().upper() == 'STORAGE':
-                        storage_l2_vlan = v.get('id')
-                        break
+                # The STORAGE VRF's EVPN L3VNI binds to its dedicated L3VNI
+                # VLAN (the 300x symmetric-routing VLAN, e.g. 3005 — matching
+                # OOB=3001/EXIT=3004), NOT the L2-stretched storage data VLAN
+                # (e.g. 500). parse_vrfs stores the L3VNI VLAN under 'vlan'
+                # (VRFs sheet col 4) — the same field the group vrf_config uses
+                # for `evpn vlan`. Using the data VLAN here emitted a second,
+                # conflicting `nv set vrf STORAGE evpn vlan 500` that overrode
+                # the golden `vlan 3005` (last-wins in NVUE).
+                storage_l3_vlan = (storage_vrf_def or {}).get('vlan')
                 storage_entry = {
                     'id': 'STORAGE',
                     'vni': str(storage_l3_vni),
                     'route_export': True,
-                    'table_auto': True,  # L3-neighbor VRF needs kernel routing table
-                    'bgp': {
-                        'address_family': {
-                            'ipv4_unicast': {
-                                'enable': True,
-                                'redistribute_connected': True,
-                                'route_export_to_evpn': True,
-                            },
-                            'l2vpn_evpn': {'enable': True},
+                }
+                # L3 STORAGE uplinks need a kernel routing table for the
+                # external eBGP underlay. Pure SVI-only leaves are an overlay
+                # tenant VRF (like INBAND) and omit table_auto — keying it off
+                # uplink presence keeps uplink switches byte-identical.
+                if sw_storage_ports:
+                    storage_entry['table_auto'] = True
+                storage_bgp = {
+                    'address_family': {
+                        'ipv4_unicast': {
+                            'enable': True,
+                            'redistribute_connected': True,
+                            'route_export_to_evpn': True,
                         },
-                        'neighbors': [{
-                            'interfaces': ordered_ports,
-                            'peer_group': 'underlay-era-storage',
-                            'type': 'unnumbered',
-                        }],
-                        'peer_groups': [{
-                            'id': 'underlay-era-storage',
-                            'remote_as': 'external',
-                            'bfd_enable': True,
-                            'description': 'underlay_era_storage_interconnect',
-                            'address_family': {
-                                'ipv4_unicast': {'enable': True},
-                                'l2vpn_evpn': {'enable': True},
-                            },
-                        }],
+                        'l2vpn_evpn': {'enable': True},
                     },
                 }
-                if storage_l2_vlan:
-                    storage_entry['vlan'] = int(storage_l2_vlan)
+                # Underlay eBGP (peer-group + unnumbered neighbors) only exists
+                # where physical STORAGE uplinks terminate. SVI-only leaves
+                # reach external storage over the EVPN overlay, no local peers.
+                if sw_storage_ports:
+                    storage_bgp['neighbors'] = [{
+                        'interfaces': ordered_ports,
+                        'peer_group': 'underlay-era-storage',
+                        'type': 'unnumbered',
+                    }]
+                    storage_bgp['peer_groups'] = [{
+                        'id': 'underlay-era-storage',
+                        'remote_as': 'external',
+                        'bfd_enable': True,
+                        'description': 'underlay_era_storage_interconnect',
+                        'address_family': {
+                            'ipv4_unicast': {'enable': True},
+                            'l2vpn_evpn': {'enable': True},
+                        },
+                    }]
+                storage_entry['bgp'] = storage_bgp
+                if storage_l3_vlan:
+                    storage_entry['vlan'] = (int(storage_l3_vlan)
+                                             if str(storage_l3_vlan).isdigit()
+                                             else storage_l3_vlan)
                 host_vars['vrf_config_extra'] = [storage_entry]
 
         # GSL (GPU Spine/Leaf) host vars — plane-aware
         # Plane comes from node['category'] (canonical: gsl-plane1 / gsl-plane2);
         # index from node['index'] (trailing digits of name, or order-fallback).
         gsl_cat = node.get('category')
-        if gsl_cat in ('gsl-plane1', 'gsl-plane2'):
-            plane_num = 1 if gsl_cat == 'gsl-plane1' else 2
+        if gsl_cat in ('gsl-plane1', 'gsl-plane2', 'gl-plane1', 'gl-plane2'):
+            plane_num = 1 if gsl_cat in ('gsl-plane1', 'gl-plane1') else 2
             plane_idx = node.get('index') or 1
             lo_oct = plane_idx
             host_vars['plane'] = plane_num
@@ -3439,16 +4239,83 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_ove
                 host_vars['vrf_gpu_loopback'] = _ensure_mask(sw_loop['GPU'])
             else:
                 host_vars['vrf_gpu_loopback'] = f"10.{plane_num}.1.{10 + lo_oct}/32"
-            # Plane-mate is the other gsl-planeN-NN within the same plane.
-            # Compute from name-based index rather than hardcoded swap so a
-            # 4-GSL-per-plane future deployment still picks the *other* one.
-            mate_idx = 2 if plane_idx == 1 else 1
-            host_vars['plane_mate_lo_ip'] = f"10.{plane_num}.1.{mate_idx}"
+            # Plane leaf count decides BOTH the ASN scheme and overlay peering.
+            # Merge legacy (gsl_plane*) ∪ new (gl_plane*) buckets so a plane
+            # declared with either taxonomy resolves the same peer set.
+            gsl_leaves_in_plane = (categories.get(f'gsl_plane{plane_num}', [])
+                                   + categories.get(f'gl_plane{plane_num}', []))
+            # BGP ASN. A COLLAPSED (<=2-leaf) plane peers plane-mate↔plane-mate
+            # via iBGP (`remote-as internal` in gl_nvue_cli.j2 for 1-tier), so
+            # BOTH mates MUST share ONE ASN — matches the OG/golden REFERENCES
+            # config (2-8-9-800: both gsl-plane1 leaves = 4260397297). Only a
+            # SPINED (>2-leaf) plane is an eBGP Clos where each leaf needs a
+            # UNIQUE ASN (it peers the spine via `remote-as external`). The
+            # per-leaf +(plane_idx-1) offset must therefore apply to spined
+            # planes ONLY — applying it to collapsed planes (commit 2d8837e)
+            # gave mates different ASNs and left their iBGP sessions Idle.
+            base_asn = int(settings.get('bgp_asn') or 4200100001)
+            _plane_asn = base_asn + GSL_LEAF_ASN_OFFSET + (plane_num - 1) * GSL_PLANE_ASN_STRIDE
+            host_vars['asn'] = _plane_asn + ((plane_idx - 1) if len(gsl_leaves_in_plane) > 2 else 0)
+            # Overlay peers: for 2-leaf planes, peer with the mate leaf.
+            # For 4+ leaf planes, peer with the spine loopbacks instead.
+            if len(gsl_leaves_in_plane) <= 2:
+                # 2-leaf plane: peer with plane-mate
+                mate_idx = 2 if plane_idx == 1 else 1
+                host_vars['plane_mate_lo_ip'] = f"10.{plane_num}.1.{mate_idx}"
+            else:
+                # 4+ leaf plane: peer with spine loopbacks (not self, not other leaves)
+                spine_nodes = categories.get(f'gs_plane{plane_num}', [])
+                spine_los = []
+                for sp in spine_nodes:
+                    sp_loop = (loopback_overrides or {}).get(sp.get('name', ''), {})
+                    if sp_loop.get('lo'):
+                        spine_los.append(sp_loop['lo'].split('/')[0])
+                    else:
+                        sp_idx = sp.get('index') or 1
+                        spine_los.append(f"10.{plane_num}.1.{4 + sp_idx}")
+                host_vars['overlay_peers'] = spine_los
+                # Keep plane_mate_lo_ip as fallback (won't be used if overlay_peers exists)
+                host_vars['plane_mate_lo_ip'] = spine_los[0] if spine_los else f"10.{plane_num}.1.5"
             # vlan900 SVI: plane1=192.168.0.0/20, plane2=192.168.16.0/20.
             # Each leaf gets a distinct host IP within the /20 anycast group.
             vlan900_subnet_base = 0 if plane_num == 1 else 16
             host_vars['vlan900_ip'] = f"192.168.{vlan900_subnet_base}.{1 + plane_idx}/20"
             host_vars['vlan900_vrr'] = f"192.168.{vlan900_subnet_base}.1/20"
+
+            # Per-rail SVI/VRR host_vars. Template iterates this dict with
+            # gpu_rail_subports and emits one SVI + bridge-access line per
+            # rail that this GSL switch physically owns.
+            gpu_mode = str(settings.get('gpu_vlan_mode', 'single')).strip().lower()
+            if gpu_mode == 'per_rail':
+                rails = {}
+                for v in vlans:
+                    vname = (v.get('name') or '').lower()
+                    m_r = re.match(r'^gpu_rail(\d+)$', vname)
+                    if not m_r:
+                        continue
+                    rail_idx = int(m_r.group(1))
+                    subnet = v.get('subnet')
+                    vlan_id = v.get('id')
+                    if not subnet or not vlan_id:
+                        continue
+                    net = ipaddress.ip_network(subnet, strict=False)
+                    sw_offset = 1 + plane_idx
+                    if sw_offset >= net.num_addresses - 1:
+                        continue
+                    sw_ip = f"{net.network_address + sw_offset}/{net.prefixlen}"
+                    vrr = _svi_gateway_ip(subnet, v.get('gateway'))
+                    if '/' not in vrr:
+                        vrr = f"{vrr}/{net.prefixlen}"
+                    rails[f'rail{rail_idx}'] = {
+                        'vlan_id': vlan_id,
+                        'vni': v.get('vni') or (vlan_id + 4000),
+                        'subnet': subnet,
+                        'ip': sw_ip,
+                        'vrr': vrr,
+                        'vrf': v.get('vrf') or 'GPU',
+                    }
+                if rails:
+                    host_vars['gpu_rails'] = rails
 
             # Per-rail-per-plane SVI/VRR host_vars. When gpu_vlan_mode is
             # per_rail_per_plane, build a gpu_rail_planes dict containing
@@ -3456,8 +4323,7 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_ove
             # Template iterates this dict and emits one SVI + VRR + bridge
             # access line per rail. Legacy vlan900 block stays defined as a
             # fallback but the template skips it when gpu_rail_planes exists.
-            gpu_mode = str(settings.get('gpu_vlan_mode', 'single')).strip().lower()
-            if gpu_mode == 'per_rail_per_plane':
+            elif gpu_mode == 'per_rail_per_plane':
                 rail_planes = {}
                 for v in vlans:
                     vname = (v.get('name') or '').lower()
@@ -3480,7 +4346,7 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_ove
                         continue
                     sw_ip = f"{net.network_address + sw_offset}/{net.prefixlen}"
                     # VRR: use Excel gateway if provided, else .1 of subnet
-                    vrr = v.get('gateway') or f"{str(net.network_address).rsplit('.', 1)[0]}.1"
+                    vrr = _svi_gateway_ip(subnet, v.get('gateway'))
                     if '/' not in vrr:
                         vrr = f"{vrr}/{net.prefixlen}"
                     rail_planes[f'rail{rail_idx}_plane{p_idx}'] = {
@@ -3502,9 +4368,107 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_ove
             gsl_cfg = (gsl_port_configs or {}).get(node.get('name') or role, {})
             for k in ('gpu_subports', 'gpu_breakout_parents',
                       'isl_subports', 'isl_breakout_parents',
-                      'gpu_rail_plane_subports'):
+                      'gpu_rail_subports', 'gpu_rail_plane_subports'):
                 if gsl_cfg.get(k):
                     host_vars[k] = gsl_cfg[k]
+
+        # CS (CPU/Storage Spine) host vars — loopback from Loopbacks sheet
+        if node.get('category') == 'cs':
+            cs_nodes = categories.get('cs', [])
+            spine_idx = next((i for i, n in enumerate(cs_nodes, start=1) if n is node), 1)
+            sw_loop = (loopback_overrides or {}).get(node['name'] or role, {})
+            if sw_loop.get('lo'):
+                host_vars['lo_ip'] = _ensure_mask(sw_loop['lo'])
+                host_vars['router_id'] = sw_loop['lo'].split('/')[0]
+            else:
+                host_vars['lo_ip'] = f"{loopback_base}.{20 + spine_idx}/32"
+                host_vars['router_id'] = f"{loopback_base}.{20 + spine_idx}"
+            base_asn = int(settings.get('bgp_asn') or 4200100001)
+            host_vars['asn'] = base_asn + CSL_SPINE_ASN_OFFSET + spine_idx
+            isl_cfg = _derive_host_isl_port_config(
+                wiremap_rows, node.get('name') or role, profile_names=['isl'])
+            for k in ('isl_subports', 'isl_breakout_parents'):
+                if isl_cfg.get(k):
+                    host_vars[k] = isl_cfg[k]
+            if host_vars.get('isl_breakout_parents'):
+                host_vars['isl_leaf_ports'] = host_vars['isl_breakout_parents']
+            if host_vars.get('isl_subports'):
+                host_vars['underlay_neighbors'] = [
+                    p for p in host_vars['isl_subports'].split(',') if p
+                ]
+
+            csl_leaf_peers = []
+            # N/S leaves live in different buckets by tier: converged (core/csl)
+            # land in categories['core']; 2-tier split leaves (cl) land in
+            # categories['cl']. A cs spine only exists at 2-tier, where the
+            # leaves are cl — so the overlay peer set MUST include
+            # categories['cl']. Reading categories['core'] alone left the spine
+            # with zero overlay peers → it was an EVPN RR for nobody → the cl
+            # leaves' overlay sessions to the spine loopbacks never came up and
+            # VLAN-200 (OOB) never stretched → servers behind OOB unreachable.
+            core_nodes = categories.get('core', []) + categories.get('cl', [])
+            for leaf_idx, leaf in enumerate(core_nodes, start=1):
+                if leaf.get('category') not in ('core', 'csl', 'cl'):
+                    continue
+                leaf_loop = (loopback_overrides or {}).get(leaf.get('name') or leaf.get('role'), {})
+                if leaf_loop.get('lo'):
+                    csl_leaf_peers.append(leaf_loop['lo'].split('/')[0])
+                else:
+                    csl_leaf_peers.append(f"{loopback_base}.{10 + leaf_idx}")
+            # ADR-0006: a dedicated cs spine is the EVPN overlay HUB for both the
+            # cl leaves (INBAND/storage VTEPs) AND the oob-switches (VLAN-200
+            # VTEPs). Add the oob-switch loopbacks so oob↔cs↔oob forms and
+            # VLAN-200 stretches (the oob side already peers cs via
+            # _derive_core_overlay_peers; the spine must peer back). Converged
+            # csl (ns_tiers = 1) has no cs spine so this block never runs there.
+            if csl_leaf_peers and int((settings or {}).get('ns_tiers') or 1) > 1:
+                csl_leaf_peers = csl_leaf_peers + _derive_oob_overlay_peers(
+                    nodes=nodes, loopback_overrides=loopback_overrides)
+            if csl_leaf_peers:
+                host_vars['overlay_peers'] = csl_leaf_peers
+
+        # GS-Spine (GPU E/W Spine) host vars — plane-aware, loopback from Loopbacks sheet
+        if node.get('category') in ('gs-plane1', 'gs-plane2'):
+            plane_num = 1 if node.get('category') == 'gs-plane1' else 2
+            gs_spine_nodes = categories.get(f'gs_plane{plane_num}', [])
+            spine_idx = next((i for i, n in enumerate(gs_spine_nodes, start=1) if n is node), 1)
+            host_vars['plane'] = plane_num
+            sw_loop = (loopback_overrides or {}).get(node['name'] or role, {})
+            if sw_loop.get('lo'):
+                host_vars['lo_ip'] = _ensure_mask(sw_loop['lo'])
+                host_vars['router_id'] = sw_loop['lo'].split('/')[0]
+            else:
+                host_vars['lo_ip'] = f"10.{plane_num}.1.{4 + spine_idx}/32"
+                host_vars['router_id'] = f"10.{plane_num}.1.{4 + spine_idx}"
+            # Base-relative per-plane ASN (was hardcoded 4200101100/4200102100,
+            # which ignored Settings.bgp_asn → wrong AS family for any arch whose
+            # base ASN isn't 4200100001). Plane offset keeps it clear of the
+            # gsl-leaf +1000 block and of OOB/csl-spine.
+            base_asn = int(settings.get('bgp_asn') or 4200100001)
+            host_vars['asn'] = base_asn + GSL_SPINE_ASN_OFFSET + (plane_num - 1) * GSL_PLANE_ASN_STRIDE
+            gsl_cfg = (gsl_port_configs or {}).get(node.get('name') or role, {})
+            for k in ('isl_subports', 'isl_breakout_parents'):
+                if gsl_cfg.get(k):
+                    host_vars[k] = gsl_cfg[k]
+            if host_vars.get('isl_breakout_parents'):
+                host_vars['isl_ports'] = host_vars['isl_breakout_parents']
+            if host_vars.get('isl_subports'):
+                host_vars['underlay_neighbors'] = [
+                    p for p in host_vars['isl_subports'].split(',') if p
+                ]
+
+            gsl_leaf_peers = []
+            _plane_leaves = (categories.get(f'gsl_plane{plane_num}', [])
+                             + categories.get(f'gl_plane{plane_num}', []))
+            for leaf_idx, leaf in enumerate(_plane_leaves, start=1):
+                leaf_loop = (loopback_overrides or {}).get(leaf.get('name') or leaf.get('role'), {})
+                if leaf_loop.get('lo'):
+                    gsl_leaf_peers.append(leaf_loop['lo'].split('/')[0])
+                else:
+                    leaf_num = leaf.get('index') or leaf_idx
+                    gsl_leaf_peers.append(f"10.{plane_num}.1.{leaf_num}")
+            if gsl_leaf_peers:
+                host_vars['overlay_peers'] = gsl_leaf_peers
 
         # Add OOB switch specific variables derived from Wire Map
         if node.get('category') == 'oob-switch':
@@ -3527,7 +4491,13 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_ove
                 host_vars['spine_bond_members'] = ['swp49', 'swp51']
 
             if _normalize_oob_uplink_mode(settings) == 'l3':
-                oob_idx = node.get('index', 1)
+                # Sequential index avoids ASN collision when hostnames
+                # share trailing digits (e.g. two OOB switches whose names
+                # both end in the same digit → same derived index). Dedicated spines live in
+                # their own ASN block (CSL_SPINE_ASN_OFFSET), so OOB sits
+                # directly above the base (base+1..) — no spine collision.
+                oob_nodes = [n for n in nodes_to_process if n.get('category') == 'oob-switch']
+                oob_idx = next((i for i, n in enumerate(oob_nodes, start=1) if n is node), 1)
                 sw_loop = (loopback_overrides or {}).get(oob_key, {})
 
                 # Excel Loopbacks sheet wins; otherwise compute from
@@ -3541,7 +4511,7 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_ove
                     host_vars['lo_ip'] = f"{loopback_base}.{30 + oob_idx}/32"
 
                 base_asn = int(settings.get('bgp_asn', 65000))
-                host_vars['bgp_asn'] = base_asn + oob_idx
+                host_vars['bgp_asn'] = base_asn + OOB_ASN_OFFSET + oob_idx
 
                 host_vars['vrr_ip'] = f"{node['gateway']}/{node['prefix']}"
 
@@ -3576,7 +4546,7 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_ove
         # Use node['name'] (the hostname from the Name column) for every
         # node. Legacy Excels had role == name so this preserves prior
         # filenames; canonical Excels carry the hostname only in name.
-        inv_hostname = node['name'] or role
+        inv_hostname = assert_valid_inv_hostname(node['name'] or role)
         output_file = host_vars_dir / f"{inv_hostname}.yml"
         with open(output_file, 'w') as f:
             f.write("---\n")
@@ -3608,11 +4578,20 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
             '2.cumulusnetworks.pool.ntp.org',
             '3.cumulusnetworks.pool.ntp.org',
         ]
+    # `tiers` was split into ns_tiers (compute) + ew_tiers (GPU). A bare legacy
+    # `tiers` seeds both for back-compat; warn so the operator migrates.
+    if settings.get('tiers') is not None and \
+            settings.get('ns_tiers') is None and settings.get('ew_tiers') is None:
+        print("  ⚠️  Settings.tiers is deprecated — use ns_tiers (compute) and "
+              "ew_tiers (GPU); seeding both from tiers for now.",
+              file=sys.stderr)
+
     all_vars = {
         'architecture': settings.get('architecture', '2-4-3-200'),
         'scalable_units': settings.get('scalable_units', 8),
         'nodes_per_su': settings.get('nodes_per_su', 4),
-        'tiers': settings.get('tiers', 1),
+        'ns_tiers': int(settings.get('ns_tiers', settings.get('tiers', 1)) or 1),
+        'ew_tiers': int(settings.get('ew_tiers', settings.get('tiers', 1)) or 1),
         'convergence': settings.get('convergence', 'full'),
         'gpu_planes': int(settings.get('gpu_planes', 1)),
         'oob_uplink_mode': _normalize_oob_uplink_mode(settings),
@@ -3632,6 +4611,28 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
             # Prefer the Excel Gateway column; fall back to base.1 if empty.
             common[f"{name_key}_gateway"] = vlan.get('gateway') or f"{base_ip}.1"
             common[f"{name_key}_vlan"] = vlan['id']
+            # Per-VLAN VRF assignment from the Excel. Consumed by
+            # validate-ping-matrix to classify cross-VRF pings correctly:
+            # on archs where Storage lives in its own STORAGE VRF (2-4-5-800,
+            # 2-8-9-800), compute→storage pings are CROSS-VRF and expected
+            # to fail. On legacy archs where Storage is merged into INBAND,
+            # they're same-VRF and expected to pass.
+            common[f"{name_key}_vrf"] = (vlan.get('vrf') or 'default').strip() or 'default'
+
+    # Storage server VLAN tagging signal (consumed by air-deploy.py server
+    # netplan). The switch storage port is untagged/access when the Storage
+    # role carries only the storage VLAN (e.g. `access 500` on collapsed-core
+    # archs) — the server must put the storage IP on the raw bond. It is a
+    # tagged trunk member when the role trunks multiple VLANs and the storage
+    # VLAN is not the native/untagged one (e.g. `vlan 400,500` untagged 300 on
+    # 2-4-5-800) — the server must tag via bond.<vlan>. Mismatch = frames
+    # dropped at the switch port. Derived from the Storage network role's
+    # actual VLAN membership; defaults to untagged when unknown (the
+    # historically-safe collapsed-core behavior).
+    storage_role = ((port_config or {}).get('network_roles') or {}).get('storage') or {}
+    if 'storage_vlan' in common:
+        role_vlan = str(storage_role.get('vlan') or '').strip()
+        common['storage_vlan_tagged'] = bool(role_vlan) and role_vlan != str(common['storage_vlan'])
 
     # Optional operator-configurable SSH login banners (pre + post-login).
     # Empty → templates emit no `nv set system message ...` line and leave
@@ -3740,11 +4741,16 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
     # Build ztp_interfaces: eth1 (air-mgmt for switch ZTP) + ethN per mgmt_subnet.
     # In L3 mode external-dhcp only needs the air-mgmt interface (cust-net-edge
     # bridge) — server-side DHCP on VLAN 200 is hosted by utility, separately.
+    # Its DHCP gateway is the cust-net-edge-01 bridge SVI (.254); external-conn
+    # sits on separate routed EXIT egress legs, not on this management subnet.
+    air_mgmt_gateway = (
+        f"{air_mgmt_base}.254" if _mode == 'l3' else f"{air_mgmt_base}.1"
+    )
     ztp_ifaces = [{
         'name': 'eth1',
         'ip': f"{air_mgmt_base}.77",
         'network': air_mgmt_subnet,
-        'gateway': f"{air_mgmt_base}.1",
+        'gateway': air_mgmt_gateway,
         'purpose': 'air-mgmt',
         'dnsmasq_listen': True,
     }]
@@ -3974,7 +4980,20 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
         settings = dict(settings)
         settings['_derived_oob_overlay_peers'] = _derive_oob_overlay_peers(
             nodes=nodes, loopback_overrides=loopback_overrides)
+        # ADR-0006: on a dedicated cl/cs spine-leaf tier (ns_tiers > 1) the EVPN
+        # overlay is hub-and-spoke through the cs spines, NOT a cl↔oob mesh. The
+        # cl leaves must peer the cs spine loopbacks for overlay (so cl↔cs↔cl
+        # stretches INBAND/storage), while the oob-switches peer cs for VLAN-200.
+        # _derive_core_overlay_peers returns the cs spine loopbacks when spines
+        # exist (same list the oob-switches use), so reuse it here.
+        settings['_derived_cs_spine_overlay_peers'] = _derive_core_overlay_peers(
+            nodes=nodes, loopback_overrides=loopback_overrides)
     _apply_oob_l3_uplink_mode(core_vars, settings)
+    # Order matters: supplement first (may add new vrf_config entries with
+    # placeholder `interfaces: []`), then sync overwrites those placeholders
+    # with the Excel-driven edge_interfaces port list.
+    _supplement_vrf_config_from_excel(core_vars, vrfs, dhcp_relay_table, vlans)
+    _sync_edge_vrf_neighbors(core_vars)
 
     # Overlay Excel-driven L3 VNIs onto the source-inventory `vrf_config`
     # list. Without this, the Excel "L3 VNI" column on the VLANs & Profiles
@@ -3994,12 +5013,35 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
         yaml.dump(core_vars, f, default_flow_style=False, sort_keys=False)
     generated_files.append(core_file)
 
+    active_nodes_for_group_vars = [
+        node for node in (nodes or [])
+        if node.get('status', 'Active') not in ('Disabled', 'Air')
+        and node.get('enabled', True)
+    ]
+    group_var_categories = {
+        canonical_category(
+            node.get('category') or node.get('role') or node.get('function'),
+            node.get('name'),
+        )
+        for node in active_nodes_for_group_vars
+    }
+    has_csl_nodes = 'csl' in group_var_categories
+    has_cl_nodes = 'cl' in group_var_categories
+    gsl_planes_present = {
+        plane_num
+        for plane_num, categories_for_plane in (
+            (1, ('gsl-plane1', 'gl-plane1')),
+            (2, ('gsl-plane2', 'gl-plane2')),
+        )
+        if any(c in group_var_categories for c in categories_for_plane)
+    }
+
     # csl.yml — for dedicated_gpu designs where the converged switches are
     # CSL (CPU/Storage Leaf) rather than Core. Same vars as core.yml minus
     # the GPU plane (VLAN 900, GPU VRF) which belongs on GSL switches only.
     import shutil  # used below
     project_root = Path(__file__).resolve().parent.parent
-    if (project_root / "inventories" / arch / "group_vars" / "csl.yml").exists():
+    if has_csl_nodes or (project_root / "inventories" / arch / "group_vars" / "csl.yml").exists():
         csl_vars = _strip_gpu_plane(core_vars, vlans)
         csl_file = group_vars_dir / "csl.yml"
         with open(csl_file, 'w') as f:
@@ -4008,13 +5050,88 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
             yaml.dump(csl_vars, f, default_flow_style=False, sort_keys=False)
         generated_files.append(csl_file)
 
-    # gsl_plane1.yml / gsl_plane2.yml — copied from source inventory verbatim.
+    # cl.yml — split-role (non-converged) CPU/Storage leaf. Same vars as
+    # csl.yml (core_vars minus the GPU plane), emitted under the cl group
+    # name so the playbook can select the leaf template. Only generated when
+    # cl nodes exist or a source cl.yml is present; converged archs are
+    # unaffected.
+    if has_cl_nodes or (project_root / "inventories" / arch / "group_vars" / "cl.yml").exists():
+        cl_vars = _strip_gpu_plane(core_vars, vlans)
+        cl_file = group_vars_dir / "cl.yml"
+        with open(cl_file, 'w') as f:
+            f.write("---\n")
+            f.write(f"# CL Switch Configuration (Generated from Excel + Source Inventory - {arch})\n\n")
+            yaml.dump(cl_vars, f, default_flow_style=False, sort_keys=False)
+        generated_files.append(cl_file)
+
+    # GPU leaf plane group_vars — copied from source inventory verbatim.
     # Per-plane vars (asn, vlan900_vrr) live in source; we don't try to
-    # derive these from the Excel today.
-    for plane_file in ("gsl_plane1.yml", "gsl_plane2.yml"):
-        src = project_root / "inventories" / arch / "group_vars" / plane_file
-        if src.exists():
+    # derive these from the Excel today. Each plane may use either the
+    # legacy gsl_plane*.yml or the new gl_plane*.yml source filename; the
+    # output group_vars file is named to match whichever source exists so
+    # the generated inventory group ([gsl_plane1] vs [gl_plane1]) resolves.
+    for plane_num in (1, 2):
+        src_legacy = project_root / "inventories" / arch / "group_vars" / f"gsl_plane{plane_num}.yml"
+        src_new = project_root / "inventories" / arch / "group_vars" / f"gl_plane{plane_num}.yml"
+        # The OUTPUT filename must match the inventory group the leaves land in
+        # ([gl_plane{N}] vs legacy [gsl_plane{N}]) — i.e. the actual leaf naming
+        # — NOT whichever source filename happens to exist. Otherwise asn /
+        # vlan900_vrr land in a file the group never reads and the GPU leaves
+        # render with 'asn' undefined. Source CONTENT may come from either name.
+        if f'gl-plane{plane_num}' in group_var_categories:
+            plane_file = f"gl_plane{plane_num}.yml"
+        else:
+            plane_file = f"gsl_plane{plane_num}.yml"
+        src = src_new if src_new.exists() else (src_legacy if src_legacy.exists() else None)
+        if src is not None:
             dst = group_vars_dir / plane_file
+            shutil.copy2(src, dst)
+            generated_files.append(dst)
+        elif plane_num in gsl_planes_present:
+            gpu_vlans = [
+                v for v in vlans
+                if str(v.get('vrf') or '').strip().upper() == 'GPU'
+            ]
+            preferred = next(
+                (
+                    v for v in gpu_vlans
+                    if str(v.get('name') or '').strip().lower() == f'gpu_plane{plane_num}'
+                ),
+                gpu_vlans[plane_num - 1] if len(gpu_vlans) >= plane_num else (gpu_vlans[0] if gpu_vlans else {}),
+            )
+            subnet = preferred.get('subnet') or ('192.168.0.0/20' if plane_num == 1 else '192.168.16.0/20')
+            try:
+                net = ipaddress.ip_network(subnet, strict=False)
+                default_vrr = f"{net.network_address + 1}/{net.prefixlen}"
+            except ValueError:
+                default_vrr = '192.168.0.1/20' if plane_num == 1 else '192.168.16.1/20'
+            vlan900_vrr = preferred.get('gateway') or default_vrr
+            if '/' not in str(vlan900_vrr):
+                vlan900_vrr = f"{vlan900_vrr}/{str(default_vrr).split('/')[-1]}"
+            try:
+                plane_asn = int(core_vars.get('bgp_asn') or settings.get('bgp_asn') or 4200100001) + 1000 + (plane_num - 1)
+            except (TypeError, ValueError):
+                plane_asn = 4200101000 + (plane_num - 1)
+
+            dst = group_vars_dir / plane_file
+            with open(dst, 'w') as f:
+                f.write("---\n")
+                f.write(f"# GSL Plane {plane_num} Configuration (Generated from Excel - {arch})\n\n")
+                yaml.dump({
+                    'asn': plane_asn,
+                    'vlan900_vrr': vlan900_vrr,
+                    'gpu_subnet': subnet,
+                }, f, default_flow_style=False, sort_keys=False)
+            generated_files.append(dst)
+
+    # Spine group_vars — copied from source inventory verbatim. cs.yml is the
+    # split-role (non-converged) CPU/Storage spine; gs_plane*.yml are the GPU
+    # spines. Only copied when the source file exists, so converged archs
+    # (which ship no spine group_vars) are unaffected.
+    for spine_file in ("cs.yml", "gs_plane1.yml", "gs_plane2.yml"):
+        src = project_root / "inventories" / arch / "group_vars" / spine_file
+        if src.exists():
+            dst = group_vars_dir / spine_file
             shutil.copy2(src, dst)
             generated_files.append(dst)
 
@@ -4087,9 +5204,13 @@ def process_excel_template(excel_path, output_dir):
         output_dir: Final output directory (e.g. output/<arch>/<site>/inventory/).
                     Files are written directly here — no subdirectories are created.
     """
+    # Start each generation run with a clean MAC collision registry so repeated
+    # in-process runs (tests, batch invocations) can't accumulate stale state
+    # and mis-detect collisions. No effect on a single `make generate` process.
+    reset_mac_registry()
     print(f"\nProcessing: {excel_path}")
 
-    wb = openpyxl.load_workbook(excel_path, data_only=True)
+    wb = load_workbook_safe(excel_path, data_only=True)
 
     # R4-05: pre-check required sheets so direct callers (not via
     # `make generate`'s validate gate) get a friendly error instead of
@@ -4127,7 +5248,8 @@ def process_excel_template(excel_path, output_dir):
     if 'Wire Map' in wb.sheetnames:
         ws_wm = wb['Wire Map']
         ws_air_only = wb['Air_Only'] if 'Air_Only' in wb.sheetnames else None
-        oob_switch_configs = parse_oob_switch_configs(ws_wm, ws_air_only)
+        oob_switch_configs = parse_oob_switch_configs(ws_wm, ws_air_only,
+                                                        nodes_function_map=nodes_function_map)
         port_config = parse_core_port_config(
             ws_wm, wb['VLANs & Profiles'],
             nodes_function_map=nodes_function_map,
@@ -4135,6 +5257,14 @@ def process_excel_template(excel_path, output_dir):
             oob_uplink_mode=_normalize_oob_uplink_mode(settings),
         )
         gsl_port_configs = parse_gsl_port_config(ws_wm, nodes_function_map=nodes_function_map)
+        # ADR-0004: per-switch server bonds + per-node ESI for the dedicated
+        # N/S compute leaf tier (cl-* always; csl-* when ns_tiers>1, where the
+        # csl name is legacy for a cl role — e.g. 2-8-9-800 maxscale). Empty for
+        # converged csl/core (ns_tiers==1), which keep the golden shared config.
+        per_switch_network_roles = build_per_switch_server_roles(
+            ws_wm, (port_config or {}).get('network_roles'),
+            nodes_function_map=nodes_function_map,
+            dedicated_ns_tier=int((settings or {}).get('ns_tiers') or 1) > 1)
         node_oob_mapping = parse_node_mgmt_mapping(ws_wm, new_format=new_format)
         # Build combined wiremap rows for interface mapping (same order as topology generator)
         wiremap_rows = _build_wiremap_row_list(ws_wm, ws_air_only,
@@ -4180,6 +5310,7 @@ def process_excel_template(excel_path, output_dir):
         oob_switch_configs = {}
         port_config = None
         gsl_port_configs = {}
+        per_switch_network_roles = {}
 
     print(f"  Format: {'new (Air_Only sheet)' if new_format else 'legacy'}")
     print(f"  Settings: {len(settings)} items")
@@ -4214,7 +5345,8 @@ def process_excel_template(excel_path, output_dir):
                                           vrfs, air_settings, gsl_port_configs,
                                           loopback_overrides, wiremap_rows=wiremap_rows,
                                           storage_uplink_ports=storage_uplink_ports if 'Wire Map' in wb.sheetnames else None,
-                                          bond_descriptions_per_switch=bond_descriptions_per_switch if 'Wire Map' in wb.sheetnames else None)
+                                          bond_descriptions_per_switch=bond_descriptions_per_switch if 'Wire Map' in wb.sheetnames else None,
+                                          per_switch_network_roles=per_switch_network_roles)
 
     # Merge host_vars for Air virtual nodes from source inventory.
     # These nodes don't appear in the Excel Nodes sheet but need host_vars.

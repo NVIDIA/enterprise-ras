@@ -324,6 +324,52 @@ class TestTopologyGenerator:
         assert nodes["core-01"]["os"] == SWITCH_OS_FALLBACK
         assert nodes["su-01-node-01"]["os"] == SERVER_OS
 
+    def test_switches_only_drops_servers_keeps_ports(self, tmp_path):
+        """switches_only: server VMs are removed, but each server-facing switch
+        port survives as an `unconnected` stub so the switch config still
+        references an existing interface (Air rolls back the apply otherwise)."""
+        rows = [
+            # a server on core-01:swp1s0
+            ["Yes", "su-01-node-01", "su-01-node-01", "NIC1_P1", None, None,
+             "CPU/In-Band Network", None, None, None,
+             "core-01", "core-01", "swp1s0"],
+        ]
+        wb = _build_wiremap_workbook(rows=rows)
+        path = _write_workbook(wb, tmp_path, arch="2-8-5-200")
+        gen = TopologyGenerator(path, "2-8-5-200", "default", switches_only=True)
+        topo = gen.generate()
+
+        nodes = topo["content"]["nodes"]
+        # server VM dropped, switch kept
+        assert "su-01-node-01" not in nodes
+        assert "core-01" in nodes
+        # server-facing port preserved as an unconnected stub
+        links = topo["content"]["links"]
+        port_present = any(
+            isinstance(l, list)
+            and any(isinstance(e, dict) and e.get("node") == "core-01"
+                    and e.get("interface") == "swp1s0" for e in l)
+            for l in links
+        )
+        assert port_present, "core-01:swp1s0 must remain so the switch config applies"
+        # no link should reference the dropped server
+        assert not any(
+            isinstance(l, list)
+            and any(isinstance(e, dict) and e.get("node") == "su-01-node-01" for e in l)
+            for l in links
+        )
+
+    def test_switches_only_default_off(self, tmp_path):
+        """Without switches_only, servers are retained (regression guard)."""
+        rows = [
+            ["Yes", "su-01-node-01", "su-01-node-01", "NIC1_P1", None, None,
+             "CPU/In-Band Network", None, None, None,
+             "core-01", "core-01", "swp1s0"],
+        ]
+        gen = self._make_minimal_topology(tmp_path, rows)
+        topo = gen.generate()
+        assert "su-01-node-01" in topo["content"]["nodes"]
+
     def test_link_creation(self, tmp_path):
         """Links are created from wiremap connections."""
         rows = [
@@ -564,8 +610,8 @@ class TestL3OobInjection:
         assert "dhcp-oob" not in nodes
         assert "oob-server-01" not in nodes
 
-    def test_l3_mode_external_conn_wired_to_edge_swp1(self, tmp_path):
-        """external-conn:eth1 lands on cust-net-edge-01:swp1."""
+    def test_l3_mode_external_conn_wired_to_edge(self, tmp_path):
+        """external-conn:eth1 lands on a cust-net-edge-01 port (dynamically allocated after switch eth0s)."""
         wb = _build_wiremap_workbook(
             rows=self._l3_wiremap(),
             settings=[("oob_uplink_mode", "l3")],
@@ -579,14 +625,15 @@ class TestL3OobInjection:
             if not (isinstance(link[0], dict) and isinstance(link[1], dict)):
                 continue
             endpoints = {(e["node"], e["interface"]) for e in link}
-            if ("external-conn", "eth1") in endpoints and \
-               ("cust-net-edge-01", "swp1") in endpoints:
+            ext_match = any(n == "external-conn" and i == "eth1" for n, i in endpoints)
+            edge_match = any(n == "cust-net-edge-01" for n, _ in endpoints)
+            if ext_match and edge_match:
                 found = True
                 break
-        assert found, "external-conn:eth1 should link to cust-net-edge-01:swp1"
+        assert found, "external-conn:eth1 should link to cust-net-edge-01"
 
-    def test_l3_mode_external_dhcp_wired_to_edge_swp2(self, tmp_path):
-        """external-dhcp:eth1 lands on cust-net-edge-01:swp2."""
+    def test_l3_mode_external_dhcp_wired_to_edge(self, tmp_path):
+        """external-dhcp:eth1 lands on a cust-net-edge-01 port (dynamically allocated after switch eth0s)."""
         wb = _build_wiremap_workbook(
             rows=self._l3_wiremap(),
             settings=[("oob_uplink_mode", "l3")],
@@ -600,14 +647,15 @@ class TestL3OobInjection:
             if not (isinstance(link[0], dict) and isinstance(link[1], dict)):
                 continue
             endpoints = {(e["node"], e["interface"]) for e in link}
-            if ("external-dhcp", "eth1") in endpoints and \
-               ("cust-net-edge-01", "swp2") in endpoints:
+            ext_match = any(n == "external-dhcp" and i == "eth1" for n, i in endpoints)
+            edge_match = any(n == "cust-net-edge-01" for n, _ in endpoints)
+            if ext_match and edge_match:
                 found = True
                 break
-        assert found, "external-dhcp:eth1 should link to cust-net-edge-01:swp2"
+        assert found, "external-dhcp:eth1 should link to cust-net-edge-01"
 
-    def test_l3_mode_switch_eth0s_on_edge_starting_swp3(self, tmp_path):
-        """Cluster-switch eth0s land on cust-net-edge-01 at swp3 or higher."""
+    def test_l3_mode_switch_eth0s_on_edge_no_port_collision(self, tmp_path):
+        """Cluster-switch eth0s land on cust-net-edge-01 with no duplicate ports."""
         wb = _build_wiremap_workbook(
             rows=self._l3_wiremap(),
             settings=[("oob_uplink_mode", "l3")],
@@ -616,11 +664,14 @@ class TestL3OobInjection:
         topo = TopologyGenerator(path, "2-8-5-200").generate()
 
         links = topo["content"]["links"]
+        edge_ports = []
         sw_eth0_to_edge = []
         for link in links:
             if not (isinstance(link[0], dict) and isinstance(link[1], dict)):
                 continue
             for sw_ep, edge_ep in ((link[0], link[1]), (link[1], link[0])):
+                if edge_ep.get("node") == "cust-net-edge-01":
+                    edge_ports.append(edge_ep["interface"])
                 if (sw_ep.get("interface") == "eth0"
                         and edge_ep.get("node") == "cust-net-edge-01"):
                     sw_eth0_to_edge.append(
@@ -630,10 +681,9 @@ class TestL3OobInjection:
         sw_names = {n for n, _ in sw_eth0_to_edge}
         assert "core-01" in sw_names
         assert "oob-switch-01" in sw_names
-        # Ports should all be swp3 or higher (swp1/swp2 reserved).
-        for _, port in sw_eth0_to_edge:
-            port_num = int(port.replace("swp", ""))
-            assert port_num >= 3, f"switch eth0 on reserved port {port}"
+        # No duplicate ports on the edge switch.
+        assert len(edge_ports) == len(set(edge_ports)), \
+            f"duplicate ports on cust-net-edge-01: {edge_ports}"
 
     def test_l3_mode_utility_eth1_on_oob_switch_01(self, tmp_path):
         """utility:eth1 lands on oob-switch-01 (eth0 is reserved for outbound)."""
@@ -732,9 +782,9 @@ class TestL3OobInjection:
         assert "air-oob-switch" in topo["content"]["nodes"]
         assert "external-conn" not in topo["content"]["nodes"]
 
-    def test_l3_mode_skips_when_anchor_nodes_missing(self, tmp_path):
-        """L3 mode with no cust-net-edge-01 in wiremap → warning, no injection."""
-        # Wiremap with cores but NO cust-net-edge
+    def test_l3_mode_auto_creates_edge_when_missing(self, tmp_path):
+        """L3 mode with no cust-net-edge-01 in wiremap → auto-creates it."""
+        # Wiremap with cores and oob-switch but NO cust-net-edge
         rows = [
             ["Yes", "su-01-node-01", "su-01-node-01", "NIC1_P1", None, None,
              "CPU/In-Band Network", None, None, None,
@@ -751,10 +801,11 @@ class TestL3OobInjection:
         topo = TopologyGenerator(path, "2-8-5-200").generate()
 
         nodes = topo["content"]["nodes"]
-        # No L3 trio because the anchor is missing
-        assert "external-conn" not in nodes
-        assert "external-dhcp" not in nodes
-        assert "utility" not in nodes
+        # cust-net-edge-01 auto-created, L3 trio injected
+        assert "cust-net-edge-01" in nodes
+        assert "external-conn" in nodes
+        assert "external-dhcp" in nodes
+        assert "utility" in nodes
 
 
 # ---------------------------------------------------------------------------
@@ -1114,13 +1165,21 @@ class TestSwitchNIPasswordNotLeaked:
 
     def test_apply_script_brackets_chpasswd_with_xtrace_off(self):
         """Static structural check: the chpasswd line sits between `set +x`
-        and `set -x`, and the script still opens with errexit."""
+        and `set -x` (password never reaches xtrace). The script opens with
+        `set -x` for first-boot debugging; errexit is applied per-attempt
+        INSIDE the nvued-retry subshell, not at the top level — a top-level
+        `set -e` would abort the 6-attempt retry loop on the first transient
+        nvued error (see the era-apply retry design). Total failure is still
+        caught by the explicit `if [ "$ok" != 1 ]; then exit 1`."""
         build = self._builder()
         cmds = build("oob-switch-01", "# nvue config\n", "172.20.0.5", self.PASSWORD)
         script = self._decode_apply_script(cmds)
 
-        assert script.startswith("#!/bin/bash\nset -ex\n"), \
-            "apply.sh must still run with errexit (set -e)"
+        assert script.startswith("#!/bin/bash\nset -x\n"), \
+            "apply.sh must open with xtrace (set -x)"
+        # errexit lives inside the per-attempt retry subshell, not at the top.
+        assert re.search(r"\(\s*\n\s*set -e\b", script), \
+            "each apply attempt must run under errexit (set -e) inside the retry subshell"
 
         lines = script.splitlines()
         chpasswd_idx = next(i for i, l in enumerate(lines) if "chpasswd" in l)

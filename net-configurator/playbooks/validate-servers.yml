@@ -31,131 +31,69 @@
       when: sshpass_check.rc != 0
       become: true
 
-    - name: Validate each server
+    - name: Copy server validation probe to the jump
+      copy:
+        src: "{{ playbook_dir }}/../scripts/server_validate_probe.sh"
+        dest: /tmp/server_validate_probe.sh
+        mode: "0755"
+
+    # Tell the operator the next step is a single, deliberately-quiet collection
+    # so the dead air during the parallel fan-out doesn't read as a hang.
+    - name: "Progress — validating servers in parallel"
+      debug:
+        msg: >-
+          Validating bonds / VLANs / connectivity on {{ server_groups | length }}
+          server(s) in parallel via the jump. This runs as ONE step and stays
+          quiet until every server returns (up to a few minutes at scale) —
+          silence here is expected, not a hang.
+      run_once: true
+
+    # Parallel fan-out: one backgrounded `probe &` per server, then `wait`. The
+    # probe (a file) holds the gather + ping logic; jinja computes each server's
+    # SRC_IP / EXPECTED_GW / ROLE from devices/groups/common (preserving the
+    # original independent-if precedence: storage < support < gpu < compute) and
+    # passes them as args. Per-server output (RESULT|... + ---RAW:---) is
+    # reshaped into the original validation_results contract below, so every
+    # downstream task (parse, report, raw files, cross-ping) is unchanged.
+    # Serial loop over 155 servers (~8 SSH each) -> all concurrent.
+    - name: Validate all servers in parallel (fan-out of probe calls)
       shell: |
-        export SSHPASS='{{ server_ansible_password }}'
-        HOST='{{ hostvars[item].ansible_host }}'
-        NAME='{{ item }}'
-        SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ubuntu@$HOST"
-
-        # ── Connectivity check ──
-        if ! timeout 15 $SSH_CMD 'hostname' >/dev/null 2>&1; then
-          echo "RESULT|$NAME|UNREACHABLE|$HOST||||||||"
-          exit 0
-        fi
-
-        # ── Gather data ──
-        HOSTNAME=$($SSH_CMD 'hostname' 2>/dev/null)
-        ETH0_IP=$($SSH_CMD "ip -4 addr show eth0 2>/dev/null | grep -oP 'inet \K[0-9./]+'" 2>/dev/null)
-        ALL_IPS=$($SSH_CMD "ip -4 -br addr show 2>/dev/null | grep -v '127.0.0' | awk '{printf \"%s=%s \", \$1, \$3}'" 2>/dev/null)
-        BOND_EXISTS=$($SSH_CMD 'test -d /proc/net/bonding && ls /proc/net/bonding/ 2>/dev/null || echo none' 2>/dev/null)
-        BOND_MODE=$($SSH_CMD 'cat /proc/net/bonding/bond0 2>/dev/null | grep "Bonding Mode" | sed "s/.*: //"' 2>/dev/null)
-        BOND_ACTIVE=$($SSH_CMD 'cat /proc/net/bonding/bond0 2>/dev/null | grep "Currently Active" | sed "s/.*: //"' 2>/dev/null)
-        VLAN_IFACES=$($SSH_CMD "ip -br link show type vlan 2>/dev/null | awk '{print \$1}' | tr '\n' ',' | sed 's/,$//'" 2>/dev/null)
-        LLDPD=$($SSH_CMD 'systemctl is-active lldpd 2>/dev/null' 2>/dev/null)
-
-        # ── Determine expected VLAN gateway and source IP based on node role ──
+        WORK=$(mktemp -d /tmp/srvv.XXXXXX)
+        {% for item in server_groups %}
         {% set src_dev = devices.get(item, {}) %}
-        {# `gpu-` naming is the 2-8-9-800 convention; `su-NN-node-MM` / `node-`
-           cover the older archs (2-4-3-200, 2-8-5-200, 2-8-9-400). Same
-           three prefixes used in validate-ping-matrix.yml so behavior stays
-           consistent across validation playbooks. #}
         {% set src_is_compute = item.startswith('su-') or item.startswith('node-') or item.startswith('gpu-') %}
         {% set src_inband_ip = (src_dev.get('bond_ip', '') if src_is_compute else src_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
-        SRC_IP="{{ src_inband_ip }}"
-        EXPECTED_GW=""
-        ROLE="unknown"
-        {% if item in groups.get('storage', []) %}
-        EXPECTED_GW="{{ common.storage_gateway | default('') }}"
-        ROLE="storage"
-        {% endif %}
-        {% if item in groups.get('support', []) %}
-        EXPECTED_GW="{{ common.support_gateway | default('') }}"
-        ROLE="support"
-        {% endif %}
-        {% if src_dev.get('gpu_interfaces') or src_dev.get('gpu_ips') %}
-        EXPECTED_GW="{{ common.cpu_gateway | default('') }}"
-        ROLE="gpu"
-        {% endif %}
-        {% if item in groups.get('nodes', []) and not (src_dev.get('gpu_interfaces') or src_dev.get('gpu_ips')) %}
-        EXPECTED_GW="{{ common.cpu_gateway | default('') }}"
-        ROLE="compute"
-        {% endif %}
-
-        # ── Gateway ping test (use source IP for PBR compatibility) ──
-        # The data-plane VRR/anycast gateway is reached over an EVPN-MH bond
-        # whose convergence can lag the server's boot by 10-30s. The naive
-        # warm-up-then-measure pattern poisons the kernel's neighbor cache
-        # to FAILED when fabric isn't ready yet (subsequent pings then return
-        # DHU instantly without re-trying ARP). Three mitigations here:
-        #   1. Longer warm-up timeout (-W 10) — covers more of the kernel's
-        #      mcast_solicit budget so ARP has a chance to resolve.
-        #   2. Targeted neighbor-cache flush between warm-up and measure —
-        #      removes any FAILED entry the warm-up may have created so the
-        #      measure ping does a fresh resolution with its own budget.
-        #   3. Retry the whole sequence up to 3× with 10s backoff — absorbs
-        #      multi-second fabric convergence (EVPN type-2 propagation,
-        #      VRR-DF election, FDB sync).
-        GW_PING="SKIP"
-        if [ -n "$EXPECTED_GW" ] && [ -n "$SRC_IP" ]; then
-          for _attempt in 1 2 3; do
-            PING_RESULT=$($SSH_CMD "IFACE=\$(ip -o route get $EXPECTED_GW from $SRC_IP 2>/dev/null | grep -oP 'dev \\K\\S+' | head -1); ping -c 1 -W 10 $EXPECTED_GW -I $SRC_IP >/dev/null 2>&1; sudo -n ip neigh del $EXPECTED_GW dev \$IFACE 2>/dev/null || true; ping -c 2 -W 5 $EXPECTED_GW -I $SRC_IP 2>&1" 2>/dev/null)
-            if echo "$PING_RESULT" | grep -q "bytes from"; then
-              GW_PING="PASS"
-              break
-            fi
-            GW_PING="FAIL"
-            [ $_attempt -lt 3 ] && sleep 10
-          done
-        fi
-
-        # ── OOB gateway ping (192.168.200.1 via eth0) ──
-        OOB_PING="SKIP"
-        if [ -n "$ETH0_IP" ]; then
-          OOB_RESULT=$($SSH_CMD 'ping -c 1 -W 3 192.168.200.1 -I eth0 >/dev/null 2>&1; ping -c 2 -W 5 192.168.200.1 -I eth0 2>&1' 2>/dev/null)
-          if echo "$OOB_RESULT" | grep -q "bytes from"; then
-            OOB_PING="PASS"
-          else
-            OOB_PING="FAIL"
-          fi
-        fi
-
-        # ── Internet ping (8.8.8.8 via eth0) ──
-        INET_PING="SKIP"
-        if [ "$OOB_PING" = "PASS" ]; then
-          INET_RESULT=$($SSH_CMD 'ping -c 1 -W 3 8.8.8.8 -I eth0 >/dev/null 2>&1; ping -c 2 -W 5 8.8.8.8 -I eth0 2>&1' 2>/dev/null)
-          if echo "$INET_RESULT" | grep -q "bytes from"; then
-            INET_PING="PASS"
-          else
-            INET_PING="FAIL"
-          fi
-        fi
-
-        echo "RESULT|$NAME|OK|$HOST|$HOSTNAME|$ETH0_IP|$BOND_MODE|$BOND_ACTIVE|$VLAN_IFACES|$LLDPD|$GW_PING|$OOB_PING|$INET_PING|$ROLE|$ALL_IPS"
-
-        # ── RAW COMMAND OUTPUT for OEM hand-off ──
-        $SSH_CMD '
-        echo "---RAW:ip_brief---"
-        ip -br a 2>/dev/null
-        echo "---RAW:ip_full---"
-        ip -4 a 2>/dev/null
-        echo "---RAW:routes---"
-        ip route show table all 2>/dev/null
-        echo "---RAW:bond---"
-        for f in /proc/net/bonding/*; do [ -e "$f" ] && echo "=== $f ===" && cat "$f" 2>/dev/null; done
-        echo "---RAW:lldp---"
-        command -v lldpctl >/dev/null 2>&1 && lldpctl 2>/dev/null || echo "(lldpctl not installed)"
-        ' 2>/dev/null
-        echo "---RAW:ping_gw---"
-        echo "${PING_RESULT:-(not run - no source IP or no gateway)}"
-        echo "---RAW:ping_oob---"
-        echo "${OOB_RESULT:-(not run - no eth0 IP)}"
-        echo "---RAW:ping_inet---"
-        echo "${INET_RESULT:-(not run - OOB ping did not pass)}"
-      loop: "{{ server_groups }}"
-      register: validation_results
+        {% set _gw = '' %}
+        {% set _role = 'unknown' %}
+        {% if item in groups.get('storage', []) %}{% set _gw = common.storage_gateway | default('') %}{% set _role = 'storage' %}{% endif %}
+        {% if item in groups.get('support', []) %}{% set _gw = common.support_gateway | default('') %}{% set _role = 'support' %}{% endif %}
+        {% if src_dev.get('gpu_interfaces') or src_dev.get('gpu_ips') %}{% set _gw = common.cpu_gateway | default('') %}{% set _role = 'gpu' %}{% endif %}
+        {% if item in groups.get('nodes', []) and not (src_dev.get('gpu_interfaces') or src_dev.get('gpu_ips')) %}{% set _gw = common.cpu_gateway | default('') %}{% set _role = 'compute' %}{% endif %}
+        bash /tmp/server_validate_probe.sh '{{ hostvars[item].ansible_host }}' '{{ server_ansible_password }}' '{{ item }}' '{{ src_inband_ip }}' '{{ _gw }}' '{{ _role }}' > "$WORK/{{ item }}.out" 2>/dev/null &
+        {% endfor %}
+        wait
+        {% for item in server_groups %}
+        echo "@@@SW@@@{{ item }}"
+        cat "$WORK/{{ item }}.out" 2>/dev/null
+        {% endfor %}
+        rm -rf "$WORK"
+      register: srv_fanout
       changed_when: false
       no_log: true
+
+    - name: Reshape parallel output into validation_results (preserves contract)
+      set_fact:
+        _sr: "{{ (_sr | default([])) + [ {'item': (item.split('\n')[0]), 'stdout': (item.split('\n')[1:] | join('\n')), 'stdout_lines': (item.split('\n')[1:])} ] }}"
+      loop: "{{ srv_fanout.stdout.split('@@@SW@@@') | reject('equalto', '') | list }}"
+      loop_control:
+        label: "{{ item.split('\n')[0] }}"
+      # Accumulating fact carries every server's full output — without no_log
+      # Ansible reprints the growing fact each iteration -> O(N^2) output blowup.
+      no_log: true
+
+    - name: Publish validation_results
+      set_fact:
+        validation_results: "{{ {'results': _sr | default([])} }}"
 
     - name: Parse and display results
       set_fact:
@@ -188,6 +126,10 @@
       no_log: true
 
     # ── Cross-ping matrix: one pair per VLAN + one cross-VLAN ──
+    # Compute VLAN is called `cpu_vlan` on 2-8-9-800 but `inband_vlan` on
+    # 2-4-5-800 (different arch naming convention). Not every arch declares
+    # a support VLAN either. Use defaults() to tolerate both naming
+    # conventions and skip ping pairs whose VLAN isn't defined for this arch.
     - name: Build cross-ping test list
       set_fact:
         cross_pings: |
@@ -195,17 +137,20 @@
           {% set nodes_list = groups.get('nodes', []) %}
           {% set storage_list = groups.get('storage', []) %}
           {% set support_list = groups.get('support', []) %}
-          {% if nodes_list | length >= 2 %}
-          {%   set _ = tests.append({'from': nodes_list[0], 'to': nodes_list[1], 'label': 'Compute ↔ Compute (VLAN ' ~ common.cpu_vlan ~ ')', 'src_ip': devices[nodes_list[0]].bond_ip | default('') | regex_replace('/.*', ''), 'to_ip': devices[nodes_list[1]].bond_ip | default('') | regex_replace('/.*', '')}) %}
+          {% set compute_vlan = common.cpu_vlan | default(common.inband_vlan | default(None)) %}
+          {% set support_vlan = common.support_vlan | default(None) %}
+          {% set storage_vlan = common.storage_vlan | default(None) %}
+          {% if nodes_list | length >= 2 and compute_vlan %}
+          {%   set _ = tests.append({'from': nodes_list[0], 'to': nodes_list[1], 'label': 'Compute ↔ Compute (VLAN ' ~ compute_vlan ~ ')', 'src_ip': devices[nodes_list[0]].bond_ip | default('') | regex_replace('/.*', ''), 'to_ip': devices[nodes_list[1]].bond_ip | default('') | regex_replace('/.*', '')}) %}
           {% endif %}
-          {% if storage_list | length >= 2 %}
-          {%   set _ = tests.append({'from': storage_list[0], 'to': storage_list[1], 'label': 'Storage ↔ Storage (VLAN ' ~ common.storage_vlan ~ ')', 'src_ip': devices[storage_list[0]].bond_ip1 | default('') | regex_replace('/.*', ''), 'to_ip': devices[storage_list[1]].bond_ip1 | default('') | regex_replace('/.*', '')}) %}
+          {% if storage_list | length >= 2 and storage_vlan %}
+          {%   set _ = tests.append({'from': storage_list[0], 'to': storage_list[1], 'label': 'Storage ↔ Storage (VLAN ' ~ storage_vlan ~ ')', 'src_ip': devices[storage_list[0]].bond_ip1 | default('') | regex_replace('/.*', ''), 'to_ip': devices[storage_list[1]].bond_ip1 | default('') | regex_replace('/.*', '')}) %}
           {% endif %}
-          {% if support_list | length >= 2 %}
-          {%   set _ = tests.append({'from': support_list[0], 'to': support_list[1], 'label': 'Support ↔ Support (VLAN ' ~ common.support_vlan ~ ')', 'src_ip': devices[support_list[0]].bond_ip1 | default('') | regex_replace('/.*', ''), 'to_ip': devices[support_list[1]].bond_ip1 | default('') | regex_replace('/.*', '')}) %}
+          {% if support_list | length >= 2 and support_vlan %}
+          {%   set _ = tests.append({'from': support_list[0], 'to': support_list[1], 'label': 'Support ↔ Support (VLAN ' ~ support_vlan ~ ')', 'src_ip': devices[support_list[0]].bond_ip1 | default('') | regex_replace('/.*', ''), 'to_ip': devices[support_list[1]].bond_ip1 | default('') | regex_replace('/.*', '')}) %}
           {% endif %}
-          {% if support_list | length >= 1 and nodes_list | length >= 1 %}
-          {%   set _ = tests.append({'from': support_list[0], 'to': nodes_list[0], 'label': 'Cross-VLAN: Support → Compute (VLAN ' ~ common.support_vlan ~ ' → ' ~ common.cpu_vlan ~ ')', 'src_ip': devices[support_list[0]].bond_ip1 | default('') | regex_replace('/.*', ''), 'to_ip': devices[nodes_list[0]].bond_ip | default('') | regex_replace('/.*', '')}) %}
+          {% if support_list | length >= 1 and nodes_list | length >= 1 and support_vlan and compute_vlan %}
+          {%   set _ = tests.append({'from': support_list[0], 'to': nodes_list[0], 'label': 'Cross-VLAN: Support → Compute (VLAN ' ~ support_vlan ~ ' → ' ~ compute_vlan ~ ')', 'src_ip': devices[support_list[0]].bond_ip1 | default('') | regex_replace('/.*', ''), 'to_ip': devices[nodes_list[0]].bond_ip | default('') | regex_replace('/.*', '')}) %}
           {% endif %}
           {{ tests | to_json }}
 

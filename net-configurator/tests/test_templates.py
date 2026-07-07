@@ -93,6 +93,242 @@ class TestOOBCLITemplate:
         # Note: nv config apply is added by the ZTP wrapper script, not the template
 
 
+class TestGSLCLITemplate:
+    """Test suite for GPU spine/leaf switch CLI template."""
+
+    def test_single_plane_per_rail_gpu_vlans(self, project_root):
+        """GSL per-rail mode renders rail VLANs instead of legacy vlan900."""
+        template_path = project_root / "roles" / "gl" / "templates" / "gl_nvue_cli.j2"
+        env = _make_rendering_env(template_path.parent)
+        template = env.get_template(template_path.name)
+        output = template.render(
+            hostname="gsl-plane1-01",
+            ansible_date_time={"iso8601": "2026-06-10T00:00:00Z"},
+            plane=1,
+            lo_ip="10.1.1.1/32",
+            vrf_gpu_loopback="10.1.1.11/32",
+            plane_mate_lo_ip="10.1.1.2",
+            asn=4200101001,
+            ntp_servers=[],
+            gpu_subports="swp1s0,swp2s0",
+            gpu_breakout_parents="swp1,swp2",
+            isl_subports="",
+            isl_breakout_parents="",
+            gpu_rails={
+                "rail1": {
+                    "vlan_id": 901,
+                    "vni": 245901,
+                    "ip": "192.168.0.2/24",
+                    "vrr": "192.168.0.1/24",
+                    "vrf": "GPU",
+                },
+                "rail3": {
+                    "vlan_id": 903,
+                    "vni": 245903,
+                    "ip": "192.168.2.2/24",
+                    "vrr": "192.168.2.1/24",
+                    "vrf": "GPU",
+                },
+            },
+            gpu_rail_subports={
+                "rail1": "swp1s0",
+                "rail3": "swp2s0",
+            },
+        )
+
+        assert "nv set bridge domain br_default vlan 901 vni 245901" in output
+        assert "nv set bridge domain br_default vlan 903 vni 245903" in output
+        assert "nv set bridge domain br_default vlan 900" not in output
+        assert "nv set interface swp1s0 bridge domain br_default access 901" in output
+        assert "nv set interface swp2s0 bridge domain br_default access 903" in output
+        assert "nv set interface vlan901 ipv4 address 192.168.0.2/24" in output
+        assert "nv set interface vlan903 ipv4 address 192.168.2.2/24" in output
+
+    def test_full_switch_type_swp_no_leading_comma(self, project_root):
+        """Regression: a fully-broken-out GPU leaf (every parent port broken
+        out, so no whole-port parents survive) must not emit a leading comma
+        on the `type swp` line -> `nv set interface ,swp1s0,...` which NVUE
+        rejects. Reported by an OEM (Dell) against public v5.0; fixed by the
+        list-based join in gl_nvue_cli.j2.
+        """
+        template_path = project_root / "roles" / "gl" / "templates" / "gl_nvue_cli.j2"
+        env = _make_rendering_env(template_path.parent)
+        template = env.get_template(template_path.name)
+
+        all_parents = ",".join(f"swp{n}" for n in range(1, 65))
+        all_subports = ",".join(
+            f"swp{n}s{s}" for n in range(1, 65) for s in (0, 1)
+        )
+        output = template.render(
+            hostname="gl-plane1-01",
+            ansible_date_time={"iso8601": "2026-06-22T00:00:00Z"},
+            plane=1,
+            lo_ip="10.1.1.1/32",
+            vrf_gpu_loopback="10.1.1.11/32",
+            plane_mate_lo_ip="10.1.1.2",
+            asn=4200101001,
+            ntp_servers=[],
+            gpu_subports=all_subports,
+            gpu_breakout_parents=all_parents,
+            isl_subports="",
+            isl_breakout_parents="",
+            gpu_rails={
+                "rail1": {
+                    "vlan_id": 901,
+                    "vni": 245901,
+                    "ip": "192.168.0.2/24",
+                    "vrr": "192.168.0.1/24",
+                    "vrf": "GPU",
+                },
+            },
+            gpu_rail_subports={"rail1": "swp1s0"},
+        )
+
+        # No leading comma anywhere on an `nv set interface` line.
+        assert "nv set interface ," not in output
+        # The type-swp line is present and well-formed (starts with a real port).
+        type_swp = [l for l in output.splitlines() if l.endswith(" type swp")]
+        assert type_swp, "expected a `type swp` line in the rendered output"
+        assert type_swp[0].startswith("nv set interface swp")
+
+    def test_ew_tiers_2_adds_weighted_ecmp_on_internal_isl(self, project_root):
+        """At ew_tiers > 1, gl's internal_isl uplink to the gs spine is eBGP
+        (W-ECMP only works over eBGP per NVIDIA Cumulus Linux docs), so it
+        should get the WEIGHTED_ECMP outbound policy -- mirrors the
+        core/cl internal-isl fix in excel_parser.py. Verified via a
+        generated SU16 (ew_tiers=2) workbook; no live 2-tier GPU deployment
+        exists to verify byte-for-byte, unlike the underlay-to-MG fix.
+        """
+        template_path = project_root / "roles" / "gl" / "templates" / "gl_nvue_cli.j2"
+        env = _make_rendering_env(template_path.parent)
+        template = env.get_template(template_path.name)
+        output = template.render(
+            hostname="gl-plane1-01",
+            ansible_date_time={"iso8601": "2026-07-01T00:00:00Z"},
+            plane=1,
+            lo_ip="10.1.1.1/32",
+            vrf_gpu_loopback="10.1.1.11/32",
+            plane_mate_lo_ip="10.1.1.2",
+            asn=4200101001,
+            ew_tiers=2,
+            ntp_servers=[],
+            vlan900_ip="192.168.0.2/20",
+            vlan900_vrr="192.168.0.1/20",
+            gpu_subports="swp1s0,swp2s0",
+            gpu_breakout_parents="swp1,swp2",
+            isl_subports="swp49s0,swp49s1",
+            isl_breakout_parents="swp49",
+        )
+
+        assert "nv set router policy route-map WEIGHTED_ECMP rule 10 action permit" in output
+        assert "nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths" in output
+        assert "nv set vrf default router bgp peer-group internal_isl address-family ipv4-unicast policy outbound route-map WEIGHTED_ECMP" in output
+        assert "nv set vrf default router bgp peer-group internal_isl remote-as external" in output
+
+    def test_ew_tiers_1_omits_weighted_ecmp_on_internal_isl(self, project_root):
+        """Converged (ew_tiers=1) internal_isl is iBGP -- W-ECMP doesn't
+        apply there, so no WEIGHTED_ECMP route-map should be emitted at all."""
+        template_path = project_root / "roles" / "gl" / "templates" / "gl_nvue_cli.j2"
+        env = _make_rendering_env(template_path.parent)
+        template = env.get_template(template_path.name)
+        output = template.render(
+            hostname="gsl-plane1-01",
+            ansible_date_time={"iso8601": "2026-07-01T00:00:00Z"},
+            plane=1,
+            lo_ip="10.1.1.1/32",
+            vrf_gpu_loopback="10.1.1.11/32",
+            plane_mate_lo_ip="10.1.1.2",
+            asn=4200101001,
+            ntp_servers=[],
+            vlan900_ip="192.168.0.2/20",
+            vlan900_vrr="192.168.0.1/20",
+            gpu_subports="swp1s0,swp2s0",
+            gpu_breakout_parents="swp1,swp2",
+            isl_subports="swp49s0,swp49s1",
+            isl_breakout_parents="swp49",
+        )
+
+        assert "WEIGHTED_ECMP" not in output
+        assert "nv set vrf default router bgp peer-group internal_isl remote-as internal" in output
+
+    def test_core_type_swp_uses_guarded_join(self, project_root):
+        """Class-of-bug guard: the core template must build the `type swp`
+        port list from a parts list (so empty parents can't produce a leading
+        comma), not via the old inline `{{ ...|join }}{% if %},{{ ...|join }}`
+        concat. Sibling of the gl fix above.
+        """
+        core = (
+            project_root / "roles" / "core" / "templates" / "core_nvue_cli.j2"
+        ).read_text()
+        assert "_swp_typed_parts" in core
+        assert "| join(',') }}{% if all_sub_interfaces" not in core
+
+
+class TestSpineCLITemplate:
+    """Test suite for the dedicated spine (cs/gs) CLI template.
+
+    This role only renders at ns_tiers/ew_tiers > 1, where its 'underlay'
+    downlink to the leaves below it is always eBGP (W-ECMP only works over
+    eBGP per NVIDIA Cumulus Linux docs). But W-ECMP is compute-spine (cs)
+    only by design, confirmed by the retired legacy-template equivalence
+    fixtures further down this file: CS_CTX has weighted_ecmp=True, GS_CTX
+    (GPU spine) has weighted_ecmp=False. cs vs gs is distinguished by
+    whether `plane` is defined (GS_CTX sets it, CS_CTX doesn't).
+
+    Uses the same 'multipaths' WEIGHTED_ECMP route-map as every other
+    W-ECMP peer-group in the fabric, not a separate 'cumulative' variant --
+    confirmed 'multipaths' is the only value ever seen in live production
+    (grep across all 8 pdx01-m3-era-289-800 switches) and matches NVIDIA's
+    own worked example for this exact spine-to-leaf underlay scenario.
+    Verified via a generated SU16 workbook; no live 2-tier deployment
+    exists to verify byte-for-byte.
+    """
+
+    def test_cs_underlay_gets_weighted_ecmp(self, project_root):
+        template_path = project_root / "roles" / "spine" / "templates" / "spine_nvue_cli.j2"
+        env = _make_rendering_env(template_path.parent)
+        template = env.get_template(template_path.name)
+        output = template.render(
+            hostname="cs-01",
+            ansible_date_time={"iso8601": "2026-07-01T00:00:00Z"},
+            lo_ip="172.16.176.101/32",
+            asn=4200101101,
+            ntp_servers=[],
+            isl_leaf_ports="swp1-8",
+            isl_core_ports="",
+            underlay_neighbors=["swp1s0", "swp1s1"],
+            overlay_peers=["172.16.176.11", "172.16.176.12"],
+        )
+
+        assert "nv set router policy route-map WEIGHTED_ECMP rule 10 action permit" in output
+        assert "nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths" in output
+        assert ("nv set vrf default router bgp peer-group underlay address-family ipv4-unicast "
+                "policy outbound route-map WEIGHTED_ECMP") in output
+        assert "nv set vrf default router bgp peer-group underlay remote-as external" in output
+        assert "cumulative" not in output
+
+    def test_gs_underlay_omits_weighted_ecmp(self, project_root):
+        """GPU spine (gs, `plane` defined) does not get W-ECMP -- matches
+        the legacy gsl_spine template's weighted_ecmp=False."""
+        template_path = project_root / "roles" / "spine" / "templates" / "spine_nvue_cli.j2"
+        env = _make_rendering_env(template_path.parent)
+        template = env.get_template(template_path.name)
+        output = template.render(
+            hostname="gs-plane1-01",
+            ansible_date_time={"iso8601": "2026-07-01T00:00:00Z"},
+            lo_ip="10.1.1.5/32",
+            asn=4200101100,
+            plane=1,
+            ntp_servers=[],
+            isl_ports="swp57-58,swp61-62",
+            underlay_neighbors=["swp57s0", "swp57s1"],
+            overlay_peers=["10.1.1.6/32"],
+        )
+
+        assert "WEIGHTED_ECMP" not in output
+        assert "nv set vrf default router bgp peer-group underlay remote-as external" in output
+
+
 class TestAllTemplates:
     """Test all role templates."""
 
@@ -545,6 +781,29 @@ class TestCoreTemplateRendering:
         assert "nv set interface  link state up" not in output
         assert "nv set interface  link state down" not in output
 
+    def test_null_role_vlan_does_not_render_blank_access(
+        self, core_cli_template, core_vars
+    ):
+        """A null role VLAN must not render `access` with no VLAN value."""
+        env = _make_rendering_env(core_cli_template.parent)
+        template = env.get_template(core_cli_template.name)
+        core_vars["network_roles"]["oob"] = {
+            "ports": [59],
+            "breakout": 8,
+            "lanes": 1,
+            "vlan": None,
+            "lacp_bypass": False,
+            "port_overrides": {59: {"subports": [0, 1]}},
+            "bond_overrides": {},
+        }
+
+        output = template.render(**core_vars)
+
+        assert (
+            "nv set interface bond59s0,bond59s1 "
+            "bridge domain br_default access \n"
+        ) not in output
+
     def test_l3_oob_uplink_neighbors_render_without_oob_bonds(self, core_cli_template, core_vars):
         """L3 OOB mode should render direct uplink BGP neighbors, not OOB bonds."""
         env = _make_rendering_env(core_cli_template.parent)
@@ -699,6 +958,61 @@ class TestCoreTemplateRendering:
 
         # GPU ports 3,4 with breakout 2 = swp3s0, swp3s1, swp4s0, swp4s1
         assert "bridge domain br_default access 200" in output
+
+    def test_converged_core_gpu_access_vlan(self, core_cli_template, core_vars):
+        """Converged-core models still render GPU access ports on core switches."""
+        env = _make_rendering_env(core_cli_template.parent)
+        template = env.get_template(core_cli_template.name)
+        core_vars["convergence"] = "converged_core"
+        output = template.render(**core_vars)
+
+        assert (
+            "nv set interface swp3s0,swp3s1,swp4s0,swp4s1 "
+            "bridge domain br_default access 200"
+        ) in output
+
+    def test_converged_core_gpu_per_rail_access_vlan(
+        self, core_cli_template, core_vars
+    ):
+        """Per-rail XLSX profiles render one access VLAN line per rail."""
+        env = _make_rendering_env(core_cli_template.parent)
+        template = env.get_template(core_cli_template.name)
+        core_vars["convergence"] = "converged_core"
+        core_vars.pop("gpu_interfaces")
+        core_vars["gpu_rail_interfaces"] = {
+            "rail1": {
+                "ports": [9, 10],
+                "breakout": 2,
+                "lanes": 4,
+                "vlan": 900,
+                "state": "up",
+                "port_overrides": {
+                    9: {"subports": [0]},
+                    10: {"subports": [0]},
+                },
+            },
+            "rail2": {
+                "ports": [9, 10],
+                "breakout": 2,
+                "lanes": 4,
+                "vlan": 901,
+                "state": "up",
+                "port_overrides": {
+                    9: {"subports": [1]},
+                    10: {"subports": [1]},
+                },
+            },
+        }
+        output = template.render(**core_vars)
+
+        assert (
+            "nv set interface swp9s0,swp10s0 "
+            "bridge domain br_default access 900"
+        ) in output
+        assert (
+            "nv set interface swp9s1,swp10s1 "
+            "bridge domain br_default access 901"
+        ) in output
 
     def test_anycast_mac(self, core_cli_template, core_vars):
         """Output contains anycast MAC when defined."""
@@ -1075,3 +1389,50 @@ class TestLoginBannerOOB:
         env = _make_rendering_env(oob_cli_template.parent)
         output = env.get_template(oob_cli_template.name).render(**oob_vars_with_banner)
         assert "nv set system message" not in output
+
+
+# ---------------------------------------------------------------------------
+# Task 1.2: merged spine template equivalence (csl_spine + gsl_spine → spine)
+#
+# The merged data-driven spine template must render byte-identically (for the
+# `nv ` command lines) to each legacy template, gated by the roce_traffic_pool
+# / weighted_ecmp group_vars flags.
+# ---------------------------------------------------------------------------
+
+import pathlib, jinja2
+
+ROLES = pathlib.Path("roles")
+
+def _render(tmpl_path, ctx):
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(ROLES)),
+                             trim_blocks=False, lstrip_blocks=False)
+    env.globals["ansible_date_time"] = {"iso8601": "FIXED"}
+    return env.get_template(tmpl_path).render(**ctx)
+
+CS_CTX = dict(hostname="cs-01", lo_ip="172.16.1.2/32", asn=4200100002,
+              overlay_peers=["172.16.1.3/32"], isl_leaf_ports="swp61-62",
+              isl_core_ports="swp4", smn_ports="swp1-2", smn_subports=["swp1s0"],
+              weighted_ecmp=True, roce_traffic_pool=False, ntp_servers=["10.0.0.1"])
+GS_CTX = dict(hostname="gs-plane1-01", lo_ip="10.1.1.5/32", asn=4200101100,
+              overlay_peers=["10.1.1.6/32"], isl_ports="swp57-58,swp61-62",
+              plane=1, weighted_ecmp=False, roce_traffic_pool=True,
+              ntp_servers=["10.0.0.1"])
+
+def _nv(s):
+    return [l for l in s.splitlines() if l.startswith("nv ")]
+
+# Equivalence to the legacy csl_spine/gsl_spine templates was proven in commit
+# bb499d7 (Task 1.2) and is enforced going forward by the make-generate byte-diff
+# gate. The legacy template dirs were removed once that gate passed, so these
+# two comparison tests are retired (kept skipped as a pointer to the proof).
+@pytest.mark.skip(reason="legacy spine templates removed after byte-diff gate passed; equivalence locked in commit bb499d7")
+def test_merged_spine_matches_legacy_csl_spine():
+    new = _render("spine/templates/spine_nvue_cli.j2", CS_CTX)
+    old = _render("csl-spine/templates/csl_spine_nvue_cli.j2", CS_CTX)
+    assert _nv(new) == _nv(old)
+
+@pytest.mark.skip(reason="legacy spine templates removed after byte-diff gate passed; equivalence locked in commit bb499d7")
+def test_merged_spine_matches_legacy_gsl_spine():
+    new = _render("spine/templates/spine_nvue_cli.j2", GS_CTX)
+    old = _render("gsl-spine/templates/gsl_spine_nvue_cli.j2", GS_CTX)
+    assert _nv(new) == _nv(old)

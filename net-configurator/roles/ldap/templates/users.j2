@@ -1,7 +1,7 @@
 {# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
 {# SPDX-License-Identifier: MIT #}
 {% for user in ldap_users_hashed %}
-dn: uid={{ user.username }},ou=Users,{{ ldap.base_dn }}
+dn: uid={{ user.username }},ou=Users,{{ ldap.base_dn | default('MISSING_ldap_base_dn_SET_IN_EXCEL', true) }}
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: top
@@ -14,12 +14,12 @@ cn: {{ user.firstname }} {{ user.lastname }}
 displayName: {{ user.firstname }} {{ user.lastname }}
 homeDirectory: /home/{{ user.username }}
 loginShell: /bin/bash
-mail: {{ user.username }}@{{ ldap.domain }}
+mail: {{ user.username }}@{{ ldap.domain | default('MISSING_ldap_domain_SET_IN_EXCEL', true) }}
 userPassword: {{ user.ssha_password }}
 
 {% endfor %}
 
-dn: cn=net-admin,ou=Groups,{{ ldap.base_dn }}
+dn: cn=net-admin,ou=Groups,{{ ldap.base_dn | default('MISSING_ldap_base_dn_SET_IN_EXCEL', true) }}
 objectClass: top
 objectClass: posixGroup
 cn: net-admin

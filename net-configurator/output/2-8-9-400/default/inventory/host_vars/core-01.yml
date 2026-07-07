@@ -96,9 +96,6 @@ prefix_list:
   - id: '10'
     match: 172.16.176.1/32
     max_len: '32'
-  - id: '20'
-    match: 172.16.177.2/32
-    max_len: '32'
 - id: OOB_PREFIXES
   rule:
   - id: '10'

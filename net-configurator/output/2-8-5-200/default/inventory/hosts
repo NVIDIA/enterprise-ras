@@ -36,7 +36,7 @@ support-08
 [dhcp]
 external-dhcp
 
-[oob-server]
+[oob_server]
 external-conn
 
 [jump]
@@ -54,7 +54,7 @@ nodes
 storage
 support
 dhcp
-oob-server
+oob_server
 jump
 
 [servers:vars]

@@ -26,7 +26,27 @@ SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from airlib.api import _api  # noqa: E402
+from airlib.api import _api, _headers  # noqa: E402
+
+
+class TestHeadersZstdWorkaround:
+    """Regression: every request must pin a non-zstd Accept-Encoding.
+
+    httpx + zstandard has a 'cannot use a decompressobj multiple times' bug
+    that corrupts the 2nd+ response on a reused client. It silently broke
+    paginated node lookups (page 2 raised DecodingError), so nodes past the
+    first page were reported 'not found' and never received their Node
+    Instructions — they booted unconfigured and unreachable. Pinning
+    Accept-Encoding on every request avoids the zstd code path entirely.
+    """
+
+    def test_headers_pin_non_zstd_encoding(self):
+        h = _headers("tok")
+        assert "Accept-Encoding" in h
+        assert "zstd" not in h["Accept-Encoding"].lower()
+
+    def test_headers_still_carry_bearer_token(self):
+        assert _headers("tok")["Authorization"] == "Bearer tok"
 
 
 class TestPublicAirRewrite:
