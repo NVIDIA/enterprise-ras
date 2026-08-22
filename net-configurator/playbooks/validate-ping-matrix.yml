@@ -42,7 +42,7 @@
           (
             HOST='{{ hostvars[item].ansible_host }}'
             NAME='{{ item }}'
-            SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ubuntu@$HOST"
+            SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 {{ server_ansible_user | default('ubuntu') }}@$HOST"
 
             echo "CONNECT|$NAME|$HOST" >&2
 
@@ -53,11 +53,9 @@
 
             {% set src_dev = devices.get(item, {}) %}
             {% set src_ifaces = src_dev.get('interfaces', {}) %}
-            {# Compute prefixes: su-*/node-* (legacy) + gpu-* (2-8-9-800 dual-plane) #}
-            {% set src_is_compute = item.startswith('su-') or item.startswith('node-') or item.startswith('gpu-') %}
-            {# Support prefixes: support-* (legacy) + bcm-/slurm-/k8s-* (2-8-9-800 control plane) #}
-            {% set src_is_support = item.startswith('support') or item.startswith('bcm-') or item.startswith('slurm-') or item.startswith('k8s-') %}
-            {% set src_is_storage = item.startswith('storage') %}
+            {% set src_is_compute = item in groups.get('nodes', []) %}
+            {% set src_is_support = item in groups.get('support', []) %}
+            {% set src_is_storage = item in groups.get('storage', []) %}
             {% set src_inband_iface = 'bond0' if src_is_compute else ('bond0.' ~ common.support_vlan if src_is_support else ('bond0.' ~ common.storage_vlan if src_is_storage else '')) %}
             {% set src_inband_ip = (src_dev.get('bond_ip', '') if src_is_compute else src_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
             {# GPU IPs: dual-plane uses gpu_interfaces (list of {iface,plane,ip}); single-plane uses gpu_ips list #}
@@ -98,7 +96,7 @@
             {% for dst in server_groups %}
             {% if dst != item %}
             {% set dst_dev = devices.get(dst, {}) %}
-            {% set dst_is_compute = dst.startswith('su-') or dst.startswith('node-') or dst.startswith('gpu-') %}
+            {% set dst_is_compute = dst in groups.get('nodes', []) %}
             {% set dst_inband_ip = (dst_dev.get('bond_ip', '') if dst_is_compute else dst_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
             {% set _dst_gpu_ifaces = dst_dev.get('gpu_interfaces', []) %}
             {% set first_dst_gpu = (_dst_gpu_ifaces[0].ip | regex_replace('/.*', '')) if _dst_gpu_ifaces | length > 0
@@ -112,7 +110,7 @@
                not a real network issue. On legacy archs where Storage is
                merged into INBAND, the VRFs match and we keep the INBAND
                label so a same-VRF unreach surfaces as a real failure. #}
-            {% set dst_is_storage = dst.startswith('storage') %}
+            {% set dst_is_storage = dst in groups.get('storage', []) %}
             {% set _src_vrf = (common.storage_vrf if src_is_storage else common.get('cpu_vrf', 'INBAND')) %}
             {% set _dst_vrf = (common.storage_vrf if dst_is_storage else common.get('cpu_vrf', 'INBAND')) %}
             {% set _l3_tag = 'CROSS-VRF' if (_src_vrf and _dst_vrf and _src_vrf != _dst_vrf) else 'INBAND' %}
@@ -235,7 +233,7 @@
         (
           HOST='{{ hostvars[item].ansible_host }}'
           NAME='{{ item }}'
-          SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ubuntu@$HOST"
+          SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 {{ server_ansible_user | default('ubuntu') }}@$HOST"
 
           CONTENT=$(timeout 15 $SSH_CMD 'cat /tmp/ping-matrix-results.txt 2>/dev/null' 2>/dev/null)
           if [ -z "$CONTENT" ] || ! echo "$CONTENT" | grep -q "DONE"; then

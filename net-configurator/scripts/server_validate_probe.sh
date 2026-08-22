@@ -9,13 +9,13 @@
 #
 # Args:  $1 IP   $2 PW   $3 NAME   $4 SRC_IP   $5 EXPECTED_GW   $6 ROLE
 
-IP="$1"; PW="$2"; NAME="$3"; SRC_IP="$4"; EXPECTED_GW="$5"; ROLE="${6:-unknown}"
+IP="$1"; PW="$2"; NAME="$3"; SRC_IP="$4"; EXPECTED_GW="$5"; ROLE="${6:-unknown}"; SSH_USER="${7:-ubuntu}"
 export SSHPASS="$PW"
 OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
 # One session: stream the collection (quoted heredoc runs verbatim on the
 # server; NAME/SRC_IP/EXPECTED_GW/ROLE/HOST arrive as $1..$5).
-OUT=$(timeout 90 sshpass -e ssh $OPTS "ubuntu@${IP}" "bash -s -- '${NAME}' '${SRC_IP}' '${EXPECTED_GW}' '${ROLE}' '${IP}'" <<'REMOTE'
+OUT=$(timeout 90 sshpass -e ssh $OPTS "${SSH_USER}@${IP}" "bash -s -- '${NAME}' '${SRC_IP}' '${EXPECTED_GW}' '${ROLE}' '${IP}'" <<'REMOTE'
 NAME="$1"; SRC_IP="$2"; EXPECTED_GW="$3"; ROLE="$4"; HOST="$5"
 
 HOSTNAME=$(hostname 2>/dev/null)

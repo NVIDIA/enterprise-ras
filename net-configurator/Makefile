@@ -570,6 +570,24 @@ else
 	@python3 scripts/check-eth-consistency.py --arch $(ARCH) --site $(SITE)
 endif
 
+generate-ocp:  ## Generate OCP Ansible inventory + ABI manifests from ERA inventory - requires ARCH, optional SITE
+	$(call check_arch,$@)
+	@if [ ! -d "output/$(ARCH)/$(SITE)/inventory" ]; then \
+		echo "❌ ERROR: ERA inventory not found for arch=$(ARCH) site=$(SITE)"; \
+		echo "   Run 'make generate ARCH=$(ARCH) SITE=$(SITE)' first."; \
+		exit 1; \
+	fi
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  Generating OCP inventory  arch=$(ARCH)  site=$(SITE)"
+	@if [ -f "input/$(ARCH)/$(SITE)/ocp-settings.yml" ]; then \
+		echo "  ocp-settings.yml found — explicit node_roles will be used"; \
+	else \
+		echo "  No ocp-settings.yml — OCP roles will be auto-inferred from hostnames"; \
+	fi
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	python3 scripts/generate-ocp-inventory.py --arch $(ARCH) --site $(SITE) \
+		$(if $(OCP_SETTINGS),--ocp-settings $(OCP_SETTINGS),)
+
 topology:  ## Generate Air topology only - requires ARCH, optional SITE
 	$(call check_arch,$@)
 	python3 scripts/topology_generator.py generate --arch $(ARCH) --site $(SITE)

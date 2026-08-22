@@ -69,7 +69,7 @@
         {% if item in groups.get('support', []) %}{% set _gw = common.support_gateway | default('') %}{% set _role = 'support' %}{% endif %}
         {% if src_dev.get('gpu_interfaces') or src_dev.get('gpu_ips') %}{% set _gw = common.cpu_gateway | default('') %}{% set _role = 'gpu' %}{% endif %}
         {% if item in groups.get('nodes', []) and not (src_dev.get('gpu_interfaces') or src_dev.get('gpu_ips')) %}{% set _gw = common.cpu_gateway | default('') %}{% set _role = 'compute' %}{% endif %}
-        bash /tmp/server_validate_probe.sh '{{ hostvars[item].ansible_host }}' '{{ server_ansible_password }}' '{{ item }}' '{{ src_inband_ip }}' '{{ _gw }}' '{{ _role }}' > "$WORK/{{ item }}.out" 2>/dev/null &
+        bash /tmp/server_validate_probe.sh '{{ hostvars[item].ansible_host }}' '{{ server_ansible_password }}' '{{ item }}' '{{ src_inband_ip }}' '{{ _gw }}' '{{ _role }}' '{{ server_ansible_user | default('ubuntu') }}' > "$WORK/{{ item }}.out" 2>/dev/null &
         {% endfor %}
         wait
         {% for item in server_groups %}
@@ -158,7 +158,7 @@
       shell: |
         export SSHPASS='{{ server_ansible_password }}'
         FROM_HOST='{{ hostvars[item.from].ansible_host }}'
-        SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ubuntu@$FROM_HOST"
+        SSH_CMD="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 {{ server_ansible_user | default('ubuntu') }}@$FROM_HOST"
         TO_IP='{{ item.to_ip }}'
         SRC_IP='{{ item.src_ip }}'
         LABEL='{{ item.label }}'
