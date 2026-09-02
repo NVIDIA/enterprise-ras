@@ -35,12 +35,13 @@ class ScalingTier:
     notes: str = ""
 
 
-# Source: agent extraction from architectural_docs/ERA-000{08,10,11,16}-*.pdf
+# Public, self-contained fallback derived from the internal topology_by_su
+# snapshots. Source revisions: ERA-00008/10/16 v04 and ERA-00011 v04.
 # Each arch's list MUST be ordered ascending by max_su. The single-tier
 # max for an arch is the last tier's max_su.
 ARCH_SCALING = {
     "2-4-3-200": [
-        # ERA-00008-001 v03, Table 10 (p26). Collapsed E/W+N/S design.
+        # ERA-00008-001 v04, Tables 10/11. Collapsed E/W+N/S design.
         ScalingTier(min_su=1, max_su=4, core_or_csl_leaves=2,
                     gsl_leaves_per_plane=None, oob_switches=2,
                     notes="Collapsed (E/W+N/S in one fabric)"),
@@ -52,9 +53,7 @@ ARCH_SCALING = {
                     notes="4th OOB switch added; ISL ports active"),
     ],
     "2-8-5-200": [
-        # ERA-00016-001 (v03 on file). SU6-8 single-tier split modeled here;
-        # the Table 13/14 reference was attributed to a draft v04 that is not on
-        # file — treat the split as modeled, pending spec-table confirmation.
+        # ERA-00016-001 v04, Tables 13/14.
         # SU1-SU5 are converged/collapsed; SU6-SU8 remain single-tier but
         # split into a dedicated E/W GSL pair and a dedicated N/S CSL pair.
         ScalingTier(min_su=1, max_su=4, core_or_csl_leaves=2,
@@ -71,17 +70,20 @@ ARCH_SCALING = {
                     notes="Split single-tier: CSL N/S pair + GSL plane-1 E/W pair"),
     ],
     "2-8-9-400": [
-        # ERA-00010-001 v03, Table 10 (p28) + narrative p29. Narrative
-        # treats SU>=4 as multi-tier; we follow the stricter narrative.
+        # ERA-00010-001 v04, Tables 10/11. SU4 adds a dedicated N/S leaf pair
+        # but remains single-tier because neither fabric has a spine.
         ScalingTier(min_su=1, max_su=2, core_or_csl_leaves=2,
                     gsl_leaves_per_plane=None, oob_switches=2,
                     notes="Collapsed"),
         ScalingTier(min_su=3, max_su=3, core_or_csl_leaves=2,
                     gsl_leaves_per_plane=None, oob_switches=3,
                     notes="3rd OOB switch at 9-12 nodes"),
+        ScalingTier(min_su=4, max_su=4, core_or_csl_leaves=2,
+                    gsl_leaves_per_plane=2, oob_switches=4,
+                    notes="Dedicated E/W and N/S leaf pairs; no spine tier"),
     ],
     "2-8-9-800": [
-        # ERA-00011-001 v04, Table 15 (p44) + narrative p29. Dual-plane.
+        # ERA-00011-001 v04, Tables 8/10. Dual-plane.
         # Role-separated leaves from SU=1; no spine through SU=4.
         #
         # NOTE: gsl_leaves_per_plane=2 is the doc-stated architectural
@@ -95,7 +97,21 @@ ARCH_SCALING = {
                     gsl_leaves_per_plane=2, oob_switches=2,
                     notes="Dual-plane, 2 leaves per plane, no spine"),
     ],
+    "2-8-9-400-SP": [
+        # ERA-00011-001 v04, Tables 9/10. Single-plane variant promoted to
+        # a first-class architecture; topology matches 2-8-9-800 single-plane.
+        ScalingTier(min_su=1, max_su=4, core_or_csl_leaves=2,
+                    gsl_leaves_per_plane=2, oob_switches=2,
+                    notes="Single-plane, 2 E/W leaves + 2 N/S leaves, no spine"),
+    ],
 }
+
+# 2-4-5-400 is a DEPOPULATED 2-8-5-200 (ERA-00004-001 v04): same chassis, same
+# five adapters, half the GPUs. Switch counts are node/NIC-driven, so the
+# scaling tiers are identical by definition — aliased rather than copied so the
+# two cannot drift apart. Only the per-GPU external uplink capacity differs, and
+# that is derived in data-models, not here.
+ARCH_SCALING["2-4-5-400"] = ARCH_SCALING["2-8-5-200"]
 
 
 def get_tier(arch: str, su_count: int) -> Optional[ScalingTier]:
@@ -134,6 +150,7 @@ def is_supported_single_tier(arch: str, su_count: int) -> bool:
 MAX_SUPPORTED_SU = {
     '2-4-3-200': 8,
     '2-8-5-200': 8,
+    '2-4-5-400': 8,
     '2-8-9-400': 16,
     '2-4-5-800': 8,
     '2-8-9-800': 32,

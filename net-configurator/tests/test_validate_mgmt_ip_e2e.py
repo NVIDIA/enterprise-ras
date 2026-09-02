@@ -25,7 +25,9 @@ VALIDATE = REPO / "scripts" / "validate_excel.py"
 # 2-8-9-400 ships oob_uplink_mode=L3 and is the arch the maxscale bug hit.
 BASE_L3 = REPO / "input" / "2-8-9-400" / "default" / "2-8-9-400.xlsx"
 
-OOB_ERR = "flat OOB subnet"
+# ERA-93: the message now names the DECLARED plane rather than the literal
+# "flat OOB subnet", so match on the invariant half of the sentence.
+OOB_ERR = "claimed by multiple owners"
 AIR_ERR = "air-mgmt subnet"
 
 pytestmark = pytest.mark.skipif(
@@ -76,7 +78,42 @@ def _server_rows(ws, n):
     return rows, ipcol
 
 
-def _variant(tmp_path, name, *, mode=None, node_ips=None, air_mgmt_subnet=None):
+def _set_oob_vlan_subnet(wb, subnet, gateway):
+    """Move the OOB VLAN (VRF=OOB) onto a different subnet, and drag the
+    oob-switch mgmt IPs along so only the thing under test changes."""
+    import ipaddress
+    net = ipaddress.IPv4Network(subnet)
+    ws = wb["VLANs & Profiles"]
+    # Row 1 is the "VLANs" banner; the real header is row 2.
+    hdr = [str(ws.cell(2, c).value or "").strip() for c in range(1, ws.max_column + 1)]
+    scol, gcol = hdr.index("Subnet") + 1, hdr.index("Gateway") + 1
+    vcol = hdr.index("VRF") + 1
+    for r in range(3, ws.max_row + 1):
+        if str(ws.cell(r, vcol).value or "").strip().upper() == "OOB":
+            ws.cell(r, scol).value = subnet
+            ws.cell(r, gcol).value = gateway
+
+    nodes = wb["Nodes"]
+    nhdr = [nodes.cell(1, c).value for c in range(1, nodes.max_column + 1)]
+    fcol = nhdr.index("Function") + 1
+    ipcol = nhdr.index("Mgmt IP Address") + 1
+    offset = 20
+    for r in range(2, nodes.max_row + 1):
+        fn = str(nodes.cell(r, fcol).value or "").strip().lower()
+        ip = nodes.cell(r, ipcol).value
+        if not ip:
+            continue
+        try:
+            addr = ipaddress.IPv4Address(str(ip).strip().split("/")[0])
+        except ValueError:
+            continue
+        if addr in ipaddress.IPv4Network("192.168.200.0/24"):
+            nodes.cell(r, ipcol).value = str(net.network_address + offset)
+            offset += 1
+
+
+def _variant(tmp_path, name, *, mode=None, node_ips=None, air_mgmt_subnet=None,
+             oob_vlan=None):
     dst = tmp_path / f"{name}.xlsx"
     shutil.copy2(BASE_L3, dst)
     wb = openpyxl.load_workbook(dst)
@@ -84,6 +121,8 @@ def _variant(tmp_path, name, *, mode=None, node_ips=None, air_mgmt_subnet=None):
         _set_setting(wb["Settings"], "oob_uplink_mode", mode)
     if air_mgmt_subnet is not None:
         _set_air_mgmt_subnet(wb, air_mgmt_subnet)
+    if oob_vlan is not None:
+        _set_oob_vlan_subnet(wb, *oob_vlan)
     if node_ips:
         ws = wb["Nodes"]
         rows, ipcol = _server_rows(ws, len(node_ips))
@@ -166,14 +205,38 @@ def _run_out(path):
 
 
 def test_default_air_mgmt_subnet_does_not_overlap(tmp_path):
-    # 172.20.0.0/24 (Air_Only) vs 192.168.200.0/24 (mgmt_subnets) are disjoint.
+    # 172.20.0.0/24 (Air_Only) vs 192.168.200.0/24 (OOB VLAN subnet) are disjoint.
     rc, out = _run_out(_variant(tmp_path, "no_overlap"))
     assert "overlaps with" not in out
 
 
 def test_air_mgmt_subnet_overlapping_mgmt_subnets_errors(tmp_path):
-    # Set the Air_Only subnet to collide with the OOB mgmt_subnets (S9 check,
-    # now driven by the Air_Only-sourced value).
+    # Set the Air_Only subnet to collide with the OOB VLAN subnet (S9 check,
+    # now driven by the Air_Only-sourced value vs. resolve_oob_vlans).
     rc, out = _run_out(_variant(tmp_path, "overlap",
                                 air_mgmt_subnet="192.168.200.0/24"))
     assert "overlaps with" in out and rc == 1
+
+
+def test_brownfield_oob_vlan_duplicate_is_caught(tmp_path):
+    """ERA-93: the gate must see a duplicate on the OOB VLAN the workbook
+    DECLARES, not only on 192.168.200.0/24.
+
+    Before the fix `oob_octet()` returned None for every address outside
+    192.168.200.0/24, so this workbook produced zero claims and passed while
+    inspecting nothing — the same blindness that let ERA-92 (10.78.220.34
+    claimed twice, support data plane dead) through.
+    """
+    dup = "10.78.220.141"
+    rc, oob, air = _run(_variant(tmp_path, "brownfield_dup",
+                                 oob_vlan=("10.78.220.128/25", "10.78.220.129"),
+                                 node_ips=[dup, dup]))
+    assert oob, "duplicate on a declared brownfield OOB VLAN was not reported"
+    assert rc == 1
+
+
+def test_brownfield_oob_vlan_clean_has_no_false_positive(tmp_path):
+    rc, oob, air = _run(_variant(tmp_path, "brownfield_clean",
+                                 oob_vlan=("10.78.220.128/25", "10.78.220.129"),
+                                 node_ips=["10.78.220.141", "10.78.220.142"]))
+    assert not oob

@@ -101,6 +101,16 @@
           ============================================================
           {{ oob_bgp_all.stdout }}
         fail_count: "{{ oob_bgp_all.stdout_lines | select('search', 'OOB_BGP\\|FAIL\\|') | list | length }}"
+        # The probe already recorded WHY each switch failed ("unreachable
+        # 172.20.0.204", "no output", "established=3 down=swpN"). Carry those
+        # reasons into the gate message instead of asserting a cause: a switch
+        # with no L2 path is not a down BGP neighbour, and saying so sent a
+        # 2026-08-10 investigation to BGP when the fault was a configless
+        # cust-net-edge-02 leaving oob-switch-02:eth0 outside br_default.
+        fail_reasons: "{{ oob_bgp_all.stdout_lines
+          | select('search', 'OOB_BGP\\|FAIL\\|')
+          | map('regex_replace', '^.*OOB_BGP\\|FAIL\\|', '')
+          | list }}"
       delegate_to: localhost
       run_once: true
 
@@ -127,7 +137,10 @@
 
     - name: Fail the run if any OOB switch reported FAIL
       fail:
-        msg: "{{ fail_count }} OOB switch(es) with a down BGP neighbor — see report / {{ report_file | default('/tmp/oob-bgp-validation.txt') }}"
+        msg: >-
+          {{ fail_count }} OOB switch(es) failed the OOB↔CSL BGP gate:
+          {{ fail_reasons | join('; ') }}
+          — see report / {{ report_file | default('/tmp/oob-bgp-validation.txt') }}
       when: (fail_count | int) > 0
       delegate_to: localhost
       run_once: true

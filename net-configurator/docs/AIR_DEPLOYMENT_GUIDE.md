@@ -22,7 +22,7 @@ The Excel template contains no Air credentials or URLs — everything Air-specif
 lives in the shared vault. You configure it once per checkout:
 
 1. Run the one-time wizard: `make air-setup` — it prompts for your NGC API key,
-   which Air instance to use (public NGC Air vs. internal air-inside), and your
+   which Air instance to use (public `dsx-air` vs. internal `inside.dsx-air`), and your
    SSH key path, then vault-encrypts everything to `.era-secrets/air-secrets.yml`
    (inside this repo, gitignored)
 2. Run:
@@ -87,7 +87,7 @@ NVIDIA Air uses NGC (NVIDIA GPU Cloud) for authentication.
 4. Assign one of these roles:
    - **Air User** — standard access (recommended)
    - **Air Org Admin** — full administrative access
-5. Verify access by logging in to [air-ngc.nvidia.com](https://air-ngc.nvidia.com)
+5. Verify access by logging in to [dsx-air.nvidia.com](https://dsx-air.nvidia.com)
    - Enter your business email, select your NGC organization
    - You should see the Air dashboard
 
@@ -107,7 +107,7 @@ ls ~/.ssh/id_ed25519.pub
 
 ### Step 4: Register Your SSH Key in Air
 
-1. Log in to [air-ngc.nvidia.com](https://air-ngc.nvidia.com)
+1. Log in to [dsx-air.nvidia.com](https://dsx-air.nvidia.com)
 2. Click your **username** in the top right corner
 3. Select **Settings**
 4. Under **SSH Keys**, click **Add**
@@ -152,10 +152,11 @@ make air-setup
 
 It prompts for:
 - **NGC API key** (pasted once, masked on re-entry)
-- **Air instance** — `[1]` Public NGC Air (`https://air-ngc.nvidia.com`),
-  `[2]` Internal air-inside (`https://ngc.air-inside.nvidia.com`), or
+- **Air instance** — `[1]` Public Air (`https://dsx-air.nvidia.com`),
+  `[2]` Internal (`https://inside.dsx-air.nvidia.com`, reachable only from
+  inside NVIDIA — external users want `[1]`), or
   `[3]` a custom URL. Use the web UI URL you see in your browser; the automation
-  maps it to the correct API host automatically (e.g., `air-ngc.nvidia.com` →
+  maps it to the correct API host automatically (e.g., `dsx-air.nvidia.com` →
   `api.dsx-air.nvidia.com`).
 - **Username** — leave blank for NGC Air 2.0 (bearer token); fill for legacy Air
 - **SSH key path** — auto-detects `~/.ssh/id_ed25519`, `id_rsa`, `id_ecdsa`, or
@@ -163,6 +164,22 @@ It prompts for:
 
 Re-run the wizard any time to update one or more fields; existing values are
 preserved for fields you don't change.
+
+**Clearing an optional field.** The optional fields — **Username** and **NGC
+org** — can be emptied again once set. Press Enter at the prompt and confirm:
+
+```
+  NGC org (blank = clear) [myorg]:
+  ⚠️  Clear the existing NGC org "myorg"?  [y/N]
+  > y
+```
+
+The confirmation defaults to **No**, so Enter-ing straight through a re-run
+never discards a working setting. This matters for **NGC org**: a stale value is
+sent as the `nv-ngc-org` header on every Air API call, and a gateway that does
+not expect it answers **403 Forbidden** on operations like listing simulations
+or checking the resource budget. If you hit unexplained 403s, clear the org and
+retry — most gateways (including inside.dsx-air) accept bearer-only requests.
 
 ### Step 7: Verify Credentials
 
@@ -258,6 +275,14 @@ The check verifies:
 - Key is loaded in ssh-agent (required for passphrase-protected keys)
 - SSH key auth works against the jump host (`utility` in L3 mode; `oob-server-01` / `dhcp-oob` in legacy L2)
 - Password auth works (Ansible fallback via `ansible_password`)
+- **`sshpass` is installed on the jump host itself** — Ansible hops
+  jump-host → switch, and that second hop needs its own `sshpass`. Air's
+  image does not ship one. `FIX=1` installs it.
+
+**Reading a failure**: the check now names the failing host and prints the
+underlying `ssh` exit code and stderr. A credential problem is only reported
+as one when `sshpass` actually returned exit 5 — a dropped connection (exit
+255) is reported as a connection fault on that host, not as a bad password.
 
 **Passphrase-protected keys**: If your SSH key has a passphrase, load it into the agent first:
 
@@ -284,7 +309,7 @@ make air-destroy           # Teardown + cleanup
 | 1 | NGC account | [ngc.nvidia.com](https://ngc.nvidia.com/signin) (business email) |
 | 2 | Air role | [org.ngc.nvidia.com/users](https://org.ngc.nvidia.com/users) → assign "Air User" |
 | 3 | SSH key pair | `ssh-keygen -t ed25519` (if needed) |
-| 4 | Register SSH key in Air | [air-ngc.nvidia.com](https://air-ngc.nvidia.com) → Settings → SSH Keys |
+| 4 | Register SSH key in Air | [dsx-air.nvidia.com](https://dsx-air.nvidia.com) → Settings → SSH Keys |
 | 5 | NGC API key | [org.ngc.nvidia.com/account/api-keys](https://org.ngc.nvidia.com/account/api-keys) → confirm account in top-right → **Generate Personal Key** (value starts with `nvapi-`) |
 | 6 | Air instance picked | `make air-setup` prompt → stored in shared vault |
 | 7 | Credentials | `make air-setup` → wizard vaults your NGC API key |
@@ -320,8 +345,8 @@ in the repo. Use whichever matches your target:
 | Ready-to-use sample (default scale) | `input/sample-{ARCH}.xlsx` |
 | Ready-to-use sample (largescale) | `input/largescale-{ARCH}.xlsx` |
 
-Replace `{ARCH}` with one of: `2-4-3-200`, `2-8-5-200`, `2-8-9-400`,
-`2-4-5-800`, `2-8-9-800`, `2-8-9-400-SP`. (When you import to a named site,
+Replace `{ARCH}` with one of: `2-4-3-200`, `2-4-5-400`, `2-8-5-200`,
+`2-8-9-400`, `2-4-5-800`, `2-8-9-800`, `2-8-9-400-SP`. (When you import to a named site,
 the working copy lands at `input/{ARCH}/{SITE}/{ARCH}.xlsx`.)
 
 ### 1.2 Fill Out the Excel
@@ -352,7 +377,7 @@ This reads `architecture` and `site_name` from the Settings tab, creates `input/
 
 ### 2.1 Access NVIDIA Air
 
-Go to [air-ngc.nvidia.com](https://air-ngc.nvidia.com) and log in.
+Go to [dsx-air.nvidia.com](https://dsx-air.nvidia.com) and log in.
 
 ### 2.2 Create New Simulation
 
@@ -363,6 +388,7 @@ Go to [air-ngc.nvidia.com](https://air-ngc.nvidia.com) and log in.
 |---|---|
 | `2-4-3-200` | `output/2-4-3-200/<site>/topology/2-4-3-200-topology.json` |
 | `2-8-5-200` | `output/2-8-5-200/<site>/topology/2-8-5-200-topology.json` |
+| `2-4-5-400` | `output/2-4-5-400/<site>/topology/2-4-5-400-topology.json` |
 | `2-8-9-400` | `output/2-8-9-400/<site>/topology/2-8-9-400-topology.json` |
 | `2-8-9-800` | `output/2-8-9-800/<site>/topology/2-8-9-800-topology.json` |
 
@@ -478,10 +504,11 @@ make ztp-setup        # Setup ZTP server (DHCP + nginx)
 
 ### Option C: Deploy Server Configurations (Nodes, Storage, Support)
 
-In Air, servers are on internal networks not directly reachable from your machine. Use the `via-server` variant which SSH-tunnels through `oob-server-01`:
+In Air, servers are on internal networks not directly reachable from your machine. Use the `via-server` variant which SSH-tunnels through the OOB jump host
+(`utility` in L3 OOB, `oob-server-01` in legacy L2):
 
 ```bash
-make deploy-servers-via-jump    # SSH through oob-server-01
+make deploy-servers-via-jump    # SSH through the OOB jump host
 ```
 
 This requires `sshpass` on your local machine (`sudo apt install sshpass`).
@@ -520,10 +547,15 @@ In Air: click the switch → **Power Off** → wait a few seconds → **Power On
 
 ## Step 7: Verify Deployment
 
-> **Be patient.** After triggering ZTP, allow **15–20 minutes** for all switches to
-> download configs, apply them, and reboot. Do not re-trigger ZTP or re-run deployment
-> commands while this is in progress. You can monitor progress via the Air console
-> (`cat /var/log/autoprovision` on each switch).
+> **Be patient.** After triggering ZTP, allow **up to 30 minutes** for all switches to
+> download configs, apply them, and reboot. Cores are the long pole — measured in CI as
+> still converging at the 10-minute mark on healthy runs — because a core applies
+> roughly 1900 config lines against an OOB switch's ~280. Do not re-trigger ZTP or
+> re-run deployment commands while this is in progress. You can monitor progress via
+> the Air console (`cat /var/log/autoprovision` on each switch).
+>
+> With `NOZTP=1` this does not apply: config is pre-injected and applied on first
+> boot, and switches are reachable in roughly **90 seconds**.
 
 ### Run Automated Validation (after ZTP completes)
 
@@ -583,7 +615,7 @@ This produces:
 
 ### Step 1: Upload Topology
 
-1. Go to [air-ngc.nvidia.com](https://air-ngc.nvidia.com) and log in
+1. Go to [dsx-air.nvidia.com](https://dsx-air.nvidia.com) and log in
 2. Click **Create Simulation** → **Upload Topology**
 3. Upload the topology JSON from `output/<arch>/<site>/topology/`
 4. Name your simulation (e.g., `ERA-285-demo`)
@@ -668,7 +700,7 @@ outside the scope of the ERA reference architecture.
 |---|---|---|
 | **air-oob-switch** | The customer's existing OOB management infrastructure (top-of-rack switches, management LAN, etc.) | ERA does not specify what OOB infrastructure the customer uses — it could be an existing campus network, a separate management switch stack, or a direct connection. In Air, we need *something* to provide L2 connectivity between OOB switches, the ZTP server, and switch management ports. `air-oob-switch` fills that role as a simple VLAN-aware bridge. **It is not a device you buy.** |
 | **dhcp-oob** | A DHCP/ZTP server that provisions switches on first boot | Runs dnsmasq (DHCP) and nginx (config file hosting). In production, this could be any server or VM on the customer's OOB network. In Air, it is auto-created as an Ubuntu node. |
-| **oob-server-01** | The management gateway / jump host for the OOB network | Provides routing between OOB subnets, acts as the SSH entry point into the simulation, and hosts the ZTP status page. In production, this is typically an existing management server. |
+| **oob-server-01** (legacy L2; `utility` in L3 OOB) | The management gateway / jump host for the OOB network | Provides routing between OOB subnets, acts as the SSH entry point into the simulation, and hosts the ZTP status page. In production, this is typically an existing management server. |
 
 ### What `air-oob-switch` actually does
 
@@ -852,7 +884,7 @@ sudo cat /var/log/nginx/error.log
 
 **Symptom**: `make deploy-servers` times out or prompts for `ubuntu@<air-host>'s password`
 
-**Cause**: Servers are on Air internal networks (192.168.x.x) not reachable from your machine. The SSH proxy through `oob-server-01` is needed.
+**Cause**: Servers are on Air internal networks (192.168.x.x) not reachable from your machine. The SSH proxy through the OOB jump host (`utility` in L3 OOB, `oob-server-01` in legacy L2) is needed.
 
 **Fix**:
 ```bash

@@ -3,7 +3,6 @@
 """Air API helper functions — NGC Air 2.0 (v3).
 
 All functions raise AirAPIError on failure instead of calling sys.exit().
-Adapted from ric-flair's v3 airlib for ERA's custom OOB architecture.
 
 NGC v3 uses a mix of API versions:
   - v3: simulations, resource-budgets, SSH services (query)
@@ -20,13 +19,37 @@ from urllib.parse import urlsplit
 import httpx
 
 from airlib.errors import AirAPIError
-from airlib.models import Node, ResourceBudget, SSHService, SimState, Simulation
+from airlib.models import ResourceBudget, SSHService, SimState, Simulation
 
 
 # ---------------------------------------------------------------------------
 # URL rewriting: NGC frontend URL → API URL
 # ---------------------------------------------------------------------------
 
+# Explicit web-UI host → API base. Air does not derive these mechanically, and
+# guessing is unsafe: the bearer token is sent to whatever this returns, which
+# is why _checked_next() also refuses off-origin redirects.
+#
+# Each mapping below was verified by DNS resolution plus an unauthenticated
+# probe: the UI host serves /login, the API host answers /api/v1/ with 401, and
+# each legacy alias resolves to the same address as the name that replaced it.
+# The addresses themselves are deliberately not recorded here — they are
+# infrastructure detail, they go stale, and the mapping is what this table is
+# for. Re-verify with `dig +short <host>` and `curl -sI <api>/api/v1/`.
+_AIR_UI_TO_API = {
+    # Public
+    "dsx-air.nvidia.com": "https://api.dsx-air.nvidia.com",
+    "air-ngc.nvidia.com": "https://api.dsx-air.nvidia.com",       # legacy alias
+    # Internal
+    "inside.dsx-air.nvidia.com": "https://api.inside.dsx-air.nvidia.com",
+    # NOTE: the legacy internal host ngc.air-inside.nvidia.com is deliberately
+    # NOT listed. It is already handled by the generic ngc.<env> → api.<env>
+    # rule below, and api.air-inside.nvidia.com still resolves (same address as
+    # api.inside.dsx-air.nvidia.com). Adding it here would gain nothing and
+    # would break the documented generic-rewrite contract.
+}
+
+# Retained for callers that introspect the public UI host list.
 _PUBLIC_AIR_UI_HOSTS = ("air-ngc.nvidia.com", "dsx-air.nvidia.com")
 _PUBLIC_AIR_API = "https://api.dsx-air.nvidia.com"
 
@@ -34,22 +57,24 @@ _PUBLIC_AIR_API = "https://api.dsx-air.nvidia.com"
 def _api(base_url: str) -> str:
     """Rewrite a web UI URL to the matching API URL.
 
-    Air serves the web UI and API on different hostnames:
+    Air serves the web UI and API on different hostnames, and the mapping is
+    not mechanical — it is an explicit table (``_AIR_UI_TO_API``):
 
-    - Air-Inside: ``ngc.<env>.nvidia.com`` → ``api.<env>.nvidia.com``
-      (e.g., ``ngc.air-inside.nvidia.com`` → ``api.air-inside.nvidia.com``)
-    - Public Air: ``air-ngc.nvidia.com`` or ``dsx-air.nvidia.com`` →
-      ``api.dsx-air.nvidia.com`` (all public web UI hosts funnel into the
-      same API hostname — this is not a mechanical rewrite)
+    - Internal: ``inside.dsx-air.nvidia.com`` → ``api.inside.dsx-air.nvidia.com``
+    - Public:   ``dsx-air.nvidia.com`` → ``api.dsx-air.nvidia.com``
+
+    The previous names (``ngc.air-inside.nvidia.com``, ``air-ngc.nvidia.com``)
+    are kept so existing ``.era-secrets`` vaults keep working; both still
+    resolve to the same addresses as their replacements.
 
     If ``base_url`` is already an API hostname (e.g., ``api.dsx-air.nvidia.com``),
     it is returned unchanged.
     """
     stripped = base_url.rstrip("/")
-    # Public Air: explicit hostname mapping.
-    for host in _PUBLIC_AIR_UI_HOSTS:
+    # Explicit UI → API mapping (public and internal).
+    for host, api in _AIR_UI_TO_API.items():
         if re.match(rf"^https?://{re.escape(host)}(/|$)", stripped):
-            return _PUBLIC_AIR_API
+            return api
     # Air-Inside: ngc.<env> → api.<env>.
     return re.sub(r"^(https?://)ngc\.", r"\1api.", base_url)
 

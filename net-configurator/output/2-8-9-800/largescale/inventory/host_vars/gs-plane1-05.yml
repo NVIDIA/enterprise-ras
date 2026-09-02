@@ -4,6 +4,18 @@ ansible_host: 172.20.0.66
 hostname: gs-plane1-05
 mac_address: 48:b0:2d:7c:77:98
 ip_assignment_mode: dhcp
+acls:
+- id: acl-default-dos
+  control_plane_inbound: true
+  type: null
+  rule: []
+- id: acl-default-whitelist
+  control_plane_inbound: true
+  type: ipv4
+  rule:
+  - id: '200'
+    protocol: tcp
+    dest_port: '8251'
 plane: 1
 lo_ip: 10.1.1.45/32
 router_id: 10.1.1.45

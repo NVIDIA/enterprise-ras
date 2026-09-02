@@ -1,7 +1,7 @@
 # ============================================================================
 # 2-4-5-800 Deployment Inventory (Generated from Excel)
 # ============================================================================
-# 0 Core switches, 16 OOB switches
+# 66 switches: 4 CS, 32 GL, 12 GS, 18 OOB
 # ============================================================================
 
 [cl]
@@ -78,20 +78,22 @@ gs-plane2-06
 [oob]
 oob-switch-01
 oob-switch-02
-oob-switch-03
-oob-switch-04
-oob-switch-05
-oob-switch-06
-oob-switch-07
-oob-switch-08
-oob-switch-09
-oob-switch-10
-oob-switch-11
-oob-switch-12
-oob-switch-13
-oob-switch-14
-oob-switch-15
-oob-switch-16
+rack-oob-su-01-01
+rack-oob-su-01-02
+rack-oob-su-02-01
+rack-oob-su-02-02
+rack-oob-su-03-01
+rack-oob-su-03-02
+rack-oob-su-04-01
+rack-oob-su-04-02
+rack-oob-su-05-01
+rack-oob-su-05-02
+rack-oob-su-06-01
+rack-oob-su-06-02
+rack-oob-su-07-01
+rack-oob-su-07-02
+rack-oob-su-08-01
+rack-oob-su-08-02
 
 [nodes]
 su-01-node-01
@@ -239,13 +241,6 @@ su-08-node-16
 su-08-node-17
 su-08-node-18
 
-[storage]
-storage-01
-storage-02
-storage-03
-storage-04
-storage-05
-
 [support]
 support-01
 support-02
@@ -253,6 +248,12 @@ support-03
 support-04
 support-05
 support-06
+support-07
+support-08
+support-09
+support-10
+support-11
+support-12
 
 [dhcp]
 external-dhcp
@@ -276,7 +277,6 @@ ansible_user=cumulus
 
 [servers:children]
 nodes
-storage
 support
 dhcp
 oob_server

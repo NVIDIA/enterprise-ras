@@ -11,6 +11,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from airlib.errors import AirError, AirSSHError
@@ -24,6 +25,68 @@ SSH_STRICT_OFF = [
 # Timeout constants (seconds)
 CONNECT_TIMEOUT = 10
 SUBPROCESS_TIMEOUT = 20
+# apt-get update + install over a sim's NAT path is slow; it is not the same
+# budget as a one-shot `true` login check.
+REMOTE_INSTALL_TIMEOUT = 300
+
+# sshpass(1) RETURN VALUES documents 1-7; anything else is ssh's own exit code
+# passed through. That is why 255 and 5 mean entirely different things and must
+# never be collapsed into one "it failed". Per the man page, ssh reports "an
+# unimaginative (and non-informative) 255 for all error cases".
+SSHPASS_INVALID_ARGS = 1
+SSHPASS_CONFLICTING_ARGS = 2
+SSHPASS_RUNTIME_ERROR = 3
+SSHPASS_PARSE_ERROR = 4
+SSHPASS_WRONG_PASSWORD = 5
+SSHPASS_UNKNOWN_HOST_KEY = 6
+SSHPASS_HOST_KEY_CHANGED = 7
+SSH_CONNECT_ERROR = 255
+
+
+@dataclass(frozen=True)
+class SSHAttempt:
+    """The outcome of one sshpass/ssh invocation, with the evidence kept.
+
+    Truthy on success, so callers that only care whether it worked read the
+    same as they did against the old bare-bool return. Callers that have to
+    *explain* a failure now have the returncode and stderr to explain it with,
+    rather than guessing (ERA-84).
+    """
+
+    ok: bool
+    returncode: int | None = None
+    stderr: str = ""
+    failure: str = ""
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
+def classify_ssh_failure(returncode: int | None, stderr: str = "") -> str:
+    """Name the cause of a failed sshpass/ssh run from its exit code.
+
+    Returns one of "", "auth", "hostkey", "connect", "sshpass", "timeout",
+    "remote". `stderr` is accepted for future refinement and deliberately not
+    pattern-matched today — the exit code is the reliable signal.
+
+    Note on exit 1: sshpass documents it as "invalid command line argument",
+    but every argv here is built by this module, so a remote command exiting 1
+    is overwhelmingly the likelier reading. It is classified as "remote".
+    """
+    if returncode == 0:
+        return ""
+    if returncode is None:
+        return "timeout"
+    if returncode == SSHPASS_WRONG_PASSWORD:
+        return "auth"
+    if returncode in (SSHPASS_UNKNOWN_HOST_KEY, SSHPASS_HOST_KEY_CHANGED):
+        return "hostkey"
+    if returncode == SSH_CONNECT_ERROR:
+        return "connect"
+    if returncode in (SSHPASS_CONFLICTING_ARGS, SSHPASS_RUNTIME_ERROR,
+                      SSHPASS_PARSE_ERROR):
+        return "sshpass"
+    return "remote"
 
 
 def build_ssh_args(
@@ -260,13 +323,136 @@ def verify_key_in_authorized_keys(
         return False
 
 
+def build_remote_package_install_cmd(package: str) -> str:
+    """Build the remote shell command that installs one apt package.
+
+    Non-interactive throughout: this runs over SSH from CI and from Air Node
+    Instructions, neither of which has a TTY, so a debconf prompt would hang
+    rather than fail. The index is refreshed first because a fresh Air node has
+    no package lists at all.
+    """
+    safe = shlex.quote(package)
+    return (
+        "DEBIAN_FRONTEND=noninteractive apt-get update -qq && "
+        f"DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {safe}"
+    )
+
+
+def run_remote_command(
+    host: str,
+    port: str | int,
+    user: str,
+    remote_cmd: str,
+    *,
+    password: str = "",
+    ssh_key_path: str = "",
+    timeout: int = SUBPROCESS_TIMEOUT,
+) -> SSHAttempt:
+    """Run one command on a remote host, keeping the evidence.
+
+    Authenticates with `password` (via sshpass) or `ssh_key_path` (BatchMode) —
+    the caller passes whichever it has actually verified. Probing over an
+    unverified credential produces auth failures that look like whatever the
+    probe was asking about.
+    """
+    if password:
+        if not shutil.which("sshpass"):
+            raise AirSSHError(
+                "sshpass is not installed. Install it with: sudo apt install sshpass"
+            )
+        cmd = ["sshpass", "-e", "ssh", *SSH_STRICT_OFF,
+               "-p", str(port),
+               "-o", f"ConnectTimeout={CONNECT_TIMEOUT}",
+               "-o", "PubkeyAuthentication=no",
+               f"{user}@{host}", remote_cmd]
+        env = {**os.environ, "SSHPASS": password}
+    elif ssh_key_path:
+        expanded = Path(ssh_key_path).expanduser()
+        cmd = ["ssh", *SSH_STRICT_OFF,
+               "-p", str(port),
+               "-o", f"ConnectTimeout={CONNECT_TIMEOUT}",
+               "-o", "BatchMode=yes",
+               "-i", str(expanded),
+               f"{user}@{host}", remote_cmd]
+        env = dict(os.environ)
+    else:
+        raise AirSSHError("run_remote_command needs either a password or a key path")
+
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return SSHAttempt(ok=False, returncode=None, failure="timeout",
+                          stderr=f"timed out after {timeout}s")
+    except OSError as exc:
+        return SSHAttempt(ok=False, returncode=None, failure="sshpass",
+                          stderr=str(exc))
+
+    return SSHAttempt(
+        ok=result.returncode == 0,
+        returncode=result.returncode,
+        stderr=(result.stderr or "").strip(),
+        failure=classify_ssh_failure(result.returncode, result.stderr or ""),
+    )
+
+
+def remote_has_command(
+    host: str,
+    port: str | int,
+    user: str,
+    command: str,
+    *,
+    password: str = "",
+    ssh_key_path: str = "",
+) -> bool:
+    """Return True if `command` is on the remote host's PATH.
+
+    Note this asks about the REMOTE host. Every other sshpass call in this
+    module uses sshpass on the controller to reach a jump host; this one checks
+    whether the jump host itself can go on to reach the switches (ERA-85).
+    """
+    return bool(run_remote_command(
+        host, port, user,
+        f"command -v {shlex.quote(command)} >/dev/null 2>&1",
+        password=password, ssh_key_path=ssh_key_path,
+    ))
+
+
+def install_remote_package(
+    host: str,
+    port: str | int,
+    user: str,
+    package: str,
+    *,
+    password: str = "",
+    ssh_key_path: str = "",
+) -> SSHAttempt:
+    """Install one apt package on a remote host.
+
+    Runs after the sim is up, which is when the node's outbound NAT path is
+    actually working — an install attempted at first-boot Node-Instruction time
+    races the NAT host that provides its route to the archive.
+
+    Uses `sudo -n`: passwordless sudo for the login user is assumed and NOT
+    verified here. Where it does not hold this fails cleanly with sudo's own
+    stderr rather than hanging on a prompt.
+    """
+    return run_remote_command(
+        host, port, user,
+        f"sudo -n sh -c {shlex.quote(build_remote_package_install_cmd(package))}",
+        password=password, ssh_key_path=ssh_key_path,
+        timeout=REMOTE_INSTALL_TIMEOUT,
+    )
+
+
 def inject_key_via_password(
     host: str,
     port: str | int,
     user: str,
     password: str,
     public_key: str,
-) -> bool:
+) -> SSHAttempt:
     """Inject an SSH public key into a remote host using password auth (sshpass).
 
     Appends the public key to ~/.ssh/authorized_keys on the remote host,
@@ -280,7 +466,9 @@ def inject_key_via_password(
         public_key: Full public key line (e.g. "ssh-ed25519 AAAA...").
 
     Returns:
-        True if key injection succeeded.
+        An `SSHAttempt` — truthy on success, and on failure carrying the
+        returncode, stderr and classified cause so the caller can report what
+        actually went wrong instead of guessing at the password (ERA-84).
 
     Raises:
         AirSSHError: If sshpass is not installed.
@@ -319,6 +507,18 @@ def inject_key_via_password(
             cmd, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
             env={**os.environ, "SSHPASS": password},
         )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, OSError):
-        return False
+    except subprocess.TimeoutExpired:
+        return SSHAttempt(
+            ok=False, returncode=None, failure="timeout",
+            stderr=f"timed out after {SUBPROCESS_TIMEOUT}s",
+        )
+    except OSError as exc:
+        return SSHAttempt(ok=False, returncode=None, failure="sshpass",
+                          stderr=str(exc))
+
+    return SSHAttempt(
+        ok=result.returncode == 0,
+        returncode=result.returncode,
+        stderr=(result.stderr or "").strip(),
+        failure=classify_ssh_failure(result.returncode, result.stderr or ""),
+    )

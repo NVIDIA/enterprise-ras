@@ -49,6 +49,7 @@ _spec.loader.exec_module(_air_deploy)
 build_server_ni_commands = _air_deploy.build_server_ni_commands
 build_switch_ni_commands = _air_deploy.build_switch_ni_commands
 SERVER_NI_SKIP_PREFIXES = _air_deploy.SERVER_NI_SKIP_PREFIXES
+SWITCH_HOST_PREFIXES = _air_deploy.SWITCH_HOST_PREFIXES
 
 
 def write_file_cmd(path: str, content: str) -> str:
@@ -108,11 +109,11 @@ def generate_air_oob_switch(topology: dict) -> str:
 
     Port classification (mirrors _inject_air_oob_instructions in air-deploy.py):
       - switch eth0s / infra eth1 → untagged (air-mgmt)
-      - OOB switch uplinks        → access VLAN per mgmt_subnet
-      - infra eth2+               → access VLAN per mgmt_subnet
+      - OOB switch uplinks        → access VLAN per OOB subnet
+      - infra eth2+               → access VLAN per OOB subnet
     """
     air_meta = topology.get("_air_oob", {})
-    mgmt_subnets = air_meta.get("mgmt_subnets", [])
+    oob_subnets = air_meta.get("oob_subnets", [])
     oob_switch_names = air_meta.get("oob_switch_names", [])
 
     # Map air-oob-switch ports to their peer (node:interface)
@@ -136,7 +137,7 @@ def generate_air_oob_switch(topology: dict) -> str:
     ):
         if peer_node in oob_switch_names:
             switch_idx = oob_switch_names.index(peer_node)
-            n_subnets = max(len(mgmt_subnets), 1)
+            n_subnets = max(len(oob_subnets), 1)
             subnet_idx = switch_idx % n_subnets
             if peer_iface != "eth0":
                 vlan_id = 777 + subnet_idx
@@ -487,6 +488,12 @@ def main() -> None:
     topo_nodes = set(topology.get("content", {}).get("nodes", {}).keys())
     devices = global_vars.get("devices", {})
     common = global_vars.get("common", {})
+    # Pin both planes exactly as air-deploy.py main() does, so the previewed .sh
+    # is byte-identical to what actually gets injected. Without this the preview
+    # silently falls back to the 172.20.0.x / 192.168.200.0/24 defaults and
+    # misrepresents any workbook that moves either plane.
+    _air_deploy.set_air_mgmt_subnet(global_vars.get("air_mgmt_subnet"))
+    _air_deploy.set_oob_plane(common.get("oob_network"), common.get("oob_gateway"))
 
     # Server NIs ----------------------------------------------------------
     server_count = 0
@@ -517,7 +524,7 @@ def main() -> None:
     configs_dir = base / "configs"
     switch_count = 0
     for node_name in sorted(topo_nodes):
-        if not any(node_name.startswith(p) for p in ("core-", "csl-", "gsl-", "oob-switch-")):
+        if not any(node_name.startswith(p) for p in SWITCH_HOST_PREFIXES):
             continue
         if node_name == "air-oob-switch":
             continue  # custom script already written above

@@ -18,6 +18,25 @@
     local_report: "/tmp/ping-matrix-report.txt"
   tasks:
 
+    # The whole matrix SSHes to servers via `sshpass -e` from the jump. If
+    # sshpass is missing on the jump every fire/collect returns rc=127 and the
+    # report is silently NODATA for every server (looks like a data-plane
+    # outage but is a tooling gap). Match the other jump-based validators
+    # (validate-servers, validate-switch-health, validate-ztp, …) which all
+    # self-install it.
+    - name: Ensure sshpass is available
+      command: which sshpass
+      changed_when: false
+      failed_when: false
+      register: sshpass_check
+
+    - name: Install sshpass if missing
+      apt:
+        name: sshpass
+        state: present
+      when: sshpass_check.rc != 0
+      become: true
+
     - name: Show test plan
       debug:
         msg: "Ping matrix: {{ server_groups | length }} servers"
@@ -54,11 +73,20 @@
             {% set src_dev = devices.get(item, {}) %}
             {% set src_ifaces = src_dev.get('interfaces', {}) %}
             {# Compute prefixes: su-*/node-* (legacy) + gpu-* (2-8-9-800 dual-plane) #}
-            {% set src_is_compute = item.startswith('su-') or item.startswith('node-') or item.startswith('gpu-') %}
+            {# Excel `Function` -> devices[*].role is authoritative (docs/ROLES.md); the
+               name tests are a fallback for pre-role inventories. Matching on hostname
+               alone meant a site-prefixed host (`<site>-gpu-01`) classified as
+               NOTHING: src_inband_iface and src_inband_ip both resolved empty, every
+               ping was skipped, and the matrix reported '7 no data collected' with no
+               error anywhere. #}
+            {% set src_role = (devices.get(item, {}) or {}).get('role', '') %}
+            {% set src_is_compute = (src_role == 'compute') if src_role
+                                    else (item.startswith('su-') or item.startswith('node-') or item.startswith('gpu-')) %}
             {# Support prefixes: support-* (legacy) + bcm-/slurm-/k8s-* (2-8-9-800 control plane) #}
-            {% set src_is_support = item.startswith('support') or item.startswith('bcm-') or item.startswith('slurm-') or item.startswith('k8s-') %}
-            {% set src_is_storage = item.startswith('storage') %}
-            {% set src_inband_iface = 'bond0' if src_is_compute else ('bond0.' ~ common.support_vlan if src_is_support else ('bond0.' ~ common.storage_vlan if src_is_storage else '')) %}
+            {% set src_is_support = (src_role in ['support', 'k8s', 'bcme']) if src_role
+                                    else (item.startswith('support') or item.startswith('bcm-') or item.startswith('slurm-') or item.startswith('k8s-')) %}
+            {% set src_is_storage = (src_role == 'storage') if src_role else item.startswith('storage') %}
+            {% set src_inband_iface = 'bond0' if src_is_compute else ('bond0.' ~ common.support_vlan if src_is_support else ('bond0.' ~ common.storage_vlan if (src_is_storage and common.storage_vlan is defined) else '')) %}
             {% set src_inband_ip = (src_dev.get('bond_ip', '') if src_is_compute else src_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
             {# GPU IPs: dual-plane uses gpu_interfaces (list of {iface,plane,ip}); single-plane uses gpu_ips list #}
             {% set src_gpu_iface = src_ifaces.get('gpu', [''])[0] if src_ifaces.get('gpu', []) | length > 0 else '' %}
@@ -98,7 +126,9 @@
             {% for dst in server_groups %}
             {% if dst != item %}
             {% set dst_dev = devices.get(dst, {}) %}
-            {% set dst_is_compute = dst.startswith('su-') or dst.startswith('node-') or dst.startswith('gpu-') %}
+            {% set dst_role = (dst_dev or {}).get('role', '') %}
+            {% set dst_is_compute = (dst_role == 'compute') if dst_role
+                                    else (dst.startswith('su-') or dst.startswith('node-') or dst.startswith('gpu-')) %}
             {% set dst_inband_ip = (dst_dev.get('bond_ip', '') if dst_is_compute else dst_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
             {% set _dst_gpu_ifaces = dst_dev.get('gpu_interfaces', []) %}
             {% set first_dst_gpu = (_dst_gpu_ifaces[0].ip | regex_replace('/.*', '')) if _dst_gpu_ifaces | length > 0
@@ -112,9 +142,9 @@
                not a real network issue. On legacy archs where Storage is
                merged into INBAND, the VRFs match and we keep the INBAND
                label so a same-VRF unreach surfaces as a real failure. #}
-            {% set dst_is_storage = dst.startswith('storage') %}
-            {% set _src_vrf = (common.storage_vrf if src_is_storage else common.get('cpu_vrf', 'INBAND')) %}
-            {% set _dst_vrf = (common.storage_vrf if dst_is_storage else common.get('cpu_vrf', 'INBAND')) %}
+            {% set dst_is_storage = (dst_role == 'storage') if dst_role else dst.startswith('storage') %}
+            {% set _src_vrf = (common.get('storage_vrf', 'STORAGE') if src_is_storage else common.get('cpu_vrf', 'INBAND')) %}
+            {% set _dst_vrf = (common.get('storage_vrf', 'STORAGE') if dst_is_storage else common.get('cpu_vrf', 'INBAND')) %}
             {% set _l3_tag = 'CROSS-VRF' if (_src_vrf and _dst_vrf and _src_vrf != _dst_vrf) else 'INBAND' %}
             _p {{ dst_inband_ip }} {{ src_inband_ip }} && echo "PASS|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}|{{ dst_inband_ip }}|{{ _l3_tag }}" >> $R || echo "FAIL|{{ src_inband_iface }}({{ src_inband_ip }})|{{ dst }}|{{ dst_inband_ip }}|{{ _l3_tag }}" >> $R
             {% endif %}
@@ -267,7 +297,7 @@
           Servers tested: {{ server_groups | length }}
 
           VRF ROUTING DOMAINS:
-            INBAND: Compute (VLAN {{ common.cpu_vlan }}), Support (VLAN {{ common.support_vlan }}), Storage (VLAN {{ common.storage_vlan }}) — all can cross-ping
+            INBAND: Compute (VLAN {{ common.cpu_vlan | default('n/a') }}), Support (VLAN {{ common.support_vlan | default('n/a') }}){% if common.storage_vlan is defined %}, Storage (VLAN {{ common.storage_vlan }}){% endif %} — all can cross-ping
             GPU:    Compute GPU interfaces (VLAN {{ common.get('gpu_vlan', common.get('gpu_plane1_vlan', 900)) }}) — isolated, only GPU ↔ GPU
             CROSS-VRF pings (INBAND → GPU) are expected to FAIL
             If a cross-VRF ping PASSES, that indicates a VRF leak (isolation broken)

@@ -4,16 +4,27 @@ ansible_host: 172.20.0.216
 hostname: oob-switch-14
 mac_address: 48:b0:2d:a8:0f:58
 ip_assignment_mode: dhcp
-svi_ip: 192.168.200.15/24
+acls:
+- id: acl-default-dos
+  control_plane_inbound: true
+  type: null
+  rule: []
+- id: acl-default-whitelist
+  control_plane_inbound: true
+  type: null
+  rule: []
+svi_ip: 192.168.200.247/24
 default_gateway: 192.168.200.1
 access_ports: swp1-48
-uplink_ports: swp1-49
+uplink_ports: swp1-49,swp51
 spine_bond_members:
 - swp49
+- swp51
 lo_ip: 172.16.176.114/32
 router_id: 172.16.176.114
 bgp_asn: 4260394802
 vrr_ip: 192.168.200.1/24
+oob_access_vlan: 200
 oob_vni: 4200
 oob_vrf_vni: 5001
 oob_vrf_vlan: 3001

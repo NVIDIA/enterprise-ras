@@ -5,6 +5,13 @@
 
 Step-by-step procedure for deploying ERA in NVIDIA Air **without using the Air API**.
 
+> **Scope: this guide describes the legacy L2 OOB topology.** It runs Ansible from
+> `dhcp-oob` and routes through `oob-server-01`. The shipped default for every
+> architecture is **L3 OOB**, where the equivalent nodes are `utility` (jump/NAT)
+> and `external-dhcp` (DHCP/ZTP) — all seven default inventories declare
+> `[jump]` as `utility`. Read the node names below as their L3 equivalents if you
+> are on the default topology. See [ROLES.md](ROLES.md) for the full mapping.
+
 ### When to use this guide
 
 Pick the manual fallback when any of the following apply:
@@ -47,7 +54,8 @@ target for the scripts — they come out as part of `generate`.
 
 ### Why Run Ansible from dhcp-oob?
 
-The standard `deploy-servers-via-jump` tunnels all SSH through `oob-server-01`,
+The standard `deploy-servers-via-jump` tunnels all SSH through the OOB jump host
+(`utility` in L3 OOB, `oob-server-01` in legacy L2),
 which can only handle ~3 concurrent connections. With 14+ servers, connections
 get dropped. Running Ansible directly from `dhcp-oob` — which is on the same
 OOB network as all servers — eliminates the bottleneck entirely.
@@ -62,7 +70,7 @@ OOB network as all servers — eliminates the bottleneck entirely.
 - **Python 3.12+** (Ubuntu 22.04's default Python 3.10 is not enough — use `deadsnakes` PPA or a similar source)
 - `pip install -r requirements.txt` completed successfully
 - A filled-out Excel configuration file
-- A valid NVIDIA Air account at https://air-ngc.nvidia.com — sign up with an NGC account (see [AIR_DEPLOYMENT_GUIDE.md → Step 1: Create an NGC Account](AIR_DEPLOYMENT_GUIDE.md#step-1-create-an-ngc-account)). This manual flow uses your Air login directly, so **no API key is required**.
+- A valid NVIDIA Air account at https://dsx-air.nvidia.com — sign up with an NGC account (see [AIR_DEPLOYMENT_GUIDE.md → Step 1: Create an NGC Account](AIR_DEPLOYMENT_GUIDE.md#step-1-create-an-ngc-account)). This manual flow uses your Air login directly, so **no API key is required**.
 - An SSH key registered in Air (see [AIR_DEPLOYMENT_GUIDE.md](AIR_DEPLOYMENT_GUIDE.md#step-4-register-your-ssh-key-in-air))
 
 **On dhcp-oob** (after the sim boots — the Node Instruction script installs these for you):
@@ -108,7 +116,7 @@ Scripts are written to `output/<arch>/<site>/topology/node-instructions/`.
 
 ### 2.1 Create Simulation
 
-1. Go to [air-ngc.nvidia.com](https://air-ngc.nvidia.com) and log in
+1. Go to [dsx-air.nvidia.com](https://dsx-air.nvidia.com) and log in
 2. Click **Create Simulation** → **Upload Topology**
 3. Upload the topology JSON from `output/<arch>/<site>/topology/`
 4. Name your simulation (e.g., `ERA-285-manual`)
@@ -310,14 +318,16 @@ oob_server_interfaces:
 #### If you customized subnets in Excel
 
 The base64 blobs above assume the **default** subnets. If your Excel
-changes the OOB subnet (Settings tab, `mgmt_subnet_1` field) or adds
-additional mgmt subnets, the `eth2` entry in `oob-server-01.yml` must
+changes the OOB subnet (declared on the OOB VLAN row, VRF `OOB`, in
+"VLANs & Profiles" — see the
+[Excel Configuration Guide](EXCEL_CONFIGURATION_GUIDE.md#oob-vlan-management-network))
+or adds additional OOB VLANs, the `eth2` entry in `oob-server-01.yml` must
 match. To find the correct values, inspect what the parser generated
 *before* you overwrite it:
 
 ```bash
-# What subnets did the parser think we have?
-grep -A 20 "^mgmt_subnets\|^ztp_interfaces" \
+# What OOB subnets did the parser resolve from the OOB VLAN(s)?
+grep -A 20 "^ztp_interfaces\|^ztp_allow_subnets" \
   output/<arch>/<site>/inventory/group_vars/all/main.yml
 
 # What did the parser originally put in oob-server-01.yml?
@@ -331,8 +341,9 @@ to match your deployment. Rules of thumb:
 
 - `eth1` is **always** `172.20.0.1/24` (Air's internal management
   network; not user-configurable — determined by Air's topology template)
-- `eth2` (and `eth3`, `eth4`, ... if you have multiple OOB subnets) must
-  match the `mgmt_subnets` list from `group_vars/all/main.yml`
+- `eth2` (and `eth3`, `eth4`, ... if you have multiple OOB VLAN subnets) must
+  match the OOB VLAN subnet(s) resolved into `ztp_interfaces` in
+  `group_vars/all/main.yml`
 - The `ansible_host` at the top should match **eth1** (172.20.0.1) —
   that's the IP dhcp-oob uses to reach oob-server-01 over the air-mgmt
   network
@@ -395,8 +406,10 @@ Repeat for all switches: `core-01`, `core-02`, `oob-switch-01`, `oob-switch-02`
 Alternatively, power-cycle each switch via the Air GUI (**Power Off** → **Power On**).
 ZTP runs automatically on boot.
 
-> **Be patient.** Allow **15–20 minutes** for all switches to download configs,
-> apply them, and reboot.
+> **Be patient.** Allow **up to 30 minutes** for all switches to download configs,
+> apply them, and reboot. Cores are the long pole — measured in CI as still
+> converging at the 10-minute mark on healthy runs — so do not re-trigger ZTP
+> before then.
 
 ### 3.7 Deploy Server Configurations
 

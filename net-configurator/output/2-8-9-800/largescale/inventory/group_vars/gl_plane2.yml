@@ -1,12 +1,13 @@
 ---
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: MIT
+# GPU Plane 2 Configuration (Generated from Excel - 2-8-9-800)
 
-# ============================================================================
-# GSL Plane 2 group variables - 2-8-9-800 Deployment
-# ============================================================================
-asn: 4260397298
-
+gpu_vlan: 920
+gpu_vni: 4920
+gpu_vrf_name: GPU
+gpu_evpn_vlan: 3003
+gpu_evpn_vni: 5003
+asn: 4260395789
 vlan900_vrr: 192.168.16.1/20
-
 gpu_subnet: 192.168.16.0/20
+gpu_breakout: 2x
+isl_breakout: 2x

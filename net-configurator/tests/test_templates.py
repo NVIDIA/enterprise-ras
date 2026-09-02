@@ -148,7 +148,7 @@ class TestGSLCLITemplate:
         """Regression: a fully-broken-out GPU leaf (every parent port broken
         out, so no whole-port parents survive) must not emit a leading comma
         on the `type swp` line -> `nv set interface ,swp1s0,...` which NVUE
-        rejects. Reported by an OEM (Dell) against public v5.0; fixed by the
+        rejects. Reported by an OEM against public v5.0; fixed by the
         list-based join in gl_nvue_cli.j2.
         """
         template_path = project_root / "roles" / "gl" / "templates" / "gl_nvue_cli.j2"
@@ -195,7 +195,7 @@ class TestGSLCLITemplate:
         """At ew_tiers > 1, gl's internal_isl uplink to the gs spine is eBGP
         (W-ECMP only works over eBGP per NVIDIA Cumulus Linux docs), so it
         should get the WEIGHTED_ECMP outbound policy -- mirrors the
-        core/cl internal-isl fix in excel_parser.py. Verified via a
+        core/cl internal_isl fix in excel_parser.py. Verified via a
         generated SU16 (ew_tiers=2) workbook; no live 2-tier GPU deployment
         exists to verify byte-for-byte, unlike the underlay-to-MG fix.
         """
@@ -278,7 +278,8 @@ class TestSpineCLITemplate:
     Uses the same 'multipaths' WEIGHTED_ECMP route-map as every other
     W-ECMP peer-group in the fabric, not a separate 'cumulative' variant --
     confirmed 'multipaths' is the only value ever seen in live production
-    (grep across all 8 pdx01-m3-era-289-800 switches) and matches NVIDIA's
+    (grep across all 8 switches of a live 2-8-9-800 deployment) and matches
+    NVIDIA's
     own worked example for this exact spine-to-leaf underlay scenario.
     Verified via a generated SU16 workbook; no live 2-tier deployment
     exists to verify byte-for-byte.
@@ -404,6 +405,17 @@ class TestOOBTemplateRendering:
         output = template.render(**oob_vars)
 
         assert "nv set system hostname oob-switch-01" in output
+
+    @pytest.mark.parametrize(
+        "extra",
+        ({}, {"custom_config": ["nv set system contact ops"]}),
+    )
+    def test_output_has_exactly_one_trailing_newline(self, oob_cli_template, oob_vars, extra):
+        env = _make_rendering_env(oob_cli_template.parent)
+        template = env.get_template(oob_cli_template.name)
+        output = template.render(**oob_vars, **extra)
+        assert output.endswith("\n")
+        assert not output.endswith("\n\n")
 
     def test_svi_ip_in_output(self, oob_cli_template, oob_vars):
         """Rendered output contains the SVI IP address."""
@@ -769,6 +781,33 @@ class TestCoreTemplateRendering:
         assert "nv set bridge domain br_default vlan 200 vni 4200" in output
         assert "nv set bridge domain br_default vlan 300 vni 4300" in output
 
+    def test_exit_neighbors_follow_host_edge_interfaces(self, core_cli_template, core_vars):
+        env = _make_rendering_env(core_cli_template.parent)
+        template = env.get_template(core_cli_template.name)
+        core_vars["edge_interfaces"] = {
+            "ports": [63],
+            "breakout": 2,
+            "lanes": 4,
+            "vrf": "EXIT",
+            "port_overrides": {63: {"subports": [0]}},
+        }
+        core_vars["vrf_config"] = [{
+            "id": "EXIT",
+            "bgp": {
+                "neighbors": [{
+                    "interfaces": ["swp62s0", "swp63s0", "swp64s0"],
+                    "peer_group": "exit",
+                    "type": "unnumbered",
+                }],
+                "peer_groups": [],
+            },
+        }]
+        output = template.render(**core_vars)
+
+        assert "neighbor swp63s0 peer-group exit" in output
+        assert "neighbor swp62s0 peer-group exit" not in output
+        assert "neighbor swp64s0 peer-group exit" not in output
+
     def test_empty_link_state_strings_are_ignored(self, core_cli_template, core_vars):
         """Empty interfaces_up/down values must not emit malformed commands."""
         env = _make_rendering_env(core_cli_template.parent)
@@ -820,12 +859,12 @@ class TestCoreTemplateRendering:
                 "l2vpn_evpn": {"enable": True},
             },
             "neighbors": [
-                {"interfaces": "isl", "peer_group": "internal-isl", "type": "unnumbered", "ttl_security_hops": 1},
+                {"interfaces": "isl", "peer_group": "internal_isl", "type": "unnumbered", "ttl_security_hops": 1},
                 {"interfaces": "oob_uplink", "peer_group": "underlay", "type": "unnumbered"},
                 {"interfaces": ["10.187.4.35", "10.187.4.36"], "peer_group": "overlay", "type": "numbered"},
             ],
             "peer_groups": [
-                {"id": "internal-isl", "remote_as": "internal", "bfd_enable": True,
+                {"id": "internal_isl", "remote_as": "internal", "bfd_enable": True,
                  "address_family": {"ipv4_unicast": {"enable": True}, "l2vpn_evpn": {"enable": True}}},
                 {"id": "underlay", "remote_as": "external", "bfd_enable": True,
                  "address_family": {"ipv4_unicast": {"enable": True}}},
@@ -836,7 +875,7 @@ class TestCoreTemplateRendering:
 
         output = template.render(**core_vars)
 
-        assert "nv set interface swp59s0,swp59s1 description 'OOB uplinks'" in output
+        assert "nv set interface swp59s0,swp59s1 description oob_uplink" in output
         assert "nv set vrf default router bgp neighbor swp59s0 peer-group underlay" in output
         assert "nv set vrf default router bgp neighbor swp59s1 peer-group underlay" in output
         assert "nv set vrf default router bgp neighbor swp59s0-1 peer-group underlay" not in output

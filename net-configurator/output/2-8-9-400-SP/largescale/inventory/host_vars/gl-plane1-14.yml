@@ -4,9 +4,18 @@ ansible_host: 172.20.0.242
 hostname: gl-plane1-14
 mac_address: 48:b0:2d:8b:77:a7
 ip_assignment_mode: dhcp
+acls:
+- id: acl-default-dos
+  control_plane_inbound: true
+  type: null
+  rule: []
+- id: acl-default-whitelist
+  control_plane_inbound: true
+  type: null
+  rule: []
 plane: 1
 lo_ip: 10.1.1.14/32
-vrf_gpu_loopback: 10.1.1.24/32
+vrf_gpu_loopback: 10.1.1.34/32
 asn: 4260395901
 overlay_peers:
 - 10.1.1.41

@@ -18,9 +18,15 @@ COLLAPSED_CORE_ARCHS = ['2-4-3-200', '2-8-5-200', '2-8-9-400']
 
 
 def _all_inventory_archs(project_root):
-    """Every arch with a source inventory on disk (so new archs are auto-covered)."""
-    inv = project_root / "inventories"
-    return sorted(p.name for p in inv.iterdir() if p.is_dir() and (p / "hosts").exists())
+    """Every shipped arch (so new archs are auto-covered).
+
+    The per-arch seed is now empty (secrets are now one shared
+    inventories/secrets.yml), so the stable anchor is the committed default
+    output inventory.
+    """
+    out = project_root / "output"
+    return sorted(p.name for p in out.iterdir()
+                  if p.is_dir() and (p / "default" / "inventory" / "hosts").exists())
 
 
 class TestPlaybookIntegration:
@@ -54,14 +60,12 @@ class TestPlaybookIntegration:
         deployments = COLLAPSED_CORE_ARCHS
 
         for deployment in deployments:
-            hosts_file = project_root / "inventories" / deployment / "hosts"
-            
-            assert hosts_file.exists(), f"hosts file missing for {deployment}"
-            
-            # Read and validate basic structure
+            # The seed hosts file is gone; the parser generates the
+            # real hosts into output/. Validate the committed output hosts.
+            hosts_file = (project_root / "output" / deployment / "default"
+                          / "inventory" / "hosts")
+            assert hosts_file.exists(), f"output hosts file missing for {deployment}"
             content = hosts_file.read_text()
-            
-            # Should contain expected groups
             assert '[core]' in content, f"[core] group missing in {deployment}"
             assert '[oob]' in content, f"[oob] group missing in {deployment}"
 
@@ -79,34 +83,40 @@ class TestPlaybookIntegration:
 class TestInventoryValidation:
     """Test validation of inventory files."""
 
-    def test_group_vars_exist_for_all_deployments(self, project_root):
-        """Test that all deployments have required group_vars."""
-        deployments = COLLAPSED_CORE_ARCHS
-        required_files = ['all.yml', 'core.yml']
-        
-        for deployment in deployments:
-            for required_file in required_files:
-                file_path = project_root / "inventories" / deployment / "group_vars" / required_file
-                assert file_path.exists(), f"{required_file} missing for {deployment}"
-
-    def test_host_vars_exist_for_core_switches(self, project_root):
-        """Test that core switch host_vars exist."""
-        deployments = COLLAPSED_CORE_ARCHS
-        core_switches = ['core-01.yml', 'core-02.yml']
-        
-        for deployment in deployments:
-            for switch in core_switches:
-                file_path = project_root / "inventories" / deployment / "host_vars" / switch
-                assert file_path.exists(), f"{switch} missing for {deployment}"
+    def test_invariant_group_vars_live_in_single_home(self, project_root):
+        """The per-arch seed group_vars (all/oob/core/csl/servers/
+        switches) are eliminated — their content lives in the single-home
+        scripts/inventory_defaults.yml, keyed by section -> arch. Every
+        collapsed-core arch must have its 'all' and 'core' sections there, and no
+        top-level seed group_vars may remain (only all/secrets.yml stays). Seedless
+        generation being byte-identical is proven by test_seedless_generation.py.
+        """
+        defaults = yaml.safe_load(
+            (project_root / "scripts" / "inventory_defaults.yml").read_text())
+        # 'all' infra is a single arch-independent shared block (no per-arch keying).
+        assert defaults.get("all_shared"), "all_shared block missing from defaults"
+        for deployment in COLLAPSED_CORE_ARCHS:
+            assert deployment in defaults["core"], f"{deployment} absent from defaults 'core'"
+            gv = project_root / "inventories" / deployment / "group_vars"
+            leftover = sorted(p.name for p in gv.glob("*.yml"))
+            assert leftover == [], f"seed group_vars still present for {deployment}: {leftover}"
 
     def test_group_vars_are_valid_yaml(self, project_root):
-        """Every shipped arch's group_vars must be valid, non-empty YAML."""
-        deployments = _all_inventory_archs(project_root)
-        assert deployments, "no inventories found"
+        """The single-home defaults + each shipped arch's generated group_vars
+        must be valid, non-empty YAML.
 
+        The per-arch seed group_vars are gone; their content lives in
+        scripts/inventory_defaults.yml. Validate that single home plus the
+        generated output group_vars.
+        """
+        defaults = project_root / "scripts" / "inventory_defaults.yml"
+        assert yaml.safe_load(defaults.read_text()), "inventory_defaults.yml invalid/empty"
+
+        deployments = _all_inventory_archs(project_root)
+        assert deployments, "no shipped archs found"
         for deployment in deployments:
-            group_vars_dir = project_root / "inventories" / deployment / "group_vars"
-            for yaml_file in group_vars_dir.rglob("*.yml"):
+            gv_dir = project_root / "output" / deployment / "default" / "inventory" / "group_vars"
+            for yaml_file in gv_dir.rglob("*.yml"):
                 with open(yaml_file) as f:
                     content = yaml.safe_load(f)
                 assert content is not None, f"{yaml_file} is empty or invalid"
@@ -118,9 +128,11 @@ class TestInventoryValidation:
         assert deployments, "no inventories found"
 
         for deployment in deployments:
-            hosts = project_root / "inventories" / deployment / "hosts"
+            # Validate the generated output hosts (seed hosts removed).
+            hosts = (project_root / "output" / deployment / "default"
+                     / "inventory" / "hosts")
             content = hosts.read_text().strip()
-            assert content, f"hosts file empty for {deployment}"
+            assert content, f"output hosts file empty for {deployment}"
             assert '[oob]' in content, f"[oob] group missing in {deployment}"
 
 

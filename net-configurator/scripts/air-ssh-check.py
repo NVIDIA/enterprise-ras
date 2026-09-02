@@ -5,8 +5,13 @@
 
 When Air simulations are created with NGC Service API keys, cloud-init
 does not inject your SSH key.  This script checks SSH key auth against
-oob-server-01 and dhcp-oob, and can automatically inject your public
+the mode's jump hosts (L2: oob-server-01, dhcp-oob / L3: utility,
+external-conn, external-dhcp), and can automatically inject your public
 key using password-based SSH (sshpass).
+
+It also checks the *second* hop.  Ansible reaches the switches through
+the jump host, which needs its own sshpass to do so; Air's image does not
+ship one, and nothing used to notice (ERA-85).  FIX=1 installs it.
 
 Usage:
     python scripts/air-ssh-check.py --arch 2-8-5-200
@@ -38,6 +43,8 @@ from airlib.ssh import (
     get_key_fingerprint,
     get_public_key,
     inject_key_via_password,
+    install_remote_package,
+    remote_has_command,
     key_needs_passphrase,
     verify_key_in_authorized_keys,
 )
@@ -52,6 +59,12 @@ console = Console()
 # docs/plans/2026-05-20-l3-oob-air-topology.md.
 JUMP_HOSTS_L2 = ["oob-server-01", "dhcp-oob"]
 JUMP_HOSTS_L3 = ["utility", "external-conn", "external-dhcp"]
+
+# The one node Ansible actually hops through to reach the switches. Mirrors
+# `_resolve_infra_nodes()["jump_host"]` in air-deploy.py — the others in the
+# lists above are exposed for operator SSH, but only this one needs the
+# switch-side tooling (ERA-85).
+JUMP_HOST_BY_MODE = {"l2": "dhcp-oob", "l3": "utility"}
 
 
 def _detect_oob_mode(project_root: Path, arch: str, site: str) -> str:
@@ -87,6 +100,116 @@ def _load_server_password(project_root: Path, arch: str, site: str) -> str:
         except AirError:
             continue
     return DEFAULT_SERVER_PASSWORD
+
+
+# What each classified failure means for the operator, in the words of the
+# thing that actually went wrong. The credential is handled separately and only
+# named as a suspect when the exit code actually implicates it.
+_FAILURE_HINTS = {
+    "connect": "The SSH connection to this host failed or dropped mid-command "
+               "(ssh exit 255). The host is reachable on TCP but is not "
+               "completing sessions — check the sim node itself, not the credentials.",
+    "hostkey": "The remote host key was rejected (sshpass exit 6).",
+    "sshpass": "sshpass itself failed on the controller — not a remote problem.",
+    "timeout": "The injection command timed out. The host accepted the "
+               "connection but never completed the command.",
+    "remote": "The remote command failed. The login succeeded, so this is a "
+              "filesystem or permissions problem in the remote home directory "
+              "(~/.ssh unwritable, disk full, or a read-only home).",
+}
+
+
+def _injection_failure_lines(name: str, password_worked: bool, attempt) -> list[str]:
+    """Build the operator-facing explanation for a failed key injection.
+
+    ERA-84: the old message was a single guess — "wrong password or SSH error"
+    — printed even when password auth had just succeeded two lines above. The
+    rule now is that the password is only named as a suspect when the evidence
+    actually implicates it: password auth failed AND sshpass reported exit 5.
+    """
+    failure = getattr(attempt, "failure", "") or "remote"
+    stderr = (getattr(attempt, "stderr", "") or "").strip()
+    returncode = getattr(attempt, "returncode", None)
+
+    lines: list[str] = []
+    rc_note = f" (exit {returncode})" if returncode is not None else ""
+
+    if password_worked:
+        lines.append(f"  [red]FAIL[/] — Key injection failed on {name}{rc_note}, "
+                     "but password auth to this host succeeded.")
+        lines.append("  The credential is correct — this is an SSH/injection "
+                     f"fault on {name}.")
+        lines.append(f"  {_FAILURE_HINTS.get(failure, _FAILURE_HINTS['remote'])}")
+    elif failure == "auth":
+        lines.append(f"  [red]FAIL[/] — Key injection to {name} was rejected as a "
+                     f"bad password{rc_note}.")
+        lines.append("  Default password 'nvidia' may have been changed.")
+        lines.append("  Check server_ansible_password in secrets.yml")
+    else:
+        lines.append(f"  [red]FAIL[/] — Key injection failed on {name}{rc_note}.")
+        lines.append(f"  {_FAILURE_HINTS.get(failure, _FAILURE_HINTS['remote'])}")
+
+    if stderr:
+        lines.append(f"  ssh stderr: {stderr}")
+
+    return lines
+
+
+# Which credential the per-target loop actually proved for each result state.
+# `key_ok` short-circuits at step 5b before password auth is ever attempted, so
+# probing it over sshpass would use an unverified password (the fallback is the
+# literal 'nvidia') and report the resulting auth failure as whatever the probe
+# was asking about. Every other reachable state passed through step 5c or a
+# successful password-authenticated injection, so the password is proven there.
+_PROBE_AUTH_BY_STATUS = {
+    "key_ok": "key",
+    "pass_ok": "password",
+    "fixed": "password",
+    "injected_local_blocked": "password",
+}
+
+
+def _probe_auth_for(status: str | None) -> str | None:
+    """Return 'key', 'password', or None — the auth this host has verified."""
+    return _PROBE_AUTH_BY_STATUS.get(status)
+
+
+def _sshpass_status_lines(name: str, present: bool,
+                          installed: bool | None, attempt=None) -> list[str]:
+    """Report whether the jump host itself can reach the switches (ERA-85).
+
+    `present` is the result of the probe; `installed` is the outcome of a FIX=1
+    install attempt (None when no attempt was made); `attempt` carries that
+    attempt's evidence so a failure is explained rather than guessed at.
+    """
+    # Order matters: a host this run modified is reported as installed, not as
+    # merely present, so the report distinguishes "nothing happened" from "a
+    # package was installed on your jump host".
+    if installed is True:
+        return [f"  [green]OK[/] — installed sshpass on {name}"]
+
+    if present:
+        return [f"  [green]OK[/] — sshpass present on {name}"]
+
+    if installed is False:
+        lines = [
+            f"  [red]FAIL[/] — could not install sshpass on {name}",
+            f"  Common causes: no outbound path to the apt archive, apt locked, "
+            f"or no passwordless sudo for the login user on {name}.",
+            f"  Ansible plays that hop through {name} to the switches will "
+            "return NODATA until this is resolved.",
+        ]
+        stderr = (getattr(attempt, "stderr", "") or "").strip()
+        if stderr:
+            lines.append(f"  install stderr: {stderr}")
+        return lines
+
+    return [
+        f"  [yellow]WARN[/] — sshpass is not installed on {name}",
+        f"  {name} is the jump host to the switches but cannot authenticate to "
+        "them non-interactively.",
+        "  Re-run with FIX=1 to install it.",
+    ]
 
 
 def _load_jump_host_targets(host_vars_dir: Path,
@@ -340,9 +463,8 @@ def main() -> int:
             continue
 
         if not injected:
-            console.print("  [red]FAIL[/] — Key injection failed (wrong password or SSH error)")
-            console.print("  Default password 'nvidia' may have been changed.")
-            console.print("  Check server_ansible_password in secrets.yml")
+            for line in _injection_failure_lines(name, pass_ok, injected):
+                console.print(line)
             results[name] = "fail"
             continue
 
@@ -369,7 +491,50 @@ def main() -> int:
             results[name] = "fail"
 
     # ------------------------------------------------------------------
-    # Step 6: Summary
+    # Step 6: Can the jump host itself reach the switches? (ERA-85)
+    # ------------------------------------------------------------------
+    # Everything above proves the CONTROLLER can reach the jump host. Ansible
+    # then hops jump-host -> switch, and that second hop needs sshpass on the
+    # jump host. Air's image doesn't ship it, and nothing ever checked — which
+    # is why the ping matrix came back NODATA twice, months apart, with every
+    # check above green.
+    jump_host = JUMP_HOST_BY_MODE.get(mode)
+    probe_auth = _probe_auth_for(results.get(jump_host))
+    target = next((t for t in targets if t["name"] == jump_host), None)
+
+    if jump_host and probe_auth and target:
+        # Probe over the credential this host actually proved, never the other.
+        creds = ({"password": password} if probe_auth == "password"
+                 else {"ssh_key_path": ssh_key_path})
+        console.print()
+        console.print(f"Checking switch-side tooling on {jump_host}...")
+        try:
+            present = remote_has_command(
+                target["host"], target["port"], target["user"], "sshpass", **creds,
+            )
+            installed = None
+            attempt = None
+            if not present and args.fix:
+                console.print(f"  Installing sshpass on {jump_host}...")
+                attempt = install_remote_package(
+                    target["host"], target["port"], target["user"], "sshpass",
+                    **creds,
+                )
+                # Trust the re-probe, not apt's exit code — a package that
+                # "installed" but isn't on PATH is still a broken jump host.
+                installed = bool(attempt) and remote_has_command(
+                    target["host"], target["port"], target["user"], "sshpass",
+                    **creds,
+                )
+                present = installed
+            for line in _sshpass_status_lines(jump_host, present, installed,
+                                              attempt):
+                console.print(line)
+        except AirSSHError as exc:
+            console.print(f"  [yellow]SKIP[/] — cannot probe {jump_host}: {exc}")
+
+    # ------------------------------------------------------------------
+    # Step 7: Summary
     # ------------------------------------------------------------------
     console.print()
     console.print("[bold]Summary:[/]")

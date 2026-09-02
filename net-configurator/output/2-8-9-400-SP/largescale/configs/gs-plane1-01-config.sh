@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for gs-plane1-01
-# Generated: 2026-07-03T00:13:16Z
+# Generated: 2026-09-02T02:44:37Z
 # Format: NVUE CLI commands (Spine, Plane 1, EVPN Relay)
 #============================================================================
 # EVPN (relay — no local VTEPs)
@@ -26,17 +26,19 @@ nv set interface swp1,swp2,swp3,swp4,swp5,swp6,swp7,swp8,swp9,swp10,swp11,swp12,
 #============================================================================
 nv set qos roce state enabled
 nv set qos roce mode lossless
+nv set qos traffic-pool default-lossy memory-percent 10
+nv set qos traffic-pool roce-lossless memory-percent 90
 
 #============================================================================
 # BFD Profiles
 #============================================================================
 nv set router bfd state enabled
-nv set router bfd profile pf1 detect-multiplier 3
-nv set router bfd profile pf1 min-rx-interval 1000
-nv set router bfd profile pf1 min-tx-interval 1000
-nv set router bfd profile pf2 detect-multiplier 3
-nv set router bfd profile pf2 min-rx-interval 300
-nv set router bfd profile pf2 min-tx-interval 300
+nv set router bfd profile overlay detect-multiplier 3
+nv set router bfd profile overlay min-rx-interval 1000
+nv set router bfd profile overlay min-tx-interval 1000
+nv set router bfd profile underlay detect-multiplier 3
+nv set router bfd profile underlay min-rx-interval 300
+nv set router bfd profile underlay min-tx-interval 300
 
 #============================================================================
 # BGP Global
@@ -49,6 +51,7 @@ nv set router bgp router-id 10.1.1.41
 # Route Maps
 #============================================================================
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 description permit_loopback_interface_routes
 nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
 nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
 
@@ -419,7 +422,7 @@ nv set vrf default router bgp path-selection multipath aspath-ignore enabled
 #============================================================================
 nv set vrf default router bgp peer-group overlay address-family ipv4-unicast state disabled
 nv set vrf default router bgp peer-group overlay address-family l2vpn-evpn state enabled
-nv set vrf default router bgp peer-group overlay bfd profile pf1
+nv set vrf default router bgp peer-group overlay bfd profile overlay
 nv set vrf default router bgp peer-group overlay multihop-ttl 2
 nv set vrf default router bgp peer-group overlay remote-as external
 nv set vrf default router bgp peer-group overlay update-source lo

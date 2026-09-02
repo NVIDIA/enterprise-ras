@@ -25,11 +25,26 @@ import openpyxl
 
 # Re-use the parser's canonical-role helpers so the validator and parser
 # share one source of truth for category resolution.
-from excel_parser import (CANONICAL_ROLES, canonical_category, extract_role_index,
-                          build_wiremap_column_map, parse_air_settings)
+from excel_parser import (CANONICAL_ROLES, canonical_category, _oob_switch_svi_ip,
+                          _parse_cidr,
+                          build_wiremap_column_map, parse_air_settings,
+                          resolve_oob_vlans, classify_host_role,
+                          PLANE_LOOPBACK_BLOCKS,
+                          _dataplane_host_ips, _svi_switch_ip, _svi_gateway_ip)
+import asn_allocation as asn_alloc
+from utils import SWP_PORT_RE, loopbacks_sheet_name
 from oob_reserved import (OOB_SUBNET, DEFAULT_AIR_MGMT_SUBNET,
+                          AIR_MGMT_RESERVED_OWNERS,
                           find_oob_collisions, air_mgmt_intruders,
                           oob_reserved_for_mode)
+
+# The generator models live in the sibling `data-models/` tree in the internal
+# monorepo (net-configurator/ is the public subtree). Add it to sys.path so the
+# validator can consult the models. In the public distribution `data-models/` is
+# absent, so the import below falls back to the standalone path.
+_data_models_dir = Path(__file__).resolve().parents[2] / "data-models"
+if _data_models_dir.is_dir():
+    sys.path.insert(0, str(_data_models_dir))
 
 try:
     from models import ModelError, load_arch_model
@@ -41,7 +56,7 @@ except ImportError:  # pragma: no cover - keeps standalone legacy paths working
 # Constants
 # ---------------------------------------------------------------------------
 
-VALID_ARCHS = ("2-4-3-200", "2-4-5-800", "2-8-5-200", "2-8-9-400", "2-8-9-800", "2-8-9-400-SP")
+VALID_ARCHS = ("2-4-3-200", "2-4-5-400", "2-4-5-800", "2-8-5-200", "2-8-9-400", "2-8-9-800", "2-8-9-400-SP")
 
 # Per-arch enforcement mode for the canonical-role allow-list
 # (docs/ROLES.md migration plan, step 3). When the Function / System Role
@@ -76,12 +91,36 @@ ARCH_RESTRICTED_FUNCTIONS = {
     'ext-storage':      frozenset({'2-8-9-800', '2-8-9-400-SP'}),
 }
 
+# 2-4-5-400 is a DEPOPULATED 2-8-5-200 (ERA-00004-001 v04): same chassis, same
+# five adapters, half the GPUs, and — in the doc's own words — "the network
+# pattern remains the same". So it peers with exactly the switch roles
+# 2-8-5-200 peers with. Mirrored rather than hand-listed: five separate entries
+# would be five chances to disagree, and the whole point is that they cannot.
+ARCH_RESTRICTED_FUNCTIONS = {
+    func: (archs | {'2-4-5-400'}) if '2-8-5-200' in archs else archs
+    for func, archs in ARCH_RESTRICTED_FUNCTIONS.items()
+}
+
 # Categories that count as "switch" for mgmt-IP-required checks etc.
 _SWITCH_CATEGORIES = frozenset({
     'core', 'csl', 'cs', 'cl', 'gsl', 'gsl-plane1', 'gsl-plane2',
     'gl-plane1', 'gl-plane2', 'gs-plane1', 'gs-plane2',
     'oob-switch', 'edge', 'air-oob',
 })
+
+# Devices whose mgmt IP is legitimately OUTSIDE every OOB VLAN subnet, and so
+# are exempt from the reachability check in check_vlan_oob_mapping (ERA-61):
+#
+#   edge     — cust-net-edge-*, a customer-owned upstream device. Not ours to
+#              address, and not on our OOB plane.
+#   air-oob  — an Air virtual node; it belongs on air_mgmt_subnet, which has
+#              its own overlap-vs-OOB check elsewhere in this file.
+#
+# Deliberately NOT _SWITCH_CATEGORIES. That set is shared by three unrelated
+# call sites that want different membership, and reusing it here excluded every
+# ERA-managed fabric switch — whose eth0 lands on the OOB plane and is exactly
+# what the check exists to validate.
+_OOB_SUBNET_EXEMPT_CATEGORIES = frozenset({'edge', 'air-oob'})
 
 # Categories that satisfy the "have at least one compute/N-S leaf" check:
 # core (converged collapsed), csl (dedicated 1-tier combined leaf+spine), or
@@ -92,13 +131,18 @@ REQUIRED_SHEETS = ["Settings", "Nodes", "VLANs & Profiles"]
 
 REQUIRED_SETTINGS_KEYS = [
     "architecture",
-    "mgmt_subnets",
-    "management_switches",
-    "bgp_asn",
+    # bgp_asn is no longer required in Settings: per-node ASNs live
+    # in the Loopbacks ASN column. A cross-check below requires an ASN *source*
+    # (Settings.bgp_asn OR a populated Loopbacks ASN column).
     "loopback_base",
 ]
 
 OPTIONAL_SETTINGS_KEYS = [
+    # bgp_asn is optional: removed from shipped workbooks in favor of
+    # the Loopbacks ASN column, but still recognized for older customer inputs.
+    "bgp_asn",
+    "mgmt_subnets",
+    "management_switches",
     "site_name",
     "deploy_in_air",
     "tiers",
@@ -115,7 +159,6 @@ OPTIONAL_SETTINGS_KEYS = [
     "timezone",
     "mh_mac",
     "anycast_mac",
-    "ztp_enabled",
     "ztp_server",
     "ntp_servers",
     "num_physical_ports",
@@ -123,8 +166,6 @@ OPTIONAL_SETTINGS_KEYS = [
     "air_mgmt_subnet",
     "gpu_vlan_mode",
     "oob_uplink_mode",
-    "scalable_units",
-    "nodes_per_su",
     "gpu_planes",
     "ldap_organization",
     "pre_login_message",
@@ -136,8 +177,11 @@ OPTIONAL_SETTINGS_KEYS = [
 # silently accept so operators don't think "I set X, it should work."
 DEAD_SETTINGS_KEYS = {
     "exit_dhcp_servers": "no consumer in the current pipeline (was used by test scaffolding only); EXIT VRF DHCP is driven by the DHCP Relay table now",
-    "telemetry_enabled": "no consumer in the current pipeline",
-    "netq_ip":           "no consumer in the current pipeline",
+    "telemetry_enabled": "no consumer in the current pipeline; switch telemetry is currently always-on via the per-arch `telemetry` block in inventory_defaults.yml",
+    "netq_ip":           "no consumer in the current pipeline — there is no NetQ agent configuration anywhere in the tool",
+    "ztp_enabled":       "no consumer in the current pipeline; ZTP is opt-in by which target you run (`make ztp-setup` / `make switch-ztp-deploy`), not by a Settings flag",
+    "scalable_units":    "no consumer in the current pipeline; SU count is derived from the Nodes sheet (`su-<N>-node-<M>`)",
+    "nodes_per_su":      "no consumer in the current pipeline; nodes-per-SU is derived from the Nodes sheet (`su-<N>-node-<M>`)",
     "air_username":      "Air credentials come from the .era-secrets vault (run `make air-setup`), not the Excel Settings sheet",
     "air_org":           "no consumer in the current pipeline",
 }
@@ -150,27 +194,18 @@ NODE_COL_MGMT_IP = 4
 NODE_COL_PREFIX = 5
 NODE_COL_GATEWAY = 6
 
-# Wire Map columns (1-based)
-WM_COL_SYSTEM_ROLE = 2
-WM_COL_SYSTEM_NAME = 3
-WM_COL_NIC_PORT = 4
-WM_COL_PORT_SIDE_A = 5
-WM_COL_NETWORK_PROFILE = 7
-WM_COL_SWITCH_ROLE = 11
-WM_COL_SWITCH_NAME = 12
-WM_COL_SWITCH_PORT = 13
-
-# Air_Only columns (1-based)
-AIR_COL_SYSTEM_ROLE = 2
-AIR_COL_SYSTEM_NAME = 3
-AIR_COL_NETWORK_PROFILE = 5
-AIR_COL_SWITCH_ROLE = 6
-AIR_COL_SWITCH_NAME = 7
-AIR_COL_SWITCH_PORT = 8
+# NOTE: the Wire Map / Air_Only sheets are read by *header name*, not fixed
+# column index — see the header-lookup helpers (tests/test_wiremap_header_lookup.py).
+# A block of WM_COL_* / AIR_COL_* index constants used to live here describing a
+# 13-column layout; the shipped sheets are a 10-column A/B layout
+# ("System Name (A) | Port (A) | … | System Name (B) | Port (B) | … | Network Profile")
+# and nothing referenced the constants. Removed rather than left to mislead.
 
 MAC_RE = re.compile(r'^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$')
 PORT_RE = re.compile(r'^(swp\d+([s]\d+)?|eth\d+|enp\d+s\d+f\d+(np\d+)?)$')
-SWP_PORT_RE = re.compile(r'^swp(\d+)(?:s(\d+))?$', re.IGNORECASE)
+# The canonical switch-port grammar (SWP_PORT_RE) is imported at the top of
+# this file from utils.py, where it is defined once so the validator and the
+# topology generator cannot drift apart again (ERA-96).
 
 # SEC (scan finding #1): Settings scalars that get rendered *unquoted* into a
 # root-executed shell — NVUE config scripts (`nv set system ntp server X`,
@@ -210,6 +245,12 @@ _SWITCH_FUNCTIONS = frozenset({
 })
 
 # Function values that imply Type=node (Ubuntu / Cumulus host).
+# Any numbered customer edge is a legitimate Air-only switch: the count is
+# derived from the fabric's EXIT uplink load, not pinned, so the validator
+# cannot carry a fixed list of names without failing every workbook that
+# scales past the historical HA pair.
+_CUST_NET_EDGE_RE = re.compile(r'^cust-net-edge-\d{2,}$')
+
 _NODE_FUNCTIONS = frozenset({
     'gpu', 'support', 'storage', 'ext-storage',
     'dhcp', 'oob-server',
@@ -220,7 +261,10 @@ _NODE_FUNCTIONS = frozenset({
 # purely so they show up in the spreadsheet for awareness, not to drive
 # provisioning. Validator enforces Name + Type consistency for these.
 _KNOWN_AIR_NODES = {
-    # L3 OOB mode (current default for all 4 archs)
+    # L3 OOB mode (current default for all 4 archs). Only -01/-02 are listed
+    # by name; the fabric fans its EXIT uplinks out over as many edges as the
+    # scale needs (four at SU32 -- see cust_edge_count() in
+    # generate_arch_excel.py), so the rest are matched by the pattern below.
     'cust-net-edge-01': 'switch',
     'cust-net-edge-02': 'switch',
     'external-conn':    'node',
@@ -307,97 +351,6 @@ def _parse_swp_port(value):
     return parent, subport
 
 
-def _layout_breakout_subports(role_spec):
-    breakout = str((role_spec or {}).get('breakout') or '').strip()
-    match = re.match(r'^(\d+)x', breakout)
-    return int(match.group(1)) if match else None
-
-
-def _layout_disabled_parent_ports(role_spec):
-    disabled = set()
-    for value in (role_spec or {}).get('disabled_ports') or []:
-        parsed = _parse_swp_port(value)
-        if parsed:
-            disabled.add(parsed[0])
-    return disabled
-
-
-def _expand_layout_port_range(role_spec):
-    raw_range = str((role_spec or {}).get('range') or '').strip()
-    if not raw_range:
-        return []
-
-    start_raw, end_raw = raw_range.split('-', 1) if '-' in raw_range else (raw_range, raw_range)
-    start = _parse_swp_port(start_raw)
-    end = _parse_swp_port(end_raw)
-    if not start or not end:
-        return []
-
-    start_parent, start_subport = start
-    end_parent, end_subport = end
-    if (end_parent, end_subport if end_subport is not None else -1) < (
-        start_parent,
-        start_subport if start_subport is not None else -1,
-    ):
-        return []
-
-    disabled = _layout_disabled_parent_ports(role_spec)
-    if start_subport is None and end_subport is None:
-        return [
-            f'swp{parent}'
-            for parent in range(start_parent, end_parent + 1)
-            if parent not in disabled
-        ]
-
-    subport_count = _layout_breakout_subports(role_spec)
-    max_subport = (subport_count - 1) if subport_count else max(start_subport or 0, end_subport or 0)
-    ports = []
-    for parent in range(start_parent, end_parent + 1):
-        if parent in disabled:
-            continue
-        first_subport = start_subport if parent == start_parent and start_subport is not None else 0
-        last_subport = end_subport if parent == end_parent and end_subport is not None else max_subport
-        for subport in range(first_subport, last_subport + 1):
-            ports.append(f'swp{parent}s{subport}')
-    return ports
-
-
-def _layout_role_specs(model):
-    specs = {}
-    for layout in (model.get('switch_layouts') or {}).values():
-        for function in layout.get('applies_to_functions') or []:
-            for role, spec in (layout.get('port_roles') or {}).items():
-                specs[(function, role)] = spec
-    return specs
-
-
-def _layout_allowed_ports(role_specs, function, role):
-    spec = role_specs.get((function, role))
-    if not spec:
-        return set()
-    specs = [spec]
-    for overflow_role in spec.get('overflow_roles') or []:
-        overflow_spec = role_specs.get((function, str(overflow_role)))
-        if overflow_spec:
-            specs.append(overflow_spec)
-    ports = set()
-    for item in specs:
-        ports.update(_expand_layout_port_range(item))
-    return ports
-
-
-def _layout_range_label(role_specs, function, role):
-    spec = role_specs.get((function, role))
-    if not spec:
-        return ''
-    ranges = [str(spec.get('range') or '')]
-    for overflow_role in spec.get('overflow_roles') or []:
-        overflow_spec = role_specs.get((function, str(overflow_role)))
-        if overflow_spec:
-            ranges.append(str(overflow_spec.get('range') or ''))
-    return ', '.join(value for value in ranges if value)
-
-
 def _endpoint_category(name, role_hint, nodes_function_map):
     name_str = str(name or '').strip()
     role_str = str(role_hint or '').strip()
@@ -416,7 +369,7 @@ def _endpoint_category(name, role_hint, nodes_function_map):
     return None
 
 
-def _layout_role_for_endpoint(function, peer_function, profile):
+def _hardware_role_for_endpoint(function, peer_function, profile):
     profile_lc = str(profile or '').strip().lower()
     if not function or not profile_lc:
         return None
@@ -443,21 +396,9 @@ def _layout_role_for_endpoint(function, peer_function, profile):
     return None
 
 
-def validate_switch_layout_ports(wb, settings, nodes_function_map, result):
-    """Validate model-aware switch port ranges when an arch exposes layouts."""
-    if load_arch_model is None:
-        return
-    arch = str((settings or {}).get('architecture') or '').strip()
-    if not arch:
-        return
-    try:
-        model = load_arch_model(arch)
-    except ModelError as exc:
-        result.warn('Switch layout', f'Could not load architecture model for {arch}: {exc}')
-        return
-
-    role_specs = _layout_role_specs(model)
-    if not role_specs or 'Wire Map' not in wb.sheetnames:
+def validate_switch_hardware_ports(wb, settings, nodes_function_map, result):
+    """Validate switch ports against public SN5600/SN2201 hardware limits."""
+    if 'Wire Map' not in wb.sheetnames:
         return
 
     ws = wb['Wire Map']
@@ -479,7 +420,6 @@ def validate_switch_layout_ports(wb, settings, nodes_function_map, result):
     if any(columns.get(name) is None for name in required):
         return
 
-    allowed_cache = {}
     for row in range(2, ws.max_row + 1):
         profile = _cell(ws, row, columns['network_profile'])
         a_name = _cell(ws, row, columns['system_name'])
@@ -499,20 +439,32 @@ def validate_switch_layout_ports(wb, settings, nodes_function_map, result):
         for name, port, function, peer_function in endpoints:
             if not name or not port or function is None:
                 continue
-            role = _layout_role_for_endpoint(function, peer_function, profile)
-            if role is None or (function, role) not in role_specs:
+            role = _hardware_role_for_endpoint(function, peer_function, profile)
+            parsed = _parse_swp_port(port)
+            if role is None or parsed is None:
                 continue
+
             port_str = str(port).strip()
-            cache_key = (function, role)
-            if cache_key not in allowed_cache:
-                allowed_cache[cache_key] = _layout_allowed_ports(role_specs, function, role)
-            if port_str not in allowed_cache[cache_key]:
-                range_label = _layout_range_label(role_specs, function, role)
+            parent, subport = parsed
+            if function == 'oob-switch':
+                if role == 'oob_access':
+                    valid = 1 <= parent <= 48 and subport is None
+                    expected = 'SN2201 copper swp1-swp48 without subports'
+                elif role == 'oob_uplink':
+                    valid = 49 <= parent <= 52 and subport is None
+                    expected = 'SN2201 uplink swp49-swp52'
+                else:
+                    continue
+            else:
+                valid = 1 <= parent <= 64 and (subport is None or 0 <= subport <= 7)
+                expected = 'SN5600 fabric swp1-swp64 with subports s0-s7'
+
+            if not valid:
                 result.error(
-                    'Switch layout',
+                    'Switch hardware',
                     f"Wire Map row {row}: {name} ({function}) uses {port_str} "
-                    f"for profile '{profile}', but model role '{role}' only allows "
-                    f"{range_label}."
+                    f"for profile '{profile}' role '{role}', but hardware allows "
+                    f"{expected}."
                 )
 
 
@@ -599,58 +551,30 @@ def validate_settings(ws, result):
     if arch and arch not in VALID_ARCHS:
         result.error("Settings", f"Invalid architecture: '{arch}' (valid: {', '.join(VALID_ARCHS)})")
 
-    # mgmt_subnets — CSV of CIDRs; reject too-broad (/0-/8) and too-narrow
-    # (/30+) prefixes since they almost certainly indicate a typo.
-    mgmt = settings.get('mgmt_subnets')
-    mgmt_nets = []  # for later overlap checks
-    if mgmt:
-        for part in str(mgmt).split(','):
-            part = part.strip()
-            if not part:
-                continue
-            if not _is_valid_cidr(part):
-                result.error("Settings", f"Invalid CIDR in mgmt_subnets: '{part}'")
-                continue
-            try:
-                net = ipaddress.IPv4Network(part, strict=False)
-                mgmt_nets.append(net)
-                prefix = net.prefixlen
-                if prefix < 16:
-                    result.error("Settings",
-                                 f"mgmt_subnets entry '{part}' has prefix /{prefix} "
-                                 f"which is too broad ({net.num_addresses} addresses); "
-                                 f"likely a typo. Use /16-/29.")
-                elif prefix > 29:
-                    result.error("Settings",
-                                 f"mgmt_subnets entry '{part}' has prefix /{prefix} "
-                                 f"which is too narrow (only {net.num_addresses} addresses); "
-                                 f"likely a typo. Use /16-/29.")
-            except ValueError:
-                pass
+    # mgmt_subnets: retired. It remains an OPTIONAL settings key
+    # (see OPTIONAL_SETTINGS_KEYS) purely so its presence triggers this
+    # specific migration error rather than a generic "unknown key" warning.
+    if settings.get('mgmt_subnets') not in (None, ''):
+        result.error("Settings",
+                     "mgmt_subnets is no longer supported. Declare the "
+                     "OOB subnet on the OOB VLAN row in 'VLANs & Profiles' (VRF "
+                     "OOB) and set each OOB switch's 'OOB VLAN' column on the Nodes "
+                     "tab.")
 
-    # S9: air_mgmt_subnet must not overlap mgmt_subnets. NOTE: air_mgmt_subnet is
-    # authored on the Air_Only sheet, not Settings, so this overlap check runs in
-    # validate_excel() (via _validate_air_mgmt_overlap) once the Air_Only value
-    # has been resolved — not here, where settings has no air_mgmt_subnet yet.
+    # S9: air_mgmt_subnet must not overlap the OOB VLAN subnet(s). NOTE:
+    # air_mgmt_subnet is authored on the Air_Only sheet, not Settings, so this
+    # overlap check runs in validate_excel() (via _validate_air_mgmt_overlap)
+    # once the Air_Only value and the Nodes/VLANs sheets have been resolved —
+    # not here, where settings has no air_mgmt_subnet yet.
 
-    # management_switches — positive integer; reject floats (silent truncation).
-    ms = settings.get('management_switches')
-    if ms is not None:
-        if isinstance(ms, float) and not ms.is_integer():
-            result.error("Settings",
-                         f"management_switches must be an integer, got "
-                         f"float {ms} (silent truncation to {int(ms)}).")
-        else:
-            try:
-                ms_int = int(ms)
-                if ms_int < 1:
-                    result.error("Settings", f"management_switches must be >= 1, got {ms_int}")
-                elif ms_int > 16:  # sanity ceiling
-                    result.error("Settings",
-                                 f"management_switches = {ms_int} exceeds the "
-                                 f"reasonable max (16). Likely a typo.")
-            except (TypeError, ValueError):
-                result.error("Settings", f"management_switches must be an integer, got '{ms}'")
+    # management_switches — retired. The OOB switch
+    # count is derived from the Active oob-switch rows on the Nodes tab, not
+    # from a Settings integer. A stale present value is ignored (not an
+    # error) — just a soft WARN so authors know it no longer does anything.
+    if settings.get('management_switches') not in (None, ''):
+        result.warn("Settings",
+                     "management_switches is ignored — the OOB switch count "
+                     "is derived from the oob-switch rows on the Nodes tab.")
 
     # bgp_asn — must be a valid ASN: positive integer, ≤ 2^32-1 (4-byte
     # max), not the reserved 0 or 23456. Reject floats outright (silent
@@ -672,8 +596,8 @@ def validate_settings(ws, result):
                                  f"({0xFFFFFFFF}); 4-byte ASN max is exceeded.")
                 elif asn_int == 23456:
                     result.error("Settings",
-                                 f"bgp_asn = 23456 is reserved by RFC 4893 for "
-                                 f"4-byte ASN transition. Choose another.")
+                                 "bgp_asn = 23456 is reserved by RFC 4893 for "
+                                 "4-byte ASN transition. Choose another.")
             except (TypeError, ValueError):
                 result.error("Settings", f"bgp_asn must be an integer, got '{asn}'")
 
@@ -834,8 +758,8 @@ def validate_settings(ws, result):
     # `tiers='1'` (text-formatted cell) propagates as a string into
     # group_vars/all/main.yml; downstream Jinja `{% if tiers > 1 %}`
     # compares string-vs-int and is silently wrong.
-    for k in ('tiers', 'ns_tiers', 'ew_tiers', 'scalable_units', 'nodes_per_su',
-              'num_physical_ports', 'gpu_planes', 'management_switches'):
+    for k in ('tiers', 'ns_tiers', 'ew_tiers',
+              'num_physical_ports', 'gpu_planes'):
         v = settings.get(k)
         if v is None or v == '':
             continue
@@ -989,6 +913,7 @@ def validate_nodes(ws, result, settings=None):
     ip_col = col_map.get('Mgmt IP Address', NODE_COL_MGMT_IP)
     prefix_col = col_map.get('Prefix', NODE_COL_PREFIX)
     gateway_col = col_map.get('Gateway', NODE_COL_GATEWAY)
+    oob_vlan_col = col_map.get('OOB VLAN')  # optional; not all sheets have it
     enabled_col = col_map.get('Enabled')  # optional, not all sheets have it
     type_col = col_map.get('Type')        # optional, new in 2026-05-28
     # Notes column ('Notes') is purely informational, no validator rules.
@@ -1035,6 +960,26 @@ def validate_nodes(ws, result, settings=None):
                         f"Function value ('{func_str}') as hostname. "
                         f"Explicit Name avoids silent collisions.")
         name_str = str(raw_name or func_str).strip()
+
+        # ERA-45: warn when the Name prefix implies a different role than the
+        # Function. The Function stays AUTHORITATIVE (the parser trusts it) —
+        # this only flags a likely-mislabeled row so the operator can check it.
+        # Root-caused on an 8SU partner submission: gs-plane1-* (GPU spine) rows carried
+        # Function gl-plane1 (GPU leaf), so the switches rendered as leaves and
+        # were left unprovisioned. The cl/csl pair is exempt — the hostname
+        # fallback can't distinguish a converged csl-/cl- name from the
+        # dedicated 'cl' Function.
+        _name_role = canonical_category('', name_str)
+        _func_role = canonical_category(func_str, None)
+        if (_name_role and _func_role and _name_role != _func_role
+                and {_name_role, _func_role} != {'cl', 'csl'}):
+            result.warn(
+                "Nodes",
+                f"Row {row}: {name_str} has Function '{func_str}' (role "
+                f"{_func_role}) but its name implies role {_name_role}. The "
+                f"Function is authoritative — if the name is correct, fix the "
+                f"Function. A mislabeled spine/leaf or wrong plane leaves the "
+                f"switch unprovisioned.")
 
         # T3/T4: reserved hostname collision. These names are sentinels
         # used by the topology generator (air-oob-switch is auto-injected
@@ -1154,6 +1099,8 @@ def validate_nodes(ws, result, settings=None):
             # node typo'd (or copied) as Enabled=Air must not silently drop
             # out of provisioning on legacy (Type-less) Excels.
             expected_type = _KNOWN_AIR_NODES.get(name_str.lower())
+            if expected_type is None and _CUST_NET_EDGE_RE.match(name_str.lower()):
+                expected_type = 'switch'
             if expected_type is None:
                 result.error(
                     "Nodes",
@@ -1210,7 +1157,20 @@ def validate_nodes(ws, result, settings=None):
         node_data = {'function': func_str, 'name': name_str, 'row': row,
                      'ip': None, 'prefix': None, 'gateway': None,
                      'enabled': is_enabled,
-                     'is_air_documentary': is_air_documentary}
+                     'is_air_documentary': is_air_documentary,
+                     'oob_vlan': ''}
+
+        # OOB VLAN — mirrors excel_parser.py's parse_nodes: normalise to a
+        # bare id string ('201'), tolerating floats from Excel (201.0).
+        # Feeds resolve_oob_vlans() for the cross-sheet OOB VLAN guardrails.
+        if oob_vlan_col:
+            oob_vlan_raw = _cell(ws, row, oob_vlan_col)
+            if oob_vlan_raw is None or str(oob_vlan_raw).strip() == '':
+                node_data['oob_vlan'] = ''
+            elif isinstance(oob_vlan_raw, float) and oob_vlan_raw.is_integer():
+                node_data['oob_vlan'] = str(int(oob_vlan_raw))
+            else:
+                node_data['oob_vlan'] = str(oob_vlan_raw).strip()
 
         # Mgmt IP — optional for switches in Air deployments (auto-assigned).
         # Also optional for ext-storage (customer-side simulated aggregate;
@@ -1547,7 +1507,25 @@ def validate_vlans(ws, result):
                          f"like '192.168.1.0/24', not '192.168.1.5/24'). The "
                          f"parser silently strips host bits, hiding typos.")
 
-    # VNI uniqueness — duplicate VNIs cause bridge collisions at apply time.
+    # VNI uniqueness — duplicate VNIs cause bridge collisions at apply time,
+    # EXCEPT across plane-suffixed VLANs (e.g. gpu_plane1 + gpu_plane2 sharing
+    # one VNI on VLAN 900). Rail-optimized GPU planes own disjoint switch sets,
+    # so the VLAN ID is locally significant to each and the shared VNI never
+    # collides. Mirrors the duplicate-VLAN-ID plane exemption above.
+    #
+    # The shipped workbooks do NOT actually share: the arch models set
+    # east_west.plane_vni_stride = 1, so plane1 VLAN 900 is VNI 4900 and plane2
+    # is 4901. The exemption exists because sharing is equally valid and is what
+    # the reference configs do — release/REFERENCES/2-8-9-800/configs/
+    # gsl-plane{1,2}-*.sh carry `vlan 900 vni 289900` on all four leaves, and
+    # `vrf GPU evpn vni 289003` is already shared across planes today. Setting
+    # the stride to 0 selects that numbering, at which point this exemption
+    # becomes load-bearing rather than merely permissive.
+    _vni_plane_pat = re.compile(r'^.+_plane\d+$', re.IGNORECASE)
+    # VXLAN VNI is a 24-bit field (RFC 7348): 1 .. 2**24 - 1. Out-of-range values
+    # parse fine here but are rejected by NVUE at `nv config apply`, which is a
+    # far worse place to discover a typo.
+    _VNI_MAX = 2 ** 24 - 1
     vni_col = header_cols.get('vni')
     if vni_col:
         vni_seen = {}
@@ -1559,14 +1537,23 @@ def validate_vlans(ws, result):
                 vni = int(vni_raw)
             except (TypeError, ValueError):
                 continue
+            if not 1 <= vni <= _VNI_MAX:
+                result.error("VLANs & Profiles",
+                             f"VNI {vni} on row {v['row']} is outside the valid "
+                             f"VXLAN range 1-{_VNI_MAX} (24-bit, RFC 7348). "
+                             f"NVUE rejects it at `nv config apply`.")
+                continue
+            is_plane = bool(_vni_plane_pat.match(v.get('name') or ''))
             if vni in vni_seen:
-                other_row = vni_seen[vni]
+                other_row, other_plane = vni_seen[vni]
+                if is_plane and other_plane:
+                    continue  # isolated GPU planes may share a VNI
                 result.error("VLANs & Profiles",
                              f"Duplicate VNI {vni} on rows {other_row} and "
                              f"{v['row']}. VNIs must be unique — overlapping "
                              f"VNIs cause bridge-domain collisions at apply time.")
             else:
-                vni_seen[vni] = v['row']
+                vni_seen[vni] = (v['row'], is_plane)
 
     # Required-VLAN gating: warn if any VLAN row is missing a subnet
     # (treated as error elsewhere via the SVI side, but the row itself
@@ -1702,13 +1689,12 @@ def validate_vrfs_section(ws, parsed_vlans, result):
                          f"in the VRFs section. Generator emits config "
                          f"referencing a nonexistent VRF.{hint}")
 
-    # Cross-check L3 VNIs against VLAN VNIs
-    vlan_vnis_by_id = {}
-    for v in parsed_vlans:
-        # parsed_vlans dicts from validate_vlans don't carry VNI today;
-        # re-read it from the sheet via the header lookup. Simpler: just
-        # compare against the integer-VNI set.
-        pass  # placeholder — VNI collision across L3 + VLAN is rare; skip
+    # NOT IMPLEMENTED: cross-check of L3 VNIs against VLAN VNIs. `parsed_vlans`
+    # dicts from validate_vlans do not carry the VNI, so the comparison needs a
+    # re-read of the sheet. Previously this was a `for` loop whose body was
+    # `pass`, under a heading that made it read as an implemented rule.
+    # Removed rather than left as a stub — an empty loop under a promising
+    # heading is worse than a documented gap.
 
     return vrf_l3_vnis
 
@@ -2337,6 +2323,8 @@ def _classify_loopback_header_v(header_text):
         return 'switch', None
     if key in ('default', 'default (lo)', 'lo', 'lo_ip', 'underlay', 'loopback'):
         return 'lo', None
+    if key in ('asn', 'as', 'bgp asn', 'bgp_asn', 'autonomous system', 'as number'):
+        return 'asn', None
     for vrf in _LOOPBACK_VRFS:
         v = vrf.lower()
         if key == v or key == f'{v} vrf':
@@ -2358,12 +2346,32 @@ def _subnet_contains(cidr, ip):
         return False
 
 
+def loopbacks_asn_populated(wb):
+    """True if the workbook's Loopbacks sheet has an ASN column with at least one
+    populated value."""
+    _name = loopbacks_sheet_name(wb)
+    if not _name:
+        return False
+    ws = wb[_name]
+    hr = next((r for r in range(1, min(ws.max_row + 1, 5))
+               if str(ws.cell(r, 1).value or '').strip().lower().startswith('switch')), None)
+    if not hr:
+        return False
+    acol = next((c for c in range(1, ws.max_column + 1)
+                 if _classify_loopback_header_v(ws.cell(hr, c).value)[0] == 'asn'), None)
+    if not acol:
+        return False
+    return any(ws.cell(r, acol).value not in (None, '')
+               for r in range(hr + 1, ws.max_row + 1))
+
+
 def validate_loopbacks(ws, parsed_nodes, parsed_vlans, settings, result):
     """Validate the optional Loopbacks sheet — per-switch / per-VRF overrides.
 
-    Schema: Switch | Default | OOB | INBAND | EXIT | GPU. Missing cells fall
-    back to the parser's computed defaults; the validator runs only when
-    the sheet IS present.
+    Schema: Switch | Default | OOB | INBAND | EXIT | GPU | ASN. Missing cells
+    fall back to the parser's computed defaults; the validator runs only when
+    the sheet IS present. The optional ASN column sets a per-node BGP
+    ASN; shared groups must stay uniform and every group distinct.
 
     Checks:
       - Header row has a 'Switch' column.
@@ -2390,6 +2398,7 @@ def validate_loopbacks(ws, parsed_nodes, parsed_vlans, settings, result):
 
     col_switch = None
     col_lo = None
+    col_asn = None
     vrf_cols = {}  # vrf -> col_idx
     for c in range(1, ws.max_column + 1):
         v = ws.cell(row=header_row, column=c).value
@@ -2400,6 +2409,8 @@ def validate_loopbacks(ws, parsed_nodes, parsed_vlans, settings, result):
             col_switch = c
         elif kind == 'lo':
             col_lo = c
+        elif kind == 'asn':
+            col_asn = c
         elif kind == 'vrf':
             vrf_cols[vrf] = c
         else:
@@ -2440,6 +2451,9 @@ def validate_loopbacks(ws, parsed_nodes, parsed_vlans, settings, result):
     switch_rows_seen = {}  # sw_name -> first-row-number
     # L14: track per-switch IPs across VRFs to catch cross-VRF dup IPs.
     per_switch_ips = {}  # sw_name -> {ip: [vrfs]}
+    # Per-switch explicit BGP ASN (optional column). Populated below;
+    # group-consistency (equal-within / distinct-across) checked after the loop.
+    sw_asn = {}          # sw_name -> int ASN (only rows with a valid value)
 
     for row in range(header_row + 1, ws.max_row + 1):
         sw = ws.cell(row=row, column=col_switch).value
@@ -2462,6 +2476,34 @@ def validate_loopbacks(ws, parsed_nodes, parsed_vlans, settings, result):
             result.error("Loopbacks",
                          f"Row {row}: switch '{sw_name}' is not listed in the Nodes tab. "
                          f"Add it to Nodes, or fix the hostname here.")
+
+        if col_asn is not None:
+            av = ws.cell(row=row, column=col_asn).value
+            if av is not None and str(av).strip():
+                # Reject floats with a fraction outright (silent truncation).
+                if isinstance(av, float) and not av.is_integer():
+                    result.error("Loopbacks",
+                                 f"Row {row}, column 'ASN': '{av}' must be an "
+                                 f"integer (fractional value hides a typo).")
+                else:
+                    try:
+                        asn_i = int(av)
+                        if asn_i < 1:
+                            result.error("Loopbacks",
+                                         f"Row {row}, column 'ASN': {asn_i} must be positive.")
+                        elif asn_i > 0xFFFFFFFF:
+                            result.error("Loopbacks",
+                                         f"Row {row}, column 'ASN': {asn_i} exceeds "
+                                         f"2^32-1 ({0xFFFFFFFF}); 4-byte ASN max.")
+                        elif asn_i == 23456:
+                            result.error("Loopbacks",
+                                         f"Row {row}, column 'ASN': 23456 is reserved "
+                                         f"(RFC 4893 4-byte transition). Choose another.")
+                        else:
+                            sw_asn[sw_name] = asn_i
+                    except (TypeError, ValueError):
+                        result.error("Loopbacks",
+                                     f"Row {row}, column 'ASN': '{av}' is not an integer.")
 
         if col_lo is not None:
             v = ws.cell(row=row, column=col_lo).value
@@ -2549,6 +2591,46 @@ def validate_loopbacks(ws, parsed_nodes, parsed_vlans, settings, result):
                              f"{vrf} loopback {ip} is assigned to multiple switches: "
                              f"{', '.join(owners)}.")
 
+    # Block conformance for E/W plane loopbacks. The duplicate checks above
+    # only fire once two switches already share an IP; this catches the scale
+    # *before* that, when a value merely sits in the wrong block. A plane that
+    # pinned its gs spines at .5/.6 read as unique but was one added leaf away
+    # from a collision, because .5 belongs to the leaf range. Warn rather than
+    # error — the role is inferred from the hostname, and a deployment may
+    # legitimately run its own address plan.
+    _PLANE_SWITCH_RE = re.compile(r'^(gl|gsl|gs)-plane(\d+)-(\d+)$', re.IGNORECASE)
+    _PLANE_BLOCK = {
+        ('leaf', 'Default'):  'leaf',
+        ('leaf', 'GPU'):      'leaf_gpu',
+        ('spine', 'Default'): 'spine',
+        ('spine', 'GPU'):     'spine_gpu',
+    }
+    for column, seen in (('Default', lo_seen), ('GPU', unique_seen.get('GPU', {}))):
+        for ip, owners in sorted(seen.items()):
+            for sw_name in owners:
+                m = _PLANE_SWITCH_RE.match(str(sw_name).strip())
+                if not m:
+                    continue
+                role = 'spine' if m.group(1).lower() == 'gs' else 'leaf'
+                base, capacity = PLANE_LOOPBACK_BLOCKS[_PLANE_BLOCK[(role, column)]]
+                index = int(m.group(3))
+                try:
+                    octet = int(str(ip).rsplit('.', 1)[1])
+                except (IndexError, ValueError):
+                    continue
+                if index > capacity:
+                    result.warn("Loopbacks",
+                                f"'{sw_name}' index {index} exceeds the {role} loopback "
+                                f"block capacity ({capacity}); the plane has outgrown its "
+                                f"block.")
+                elif octet != base + index:
+                    result.warn("Loopbacks",
+                                f"'{sw_name}' {column}={ip} is outside the {role} "
+                                f"{column} loopback block (expected final octet "
+                                f"{base + index}, range .{base + 1}-.{base + capacity}). "
+                                f"Out-of-block values collide as the plane grows — see "
+                                f"docs/LOOPBACKS.md.")
+
     # R4-15: suppress the "outside loopback_base" warning when every
     # affected switch matches a dual-plane hostname pattern (gsl-planeN-* or
     # csl-*). Those are the architectures that intentionally place
@@ -2574,6 +2656,42 @@ def validate_loopbacks(ws, parsed_nodes, parsed_vlans, settings, result):
                              f"columns ({', '.join(vrfs)}). Each loopback per "
                              f"switch must be unique across columns — duplicates "
                              f"silently collide at apply time.")
+
+    # BGP ASN group-consistency. All sessions are unnumbered
+    # (remote-as internal ⟹ equal, external ⟹ differ), so overrides must keep
+    # shared groups uniform (equal-within) and every group distinct
+    # (distinct-across). Only runs when the optional ASN column is populated.
+    if col_asn is not None and sw_asn:
+        ns_tiers = int((settings or {}).get('ns_tiers',
+                                            (settings or {}).get('tiers', 1)) or 1)
+        all_switch_names = [n.get('name') for n in (parsed_nodes or []) if n.get('name')]
+        claimed = {}  # asn_value -> the group (list of names) that first claimed it
+        for grp in asn_alloc.partition_asn_groups(all_switch_names, ns_tiers):
+            explicit = {name: sw_asn[name] for name in grp if name in sw_asn}
+            if not explicit:
+                continue
+            distinct_vals = set(explicit.values())
+            if len(grp) > 1 and len(distinct_vals) > 1:
+                detail = ', '.join(f"{n}={a}" for n, a in sorted(explicit.items()))
+                result.error("Loopbacks",
+                             f"Switches {sorted(grp)} must share ONE BGP ASN "
+                             f"(iBGP / shared plane), but the ASN column splits them: "
+                             f"{detail}. Give every member the same ASN, or none.")
+                continue  # a split group can't meaningfully take part in distinct-across
+            if len(grp) > 1 and len(explicit) < len(grp):
+                missing = sorted(set(grp) - set(explicit))
+                result.warn("Loopbacks",
+                            f"Switches {sorted(grp)} share one ASN, but only "
+                            f"{sorted(explicit)} set it explicitly; {missing} fall back "
+                            f"to the derived value. Set all or none to avoid a split.")
+            grp_asn = next(iter(distinct_vals))
+            if grp_asn in claimed and claimed[grp_asn] != grp:
+                result.error("Loopbacks",
+                             f"BGP ASN {grp_asn} is used by two distinct switch groups: "
+                             f"{sorted(claimed[grp_asn])} and {sorted(grp)}. eBGP peers "
+                             f"must have distinct ASNs — give each group a unique ASN.")
+            else:
+                claimed[grp_asn] = grp
 
 
 def validate_tiers_consistency(settings, roles_present):
@@ -2971,6 +3089,13 @@ _GPU_PLANE_PROFILE_RE = re.compile(
 # (no specific Air-injection logic to handle it).
 _AIR_PREFIX_RE = re.compile(r'^air\s*-\s*\S', re.IGNORECASE)
 
+# Per-rail GPU Wire Map profiles, e.g. "GPU Rail 3 Plane 1" / "GPU Rail 3".
+# These resolve to a VLAN row rather than a Port Profiles row, so anything that
+# needs their electrical shape has to fall back to the GPU port profile.
+_GPU_RAIL_PROFILE_RE = re.compile(
+    r'^gpu\s*rail\s*\d+(?:\s*plane\s*\d+)?$', re.IGNORECASE)
+_GPU_PROFILE_NAME = 'GPU Network'
+
 # Known disable markers that the topology generator + parser actually
 # recognize. Substring matching on 'disabled' is too loose — it accepts
 # `'Air - Disabled Test'` and `'disabled-port'` which the parser would
@@ -2984,6 +3109,182 @@ _DISABLE_MARKER_VALUES = {
 
 
 _VALID_PORT_MODES = {'access', 'trunk', 'hybrid', 'l2', 'l3'}
+
+# (breakout, lanes) pairs the core/csl/cl config template can actually render.
+#
+# roles/core/templates/core_nvue_cli.j2 buckets ports into exactly three
+# groups -- 4x/2-lane, 2x/4-lane, 8x/1-lane -- with NO else branch. A port
+# carrying any other pair is silently dropped from the breakout section, but
+# its sub-ports (swpNs0, swpNs1, ...) are still emitted into `type swp`, the
+# bonds and the BGP neighbors, because those lists come from the Wire Map
+# independently. The result is a config referencing sub-ports that were never
+# created -- it generates and validates fine, then fails at `nv config apply`
+# on the switch.
+#
+# This was unreachable while breakout/lanes were hardcoded constants in
+# excel_parser. Making the Port Profiles sheet authoritative turned it into a
+# live operator-reachable path, so it needs a gate here.
+#
+# All three pairs multiply to 8, which is the lane budget of one SN5600/SN5610
+# cage. breakout == 1 means "use the whole port", needs no breakout line, and
+# is therefore always fine (the SN2201 oob_uplink profile is 1x100G).
+_RENDERABLE_BREAKOUT_LANES = {(2, 4), (4, 2), (8, 1)}
+
+
+# Port Profiles columns whose value is rendered UNQUOTED into a root-executed
+# switch config. SHELL_INJECTION_PRONE_KEYS guards the Settings sheet only, so
+# these need their own check: a `Speed` or `Auto-Negotiate` cell reading
+# `disabled; touch /tmp/x` renders as
+# `nv set interface ... link auto-negotiate disabled; touch /tmp/x`
+# and runs as root on every switch carrying that profile. The parser also
+# whitelists both values, so this is defence in depth — but the operator should
+# be told at validate time rather than silently losing their input.
+# Every Excel-authored cell whose value is rendered UNQUOTED into a
+# root-executed switch config. SHELL_INJECTION_PRONE_KEYS guards the Settings
+# sheet only; these are the other operator-supplied surfaces that reach a
+# template verbatim.
+#
+# Verified vectors before this check existed: a VRF Name of
+# `OOB; touch /tmp/x` reached vrf_vnis and rendered as `nv set vrf OOB; touch
+# /tmp/x ...`, and a Port Profiles Auto-Negotiate cell of `disabled; touch
+# /tmp/x` rendered as `nv set interface ... link auto-negotiate disabled;
+# touch /tmp/x`. Both execute as root on every switch that gets the config.
+#
+# Entries are (sheet, section-header-in-column-1 or None, {column: label}).
+# A section entry scans from its header row until column 1 goes blank; a None
+# section scans the whole sheet from row 2.
+_UNQUOTED_EXCEL_CELLS = (
+    ("VLANs & Profiles", "VRF Name", {1: "VRF Name"}),
+    ("VLANs & Profiles", "VLAN ID", {2: "VLAN Name"}),
+    ("VLANs & Profiles", "Profile", {6: "VRF", 8: "Speed", 11: "Auto-Negotiate"}),
+    ("Prefix lists", None, {1: "List name", 3: "Match", 4: "Max prefix length",
+                            5: "Action"}),
+    ("Route policy", None, {1: "Route-map", 2: "Rule", 3: "Action",
+                            4: "Match type", 5: "Match value", 6: "Set type",
+                            7: "Set value"}),
+    ("Community lists", None, {1: "Community-list", 2: "Rule", 3: "Action",
+                               4: "Community"}),
+    ("ACLs", None, {1: "ACL name", 3: "Protocol", 4: "Dest port", 5: "Action"}),
+)
+
+
+def _check_unquoted_cell(sheet, row_label, label, raw, result):
+    if raw in (None, ''):
+        return
+    text = str(raw).strip()
+    if not text:
+        return
+    if len(text) > _MAX_SETTINGS_SCALAR_LEN:
+        result.error(sheet,
+                     f"{row_label}: {len(text)}-character {label} value exceeds the "
+                     f"{_MAX_SETTINGS_SCALAR_LEN}-char limit. This renders into a "
+                     f"root-executed switch config.")
+        return
+    m = _SHELL_META_RE.search(text)
+    if m:
+        result.error(sheet,
+                     f"{row_label}: {label} value {text!r} contains the disallowed "
+                     f"character {m.group()!r}. This value is rendered unquoted into "
+                     f"a root-executed config script, so shell metacharacters and "
+                     f"control characters are rejected to prevent command injection.")
+
+
+# Node / system names are hostnames. They are used three ways, all of which
+# require this charset:
+#   * rendered UNQUOTED as `nv set interface <bond> description <name>` in a
+#     root-executed config — a name of `node; touch /tmp/x` executes as root;
+#   * written verbatim into the generated ansible `inventory/hosts`;
+#   * used as an NVUE object name, where a space silently truncates the value.
+#
+# Deliberately stricter than _SHELL_META_RE, which permits spaces and `/`.
+# Verified against all twelve shipped workbooks: 33,201 names, zero characters
+# outside this set — so the strictness costs nothing.
+_HOSTNAME_RE = re.compile(r'^[A-Za-z0-9._-]+$')
+
+# (sheet, {column-header: label}) — resolved BY HEADER NAME, never by position
+# (ERA-81), and skipped silently when the sheet or column is absent.
+_HOSTNAME_COLUMNS = (
+    ("Nodes", {"Name": "node Name"}),
+    ("Wire Map", {"System Name (A)": "System Name (A)",
+                  "System Name (B)": "System Name (B)"}),
+)
+
+
+def validate_node_name_charset(wb, result):
+    """Node and Wire Map system names must be valid hostnames."""
+    seen = set()
+    for sheet, columns in _HOSTNAME_COLUMNS:
+        if sheet not in wb.sheetnames:
+            continue
+        ws = wb[sheet]
+        header = [str(c.value or '').strip() for c in ws[1]]
+        for col_name, label in columns.items():
+            if col_name not in header:
+                continue
+            col = header.index(col_name) + 1
+            for row in range(2, ws.max_row + 1):
+                raw = ws.cell(row, col).value
+                if raw in (None, ''):
+                    continue
+                text = str(raw).strip()
+                if not text or text in seen:
+                    continue
+                if _HOSTNAME_RE.match(text):
+                    continue
+                seen.add(text)
+                result.error(sheet,
+                             f"{label} {text!r} is not a valid hostname — only "
+                             f"letters, digits, dot, underscore and hyphen are "
+                             f"allowed. This name is rendered unquoted into a "
+                             f"root-executed config (`nv set interface <bond> "
+                             f"description <name>`) and written into the generated "
+                             f"ansible inventory, so shell metacharacters and "
+                             f"spaces are rejected to prevent command injection.")
+
+
+def validate_unquoted_excel_cells(wb, result):
+    """Reject shell metacharacters in every Excel cell that renders unquoted.
+
+    The Settings sheet has had this protection since the 2026-06-30 security
+    review (SHELL_INJECTION_PRONE_KEYS). These are the operator-supplied cells
+    on the other sheets that reach a template verbatim — VRF and VLAN names,
+    the Port Profiles VRF/Speed/Auto-Negotiate columns, and the policy sheets'
+    names, actions and match values.
+    """
+    for sheet, section, columns in _UNQUOTED_EXCEL_CELLS:
+        if sheet not in wb.sheetnames:
+            continue
+        ws = wb[sheet]
+        if section is None:
+            start, stop_on_blank = 2, False
+        else:
+            hdr = None
+            for row in range(1, min(ws.max_row, 200) + 1):
+                if str(ws.cell(row, 1).value or '').strip() == section:
+                    hdr = row
+                    break
+            if hdr is None:
+                continue
+            start, stop_on_blank = hdr + 1, True
+        for row in range(start, ws.max_row + 1):
+            first = ws.cell(row, 1).value
+            if stop_on_blank and first in (None, ''):
+                break
+            if not stop_on_blank and all(
+                    ws.cell(row, c).value in (None, '') for c in columns):
+                continue
+            row_label = f"row {row}" + (
+                f" ({str(first).strip()})" if first not in (None, '') else "")
+            for col, label in sorted(columns.items()):
+                _check_unquoted_cell(sheet, row_label, label,
+                                     ws.cell(row, col).value, result)
+
+
+def validate_port_profile_shell_safety(ws, result):
+    """Retained name — the Port Profiles columns are covered by
+    validate_unquoted_excel_cells, which also covers VRF/VLAN names and the
+    policy sheets. Kept as a thin alias so any external caller keeps working."""
+    return
 
 
 def validate_port_profiles(ws, result):
@@ -3085,6 +3386,7 @@ def validate_port_profiles(ws, result):
         # int() on these when building port profiles, so a non-numeric cell
         # (e.g. "4x", "two") crashes `make generate`/`make deploy` with an
         # uncaught ValueError. Catch it here with an actionable message.
+        numeric = {}
         for num_label in ('breakout', 'lanes'):
             nc = col_map.get(num_label)
             if not nc:
@@ -3099,6 +3401,26 @@ def validate_port_profiles(ws, result):
                              f"Port Profiles row {row} ('{name}'): {num_label.title()} "
                              f"value {nv!r} must be a positive whole number (e.g. 4). "
                              f"A non-numeric value crashes `make generate`.")
+            else:
+                numeric[num_label] = int(float(nv))
+
+        # The pair has to be one the config template can render -- see
+        # _RENDERABLE_BREAKOUT_LANES. An unrenderable pair produces a config
+        # that passes every check here and then fails on the switch, which is
+        # the worst place to find out.
+        bk, ln = numeric.get('breakout'), numeric.get('lanes')
+        if bk is not None and ln is not None and bk > 1 \
+                and (bk, ln) not in _RENDERABLE_BREAKOUT_LANES:
+            valid = ', '.join(f"{b}x/{l}-lane" for b, l in
+                              sorted(_RENDERABLE_BREAKOUT_LANES, reverse=True))
+            result.error("VLANs & Profiles",
+                         f"Port Profiles row {row} ('{name}'): Breakout {bk}x with "
+                         f"Lanes {ln} is not a supported combination "
+                         f"({bk} x {ln} = {bk * ln} lanes; one SN5600/SN5610 cage "
+                         f"has 8). Supported: {valid}. The config template would "
+                         f"emit no breakout line for these ports while still "
+                         f"referencing their sub-ports, so the switch would "
+                         f"reject the config at apply time.")
 
         if mode == 'l3':
             # L3 ports are unbridged. Allowed VLANs / Untagged /
@@ -3188,10 +3510,10 @@ def validate_gpu_vlan_mode_consistency(settings, parsed_vlans, result):
     if mode == 'per_rail':
         if not rail_rows:
             result.error("Settings",
-                         f"gpu_vlan_mode = 'per_rail' but no gpu_rail<N> "
-                         f"VLAN rows exist in VLANs & Profiles. "
-                         f"Add rows named gpu_rail1, gpu_rail2, … (one per "
-                         f"rail) with VRF=GPU, or change gpu_vlan_mode to 'single'.")
+                         "gpu_vlan_mode = 'per_rail' but no gpu_rail<N> "
+                         "VLAN rows exist in VLANs & Profiles. "
+                         "Add rows named gpu_rail1, gpu_rail2, … (one per "
+                         "rail) with VRF=GPU, or change gpu_vlan_mode to 'single'.")
         if rail_plane_rows:
             result.error("Settings",
                          f"gpu_vlan_mode = 'per_rail' but gpu_rail<R>_plane<P> "
@@ -3201,11 +3523,11 @@ def validate_gpu_vlan_mode_consistency(settings, parsed_vlans, result):
     elif mode == 'per_rail_per_plane':
         if not rail_plane_rows:
             result.error("Settings",
-                         f"gpu_vlan_mode = 'per_rail_per_plane' but no "
-                         f"gpu_rail<R>_plane<P> VLAN rows exist in "
-                         f"VLANs & Profiles. Add rows named "
-                         f"gpu_rail1_plane1, gpu_rail1_plane2, gpu_rail2_plane1, … "
-                         f"(one per rail × plane combination) with VRF=GPU.")
+                         "gpu_vlan_mode = 'per_rail_per_plane' but no "
+                         "gpu_rail<R>_plane<P> VLAN rows exist in "
+                         "VLANs & Profiles. Add rows named "
+                         "gpu_rail1_plane1, gpu_rail1_plane2, gpu_rail2_plane1, … "
+                         "(one per rail × plane combination) with VRF=GPU.")
         if rail_rows:
             result.error("Settings",
                          f"gpu_vlan_mode = 'per_rail_per_plane' but plain "
@@ -3467,64 +3789,1154 @@ def validate_wiremap_network_profiles(wb, result):
                          f"profile names must match exactly.)")
 
 
+def validate_wiremap_subports_fit_breakout(wb, result):
+    """Every sub-port the Wire Map wires must be one the breakout creates.
+
+    A physical port broken out 2x has sub-ports s0-s1 only. If the Wire Map
+    wires swp7s2, the generated config still emits that sub-port into `type
+    swp`, the bonds and the BGP neighbours — those lists come from the Wire Map
+    independently of the breakout section. The result is a config that
+    generates and validates cleanly, then fails at `nv config apply` on the
+    switch, which is the worst place to find out.
+
+    This is the same failure documented at _RENDERABLE_BREAKOUT_LANES, reached
+    by a different route: not an illegal (breakout, lanes) pair, but a physical
+    port claimed by two profiles with different breakouts, where the coarser
+    one wins and silently truncates the other's sub-ports.
+
+    Resolution order matters. core_nvue_cli.j2 emits the three buckets in
+    4x -> 2x -> 8x order and NVUE is last-wins per port, so for a shared port
+    8x beats 2x beats 4x. Modelled exactly here — checking against the
+    *declared* breakout of each profile independently would miss the conflict,
+    since each profile looks self-consistent on its own.
+    """
+    if 'VLANs & Profiles' not in wb.sheetnames or 'Wire Map' not in wb.sheetnames:
+        return
+
+    # profile name -> declared breakout
+    ws = wb['VLANs & Profiles']
+    hdr_row = None
+    for r in range(1, min(ws.max_row, 60) + 1):
+        if str(ws.cell(r, 1).value or '').strip() == 'Profile':
+            hdr_row = r
+            break
+    if hdr_row is None:
+        return
+    declared = {}
+    for r in range(hdr_row + 1, ws.max_row + 1):
+        name = ws.cell(r, 1).value
+        if not name:
+            break
+        try:
+            bk = int(float(ws.cell(r, 9).value))
+        except (TypeError, ValueError):
+            continue
+        declared[str(name).strip()] = bk
+
+    wm = wb['Wire Map']
+    header = [str(c.value or '').strip() for c in wm[1]]
+
+    def col(name):
+        return header.index(name) if name in header else None
+
+    c_prof = col('Network Profile')
+    sides = [(col('System Name (A)'), col('Port (A)')),
+             (col('System Name (B)'), col('Port (B)'))]
+    if c_prof is None or any(a is None or b is None for a, b in sides):
+        return  # non-standard sheet; validate_wire_map reports the shape
+
+    # (switch, port) -> {'subs': set, 'profiles': set}
+    usage = defaultdict(lambda: {'subs': set(), 'profiles': set()})
+    for row in wm.iter_rows(min_row=2, values_only=True):
+        prof = str(row[c_prof] or '').strip()
+        if prof and prof not in declared and _GPU_RAIL_PROFILE_RE.match(prof):
+            # Per-rail GPU profiles ("GPU Rail 1 Plane 1") resolve to a VLAN
+            # row, not a Port Profiles row, so they declare no breakout of
+            # their own. They are still GPU access ports and share the GPU
+            # profile's breakout. Without this they fall through the
+            # `not in declared` skip below and the largest port population in
+            # the fabric goes completely unchecked — silently.
+            prof = _GPU_PROFILE_NAME
+        if not prof or prof not in declared:
+            continue  # unknown profiles are reported by the profile-name check
+        for c_sys, c_port in sides:
+            sysname = str(row[c_sys] or '').strip()
+            m = SWP_PORT_RE.match(str(row[c_port] or '').strip())
+            if not sysname or not m or m.group(2) is None:
+                continue
+            key = (sysname, int(m.group(1)))
+            usage[key]['subs'].add(int(m.group(2)))
+            usage[key]['profiles'].add(prof)
+
+    for (sysname, port), data in sorted(usage.items()):
+        breakouts = {declared[p] for p in data['profiles']}
+        # Last-wins precedence as the template emits them: 8x, then 2x, then 4x.
+        effective = next((b for b in (8, 2, 4) if b in breakouts),
+                         max(breakouts) if breakouts else None)
+        if effective is None:
+            continue
+
+        # 8x parity. On Spectrum an 8-way breakout consumes the adjacent
+        # next-higher cage, so it must sit on an ODD base with the even
+        # neighbour left free. excel_parser.assert_valid_8x_breakout enforces
+        # this at generate time, but has a blind spot: the shipped 2-4-5-800
+        # default emitted `swp8 link breakout 8x` (even) while separately
+        # configuring swp9s0-s3 as ISL -- swp8's breakout eats swp9's lanes,
+        # so the csl-to-csl ISL dies at `nv config apply`. Generation exited 0.
+        # Check it here too, where the Wire Map makes the parity obvious.
+        if effective == 8 and port % 2 == 0:
+            claim = ', '.join(f"{p} ({declared[p]}x)"
+                              for p in sorted(data['profiles']))
+            tail = (", which does not exist on this switch"
+                    if port >= 64 else "")
+            result.error(
+                "Wire Map",
+                f"{sysname} swp{port}: renders as 8x breakout on an EVEN "
+                f"port. 8x must sit on an ODD base so the adjacent even port "
+                f"can be disabled; swp{port} would consume swp{port + 1}"
+                f"{tail}. Claimed by: {claim}. Move it to an odd port.")
+
+        impossible = sorted(s for s in data['subs'] if s >= effective)
+        if not impossible:
+            continue
+        detail = ', '.join(f"{p} ({declared[p]}x)" for p in sorted(data['profiles']))
+        result.error(
+            "Wire Map",
+            f"{sysname} swp{port}: wired to sub-port(s) "
+            f"{', '.join('s' + str(s) for s in impossible)}, but the port "
+            f"renders as {effective}x breakout (sub-ports s0-s{effective - 1} "
+            f"only). Claimed by: {detail}. "
+            + ("Two profiles claim this port with different breakouts and the "
+               "coarser one wins. " if len(breakouts) > 1 else "")
+            + "The config would reference sub-ports that were never created "
+              "and be rejected at 'nv config apply'.")
+
+
+# Switch functions whose port breakout is resolved from the Excel Port
+# Profiles table. Deliberately its own set, not borrowed from any existing
+# category list — see ADR-0041: reusing a named set because it looks close
+# enough is how the OOB reachability check silently lost its scope.
+#
+# gl/gs/gsl are excluded because their breakout is NOT Excel-driven: the
+# plane group_vars carry no breakout key and the gl template hardcodes 2x.
+# Applying the Excel ISL profile's breakout to a gl parent reports 288
+# phantom holes on 2-4-5-800, where the profile says 4x and the port
+# renders 2x.
+# ERA-73: gl/gs/gsl joined this set once their breakout level became
+# Excel-driven. Before that the GPU fabric ignored the ISL profile and always
+# rendered the template's hardcoded '2x', so applying the declared breakout to a
+# gl parent produced FALSE POSITIVES — 288 phantom holes on 2-4-5-800 when that
+# workbook's profile still declared 4x. The parser now emits `isl_breakout` onto
+# the plane group_vars from the same sheet row that drives core/csl, so a finding
+# here is real: if the profile says 4x, gl renders 4x and the Wire Map genuinely
+# owes four sub-ports.
+_EXCEL_DRIVEN_BREAKOUT_FUNCTIONS = {'core', 'csl', 'gl', 'gs', 'gsl'}
+
+# Switch functions that terminate a NORTH/SOUTH fabric ISL. Wider than the
+# breakout set above on purpose: that one scopes ADR-0049's sub-port accounting
+# to single-tier designs, while the link COUNT must also see two-tier N/S
+# fabrics, whose ISLs land on `cl`/`cs` rather than `core`/`csl`.
+#
+# Scoping the count to {core, csl} meant every `dedicated_leaf_spine` workbook
+# counted ZERO ISL cables and warned that a correctly-cabled 512-link fabric
+# was missing entirely — 2-4-5-800, 2-8-9-400-SP and 2-8-9-800 largescale all
+# carried that false warning. Kept separate from the breakout set so widening
+# the count does not silently widen ADR-0049's accounting scope.
+_NS_FABRIC_ISL_FUNCTIONS = _EXCEL_DRIVEN_BREAKOUT_FUNCTIONS | {'cl', 'cs'}
+
+
+def validate_isl_parents_fully_accounted(wb, result):
+    """Every sub-port an ISL parent breaks out into must be accounted for.
+
+    An ISL parent broken out 2x has s0 and s1. Wiring only s0 and saying
+    nothing about s1 leaves half a physical port carrying no ISL capacity,
+    with nothing in the workbook recording whether that was intended.
+
+    The workbook already has a convention for deliberate non-use: a Wire Map
+    row with the `Unused` network profile (2-8-9-800 `csl-01 swp59s2..s7` all
+    carry one). What this check reports is the sub-port that is neither wired
+    nor marked `Unused` — simply absent.
+
+    Warning, not error: unlike validate_wiremap_subports_fit_breakout, an
+    absent sub-port does not produce a config that `nv config apply` rejects.
+    It is a capacity and record-keeping gap, so it is surfaced rather than
+    made fatal.
+
+    This does NOT check the ISL count against the arch model. The model's
+    `fabrics.north_south.allocated_ports.isl` cannot serve as authority yet —
+    it disagrees with four of six shipped defaults, mixes int and string SU
+    keys ('7-8'), and returns `'default': 0` for SU counts that plainly have
+    ISLs. See ADR-0049.
+    """
+    if 'VLANs & Profiles' not in wb.sheetnames or 'Wire Map' not in wb.sheetnames:
+        return
+
+    ws = wb['VLANs & Profiles']
+    hdr_row = None
+    for r in range(1, min(ws.max_row, 60) + 1):
+        if str(ws.cell(r, 1).value or '').strip() == 'Profile':
+            hdr_row = r
+            break
+    if hdr_row is None:
+        return
+    declared = {}
+    for r in range(hdr_row + 1, ws.max_row + 1):
+        name = ws.cell(r, 1).value
+        if not name:
+            break
+        try:
+            bk = int(float(ws.cell(r, 9).value))
+        except (TypeError, ValueError):
+            continue
+        declared[str(name).strip()] = bk
+
+    # switch name -> function, so gl/gs parents can be skipped. Resolved by
+    # header name — see _nodes_switch_functions and ERA-81.
+    functions = _nodes_switch_functions(wb)
+
+    wm = wb['Wire Map']
+    header = [str(c.value or '').strip() for c in wm[1]]
+
+    def col(name):
+        return header.index(name) if name in header else None
+
+    c_prof = col('Network Profile')
+    sides = [(col('System Name (A)'), col('Port (A)')),
+             (col('System Name (B)'), col('Port (B)'))]
+    if c_prof is None or any(a is None or b is None for a, b in sides):
+        return  # non-standard sheet; validate_wire_map reports the shape
+
+    # (switch, parent) -> accounted sub-ports (ANY profile, including Unused),
+    # the sub-ports specifically wired as ISL, and the profiles claiming it.
+    usage = defaultdict(lambda: {'seen': set(), 'isl': set(), 'profiles': set()})
+    for row in wm.iter_rows(min_row=2, values_only=True):
+        prof = str(row[c_prof] or '').strip()
+        if not prof:
+            continue
+        for c_sys, c_port in sides:
+            sysname = str(row[c_sys] or '').strip()
+            m = SWP_PORT_RE.match(str(row[c_port] or '').strip())
+            if not sysname or not m or m.group(2) is None:
+                continue
+            key = (sysname, int(m.group(1)))
+            usage[key]['seen'].add(int(m.group(2)))
+            if prof in declared:
+                usage[key]['profiles'].add(prof)
+            if prof.upper() == 'ISL':
+                usage[key]['isl'].add(int(m.group(2)))
+
+    for (sysname, port), data in sorted(usage.items()):
+        if not data['isl']:
+            continue  # not an ISL parent
+        if functions.get(sysname) not in _EXCEL_DRIVEN_BREAKOUT_FUNCTIONS:
+            continue
+        breakouts = {declared[p] for p in data['profiles']}
+        # Same last-wins precedence the template emits: 8x, then 2x, then 4x.
+        effective = next((b for b in (8, 2, 4) if b in breakouts),
+                         max(breakouts) if breakouts else None)
+        if not effective:
+            continue
+        missing = sorted(set(range(effective)) - data['seen'])
+        if not missing:
+            continue
+        result.warn(
+            "Wire Map",
+            f"{sysname} swp{port}: unaccounted sub-port(s) "
+            f"{', '.join('s' + str(s) for s in missing)} on an ISL parent "
+            f"rendering {effective}x. Wired as ISL: "
+            f"{', '.join('s' + str(s) for s in sorted(data['isl']))}. "
+            "Every sub-port the breakout creates should either be wired or "
+            "carry an explicit 'Unused' Wire Map row, so that spare ISL "
+            "capacity is recorded rather than inferred.")
+
+
+def validate_isl_matches_arch_model(wb, settings, result):
+    """The ISL must have the links AND the per-link bandwidth the model specifies.
+
+    Both are published in the ERA deployment guides and transcribed into the
+    models:
+
+      network.port_profiles.isl                   -> speed / breakout / lanes
+      fabrics.north_south.allocated_ports.isl[su] -> link count, BOTH ENDS
+
+    The guides give the same two facts as an "ISL Ports (both ends)" column per
+    scale point and an ISL port-range row reading, e.g., "swp28s0 swp51s1
+    Breakout port to 2x 400G ports with 4 lanes" (ERA-00010-001 v03).
+
+    `'default': 0` is NOT "expect zero ISLs" — it encodes the guides' literal
+    `N/A` for collapsed configurations, where the leaf is the E/W switch and
+    there is no separate N/S ISL. Those SU counts are skipped. Reading 0 as an
+    expected count would fail 2-4-3-200, 2-8-5-200 and 2-8-9-400, all of which
+    have real ISLs.
+
+    Warning, not error: this is model-vs-sheet drift, not a config the switch
+    rejects, and the standing rule is that models are corrected first and
+    sheets second, independently — so the validator reports the divergence
+    rather than picking a winner.
+    """
+    if load_arch_model is None:
+        return  # public distribution: data-models/ is absent
+    if 'VLANs & Profiles' not in wb.sheetnames or 'Wire Map' not in wb.sheetnames:
+        return
+    arch = str((settings or {}).get('architecture') or '').strip()
+    if not arch:
+        return
+    try:
+        model = load_arch_model(arch)
+    except ModelError:
+        return  # validate_switch_layout_ports already reports load failures
+
+    spec = (((model or {}).get('network') or {}).get('port_profiles') or {}).get('isl') or {}
+
+    # --- geometry / bandwidth -------------------------------------------
+    ws = wb['VLANs & Profiles']
+    hdr_row = None
+    for r in range(1, min(ws.max_row, 60) + 1):
+        if str(ws.cell(r, 1).value or '').strip() == 'Profile':
+            hdr_row = r
+            break
+    sheet_geom = None
+    if hdr_row is not None:
+        for r in range(hdr_row + 1, ws.max_row + 1):
+            name = ws.cell(r, 1).value
+            if not name:
+                break
+            if str(name).strip().upper() != 'ISL':
+                continue
+            try:
+                sheet_geom = (str(ws.cell(r, 8).value).strip(),
+                              int(float(ws.cell(r, 9).value)),
+                              int(float(ws.cell(r, 10).value)))
+            except (TypeError, ValueError):
+                sheet_geom = None
+            break
+
+    if spec and sheet_geom:
+        want = (str(spec.get('speed')).strip(),
+                int(spec.get('breakout')), int(spec.get('lanes')))
+        if want != sheet_geom:
+            result.warn(
+                "VLANs & Profiles",
+                f"ISL geometry disagrees with the {arch} arch model: model "
+                f"declares {want[0]} {want[1]}x{want[2]}, workbook declares "
+                f"{sheet_geom[0]} {sheet_geom[1]}x{sheet_geom[2]}. Per-parent "
+                f"bandwidth may still match, but the two sources of truth have "
+                f"diverged and one of them is stale.")
+
+    # --- link count (both ends) ------------------------------------------
+    su = _su_count(wb)
+    if su is None:
+        return
+    # `topology_by_su` models carry ISL in the normalized per-SU row; the older
+    # `source_derived` shape carried it under fabrics.north_south.allocated_ports.
+    # Read the normalized row FIRST: when the schema moved, reading only the
+    # legacy path silently disarmed this check for every arch (it found no
+    # entry and returned), which is exactly the failure this guard exists to
+    # prevent. Keep the legacy read as a fallback for unconverted models.
+    row = ((model or {}).get('su_models') or {}).get(su) or {}
+    if row.get('ns_mode') == 'converged_in_east_west':
+        # The guides' literal N/A: the leaf IS the E/W switch, so there is no
+        # separate N/S ISL to count. `topology_by_su` still carries a number
+        # here (it describes the converged fabric), so this must be skipped by
+        # mode rather than by absence — the legacy shape skipped it by having
+        # no per-SU entry at all.
+        return
+    expected = row.get('ns_isl_cables')
+    if expected is None:
+        alloc = (((model or {}).get('fabrics') or {}).get('north_south') or {}
+                 ).get('allocated_ports', {}).get('isl') or {}
+        expected = alloc.get(su, alloc.get(str(su)))
+    if not expected:
+        # No entry for this scale, or an explicit 0: the guides mark it N/A
+        # (collapsed design). 0 means N/A, not zero — comparing against it
+        # would fail 2-4-3-200, 2-8-5-200 and 2-8-9-400, which have real ISLs.
+        return
+
+    wm = wb['Wire Map']
+    header = [str(c.value or '').strip() for c in wm[1]]
+
+    def col(name):
+        return header.index(name) if name in header else None
+
+    c_prof = col('Network Profile')
+    sides = [(col('System Name (A)'), col('Port (A)')),
+             (col('System Name (B)'), col('Port (B)'))]
+    if c_prof is None or any(a is None or b is None for a, b in sides):
+        return
+
+    # The model's allocated_ports.isl counts N/S switch-to-switch links. The
+    # workbook splits those across TWO profile names: 'ISL' where a dedicated
+    # N/S spine exists, and 'N/S Leaf Peer' for the leaf<->leaf peer link on
+    # collapsed designs. Counting only 'ISL' reads 0 on every collapsed arch
+    # and reports a link-count drift that is purely a naming artifact.
+    # Resolve both names from the model so a rename moves them together.
+    _profiles = ((model or {}).get('network') or {}).get('port_profiles') or {}
+    isl_names = set()
+    for _role in ('isl', 'ns_leaf_peer'):
+        _name = (_profiles.get(_role) or {}).get('profile_name')
+        if _name:
+            isl_names.add(str(_name).strip().upper())
+    isl_names |= {'ISL', 'N/S LEAF PEER'}
+
+    # Count DISTINCT PHYSICAL ports at both ends — one per (switch, parent
+    # port) — collapsing breakout sub-ports (swpNs0/swpNs1) onto their parent.
+    #
+    # `allocated_ports.isl` transcribes the guides' "ISL Ports (both ends)"
+    # column, which ERA-00011-001 v04 Table 15 publishes as the count of
+    # twin-port OSFP TRANSCEIVERS (and MPO fibres) on the N/S switch-to-switch
+    # links — e.g. 2-8-9-800 at 16 nodes (SU4) = 14. A transceiver is a
+    # PHYSICAL port; a 2x-breakout ISL parent is one transceiver even though it
+    # renders two swpNsX sub-links. So the unit is physical ports, both ends:
+    # 7 parents per core switch across a csl<->csl pair is 7 + 7 = 14.
+    #
+    # Counting sub-port ENDS instead (the pre-fix behaviour) double-counted
+    # every 2x-broken-out ISL: a workbook that enumerates swpNs0/swpNs1
+    # explicitly scored 28 against a model of 14 and wrongly reported a 2x
+    # over-cable (seen on a real 2-8-9-800 4 SU submission). ADR-0049's
+    # "(both ends)" reading is preserved — both ends are still counted — but the
+    # unit is the physical transceiver, not the broken-out fibre.
+    ports = set()
+    for row in wm.iter_rows(min_row=2, values_only=True):
+        if str(row[c_prof] or '').strip().upper() not in isl_names:
+            continue
+        for c_sys, c_port in sides:
+            sysname = str(row[c_sys] or '').strip()
+            if not sysname or 'SPARE' in sysname.upper():
+                continue
+            m = SWP_PORT_RE.match(str(row[c_port] or '').strip())
+            if not m:
+                continue
+            if _switch_function(wb, sysname) in _NS_FABRIC_ISL_FUNCTIONS:
+                ports.add((sysname, m.group(1)))
+
+    ends = len(ports)
+    if ends != int(expected):
+        result.warn(
+            "Wire Map",
+            f"ISL link count disagrees with the {arch} arch model at "
+            f"{su} SU: model declares {expected} ISL ports (both ends), "
+            f"Wire Map wires {ends}. Either the fabric is under/over-cabled "
+            f"or the model's allocated_ports.isl is stale for this scale.")
+
+
+# --- DRB Guidelines slide 12: the two NLA criteria -----------------------------------
+#
+# Both are Networking Logical Architecture endorsement criteria, so they belong here
+# rather than in an internal audit tool: an OEM running `make validate-excel` catches
+# them before submitting (ADR-0053 clause 2).
+
+# E/W capacity is identified by the VRF its profile lands in, NOT by the switch role.
+# On a collapsed-core arch (2-4-3-200, 2-4-5-400, 2-8-5-200, 2-8-9-400) the SAME `core`
+# switch carries the GPU rails and the CPU/In-Band N/S links, so a role test either
+# misses the fabric entirely or counts N/S bandwidth as E/W. Only the profile's VRF
+# separates them. Verified: a role-based first cut read zero E/W links on four of the
+# seven shipped archs and passed its own parametrised test vacuously.
+_EW_VRF = 'GPU'
+
+# The E/W spine tier. Uplinks cannot be identified by VRF — the leaf->spine link is an
+# `ISL` profile in the default VRF — so this is role-based, and deliberately excludes
+# `cs` (the N/S spine).
+_EW_SPINE_ROLES = frozenset({'gs-plane1', 'gs-plane2'})
+
+# DRB Guidelines slide 10, verbatim: "If positioning RA for machine learning and AI
+# training, average E/W network bandwidth shouldn't be lower than 200Gbps per GPU".
+_EW_MIN_GBPS_PER_GPU = 200
+
+# 100.64.0.0/10 is carrier-grade NAT space (RFC 6598) and is NOT an RFC1918 range, so
+# the DRB criterion excludes it.
+#
+# On Python 3.12 `ipaddress` already agrees — 100.64.0.0/10 is absent from
+# `_private_networks`, so `is_private` is False and the plain test below flags it. This
+# constant is therefore belt-and-braces, kept because that membership list is a stdlib
+# implementation detail that has changed between releases: if a future Python starts
+# reporting CGNAT as private, the criterion must not silently stop being enforced.
+# `test_stdlib_still_agrees_cgnat_is_not_private` pins the assumption so an upgrade
+# that flips it fails loudly instead of quietly widening what we accept.
+_CGNAT = ipaddress.ip_network('100.64.0.0/10')
+
+
+def _ew_subnets_are_private(subnets):
+    """Return the subnets that are not RFC1918. Blank and malformed entries are skipped.
+
+    DRB Guidelines slide 12: "For server-to-server communication on the E/W Network,
+    Private IP addresses with no public IPs used internally".
+
+    Malformed cells are skipped rather than reported: a typo is a different defect with
+    its own check, and reporting it as "public IP space" would send an OEM chasing the
+    wrong thing.
+    """
+    bad = []
+    for s in subnets:
+        text = str(s or '').strip()
+        if not text:
+            continue
+        try:
+            net = ipaddress.ip_network(text, strict=False)
+        except ValueError:
+            continue
+        # `subnet_of` raises across address families, so the CGNAT test is IPv4-only.
+        cgnat = net.version == 4 and net.subnet_of(_CGNAT)
+        if not net.is_private or cgnat:
+            bad.append(text)
+    return bad
+
+
+def _vlan_rows(wb):
+    """Yield the VLANs block of 'VLANs & Profiles' as dicts, or nothing if absent.
+
+    The sheet holds three stacked blocks (VLANs, VRFs, Port Profiles), each with its
+    own header row, so the block is located by its header rather than by a fixed row.
+    """
+    if 'VLANs & Profiles' not in wb.sheetnames:
+        return
+    ws = wb['VLANs & Profiles']
+    hdr = None
+    for r in range(1, min(ws.max_row, 60) + 1):
+        if str(ws.cell(r, 1).value or '').strip() == 'VLAN ID':
+            hdr = r
+            break
+    if hdr is None:
+        return
+    for r in range(hdr + 1, ws.max_row + 1):
+        if ws.cell(r, 1).value is None:
+            break
+        yield {
+            'id': str(ws.cell(r, 1).value or '').strip(),
+            'name': str(ws.cell(r, 2).value or '').strip(),
+            'purpose': str(ws.cell(r, 3).value or '').strip(),
+            'subnet': ws.cell(r, 4).value,
+            'vrf': str(ws.cell(r, 6).value or '').strip(),
+        }
+
+
+def _ew_vlan_subnets(wb):
+    """Subnet strings for the E/W (GPU fabric) VLAN rows.
+
+    Keyed on the GPU VRF, with the Purpose text as a fallback so a workbook that names
+    its VRF differently is still checked. Restricted to E/W on purpose: a public range
+    on the EXIT VRF is the external edge doing its job, and the criterion is explicitly
+    about server-to-server communication on the E/W network.
+    """
+    out = []
+    for row in _vlan_rows(wb):
+        purpose = row['purpose'].lower()
+        if row['vrf'].upper() == 'GPU' or 'e/w' in purpose or 'east-west' in purpose:
+            out.append(row['subnet'])
+    return out
+
+
+def _port_profiles(wb):
+    """Yield the Port Profiles block as (name, access_vlan, gbps-or-None)."""
+    if 'VLANs & Profiles' not in wb.sheetnames:
+        return
+    ws = wb['VLANs & Profiles']
+    hdr = None
+    for r in range(1, min(ws.max_row, 60) + 1):
+        if str(ws.cell(r, 1).value or '').strip() == 'Profile':
+            hdr = r
+            break
+    if hdr is None:
+        return
+    for r in range(hdr + 1, ws.max_row + 1):
+        name = ws.cell(r, 1).value
+        if not name:
+            break
+        m = re.match(r'^(\d+)G$', str(ws.cell(r, 8).value or '').strip())
+        yield (str(name).strip(),
+               str(ws.cell(r, 3).value or '').strip(),
+               int(m.group(1)) if m else None)
+
+
+def _profile_speeds(wb):
+    """Port profile name -> Gbps, for profiles whose Speed cell parses."""
+    return {n: g for n, _v, g in _port_profiles(wb) if g is not None}
+
+
+def _deployed_link_gbps(wb):
+    """Port profile name -> DEPLOYED per-link Gbps, derived from the Lanes column.
+
+    ADR-0040: a broken-out sub-port runs at ``lanes x 100G``. The soft Speed cell
+    transcribes the per-lane 100G, not the link rate, so it cannot be trusted; the
+    Lanes count governs. Reading the OEM's ACTUAL breakout lets a capacity check
+    credit what they wired rather than the RA profile speed — e.g. an ``Edge Uplink``
+    at breakout-8/lanes-1 is 100G, where the 2-8-9-800 RA exit is 200G (lanes-2).
+
+    Returns {} entries only where Lanes parses, so a caller can fall back to the
+    model profile speed when a workbook does not declare Lanes.
+    """
+    if 'VLANs & Profiles' not in wb.sheetnames:
+        return {}
+    ws = wb['VLANs & Profiles']
+    hdr = None
+    for r in range(1, min(ws.max_row, 60) + 1):
+        if str(ws.cell(r, 1).value or '').strip() == 'Profile':
+            hdr = r
+            break
+    if hdr is None:
+        return {}
+    out = {}
+    for r in range(hdr + 1, ws.max_row + 1):
+        name = ws.cell(r, 1).value
+        if not name:
+            break
+        m = re.match(r'^(\d+)$', str(ws.cell(r, 10).value or '').strip())
+        if m and int(m.group(1)) > 0:
+            out[str(name).strip()] = int(m.group(1)) * 100
+    return out
+
+
+def _ew_profile_names(wb):
+    """Port profile names that carry E/W (GPU-fabric) traffic.
+
+    Resolved profile -> access VLAN -> VLAN row -> VRF, so it survives both the OEM
+    renaming a profile and the per-rail/single `gpu_vlan_mode` split. Keying on the
+    profile NAME instead would break on the first submission that calls its rails
+    something else — the real one already does.
+    """
+    gpu_vlans = {row['id'] for row in _vlan_rows(wb)
+                 if row['vrf'].upper() == _EW_VRF and row['id']}
+    return {name for name, vlan, _g in _port_profiles(wb) if vlan and vlan in gpu_vlans}
+
+
+def _ew_leaf_bandwidth(wb):
+    """Per E/W switch: (Gbps toward GPU nodes, Gbps toward E/W spines, unsized?).
+
+    Bandwidth, not link count. A 2:1 link-count ratio at double the uplink speed is 1:1
+    in capacity, and counting links would report an oversubscription that does not exist.
+
+    Downlinks are identified by the profile's VRF (see `_ew_profile_names`), so the
+    E/W switch is whatever the GPU nodes are actually cabled to — `core` on a collapsed
+    arch, `gsl-*` or `gl-*` elsewhere — and the CPU/In-Band links landing on that same
+    `core` switch are correctly excluded. Uplinks are role-based, because the leaf-to-
+    spine link is an `ISL` profile in the default VRF and carries no E/W VRF marker.
+
+    The third element flags that some E/W link's profile speed could not be read. The
+    caller must then stay silent: an unsized link counted as 0 Gbps manufactures a
+    shortfall out of a cell the workbook simply did not fill in.
+    """
+    down, up = {}, {}
+    if 'Wire Map' not in wb.sheetnames:
+        return down, up, False
+    wm = wb['Wire Map']
+    header = [str(c.value or '').strip() for c in wm[1]]
+    for name in ('System Name (A)', 'System Name (B)', 'Network Profile'):
+        if name not in header:
+            return down, up, False
+    c_a = header.index('System Name (A)')
+    c_b = header.index('System Name (B)')
+    c_prof = header.index('Network Profile')
+
+    speeds = _profile_speeds(wb)
+    ew_profiles = _ew_profile_names(wb)
+    unsized = False
+    links = []
+    for row in wm.iter_rows(min_row=2, values_only=True):
+        a, b = str(row[c_a] or '').strip(), str(row[c_b] or '').strip()
+        if a and b:
+            links.append((a, b, str(row[c_prof] or '').strip()))
+
+    # Pass 1 — downlinks. An E/W-profile link with a GPU node on one end; the other
+    # end is the E/W switch, whatever it is called.
+    for a, b, profile in links:
+        if profile not in ew_profiles:
+            continue
+        role_a, role_b = canonical_category('', a), canonical_category('', b)
+        if role_a == 'gpu' and role_b != 'gpu':
+            switch = b
+        elif role_b == 'gpu' and role_a != 'gpu':
+            switch = a
+        else:
+            continue
+        gbps = speeds.get(profile)
+        if gbps is None:
+            unsized = True
+            continue
+        down[switch] = down.get(switch, 0) + gbps
+
+    # Pass 2 — uplinks, from a switch pass 1 identified toward an E/W spine.
+    for a, b, profile in links:
+        role_a, role_b = canonical_category('', a), canonical_category('', b)
+        if a in down and role_b in _EW_SPINE_ROLES:
+            leaf = a
+        elif b in down and role_a in _EW_SPINE_ROLES:
+            leaf = b
+        else:
+            continue
+        gbps = speeds.get(profile)
+        if gbps is None:
+            unsized = True
+            continue
+        up[leaf] = up.get(leaf, 0) + gbps
+    return down, up, unsized
+
+
+def validate_ew_uses_private_ips(wb, settings, result):
+    """DRB Guidelines slide 12: E/W server-to-server must use private IPs only."""
+    for bad in _ew_subnets_are_private(_ew_vlan_subnets(wb)):
+        result.warn(
+            "VLANs & Profiles",
+            f"E/W subnet {bad} is not a private (RFC1918) range. The DRB "
+            f"guidelines require private IP addresses with no public IPs used "
+            f"internally for server-to-server communication on the E/W network.")
+
+
+def validate_ew_bandwidth_per_gpu(wb, settings, result):
+    """DRB Guidelines slide 10: average E/W bandwidth must be >= 200 Gbps per GPU.
+
+    Verbatim: "If positioning RA for machine learning and AI training, average E/W
+    network bandwidth shouldn't be lower than 200Gbps per GPU". Every ERA architecture
+    is positioned for AI training, so the condition always holds here.
+
+    Model-derived on both sides of the ratio: the wired E/W bandwidth comes from the
+    workbook's own profiles, and the GPU count from `gpus_per_su` in the arch model
+    times the SU count on the Nodes tab — the same denominator
+    `validate_uplink_bandwidth_floors` uses, so the two per-GPU figures in a report
+    cannot disagree about how many GPUs there are.
+
+    Measured against all seven shipped archs this lands exactly on each one's nameplate
+    bandwidth — 2-4-3-200 and 2-8-5-200 at 200, the 400s at 400, the 800s at 800. Two of
+    them sit exactly ON the floor, which is why this compares strictly below it: an
+    epsilon in the wrong direction would fail two of our own reference designs.
+
+    WARNING, not error, matching `validate_uplink_bandwidth_floors` — the guides state
+    a minimum, and promoting any of these to a hard failure is a deliberate decision
+    taken across all of them at once, not backdoored in here.
+    """
+    if load_arch_model is None:
+        return  # public distribution: data-models/ is absent
+    arch = str((settings or {}).get('architecture') or '').strip()
+    if not arch:
+        return
+    try:
+        model = load_arch_model(arch)
+    except ModelError:
+        return  # already reported by validate_switch_layout_ports
+
+    su = _su_count(wb)
+    gpus_per_su = (model or {}).get('gpus_per_su')
+    if not su or not gpus_per_su:
+        return
+    total_gpus = su * int(gpus_per_su)
+
+    down, _up, unsized = _ew_leaf_bandwidth(wb)
+    if unsized or not down:
+        # No E/W fabric resolved, or a profile with an unreadable Speed cell. Either
+        # way the average is unknown, and "unknown" must not render as "zero".
+        return
+
+    aggregate = sum(down.values())
+    per_gpu = aggregate / total_gpus
+    if per_gpu + 1e-9 < _EW_MIN_GBPS_PER_GPU:
+        result.warn(
+            "Wire Map",
+            f"Average E/W bandwidth is below the DRB floor for {arch} at {su} SU: "
+            f"{aggregate}G wired across {total_gpus} GPUs = {per_gpu:.2f} Gb/GPU, but "
+            f"the guidelines require at least {_EW_MIN_GBPS_PER_GPU} Gb/GPU for an RA "
+            f"positioned for AI training. Either the GPU fabric is under-cabled or "
+            f"E/W links are wired under a profile that is not in the {_EW_VRF} VRF.")
+
+
+def validate_ew_not_oversubscribed(wb, settings, result):
+    """DRB Guidelines slide 12: the E/W network must not be oversubscribed.
+
+    Only meaningful once an E/W spine tier exists. In a collapsed topology every leaf
+    port is either a downlink or a peer ISL, so the ratio is undefined and this check
+    stays silent rather than inventing a verdict — which is the shape of every
+    single-SU design we ship.
+
+    Over-provisioning is legal and is not reported: the criterion is "no
+    oversubscription ratio", not "exactly 1:1".
+    """
+    down, up, unsized = _ew_leaf_bandwidth(wb)
+    if unsized or not up:
+        return
+    for leaf in sorted(down):
+        d, u = down[leaf], up.get(leaf, 0)
+        if u < d:
+            ratio = (f"{d / u:.2f}:1" if u else
+                     "no uplinks at all, while its peers have some")
+            result.warn(
+                "Wire Map",
+                f"E/W leaf {leaf} is oversubscribed: {d}G toward GPU nodes vs "
+                f"{u}G toward the E/W spine ({ratio}). The DRB guidelines "
+                f"require no oversubscription ratio on the E/W network.")
+
+
+# Profile-name aliases for the uplink-capacity floors: {canonical: (fallback, ...)}.
+#
+# Workbooks built from a pre-ADR-0047 template may wire the storage attachment under
+# either name. Our own `public-v6.0.4` default shipped BOTH `Storage` and `Storage
+# Uplink` as L2 trunks on VLAN 500 and cabled the storage nodes under `Storage Uplink`;
+# an OEM who picked the other name wired the same topology to the same switch ports.
+# Scoring the alias as zero reported "0 x 200G" -- which reads as "no storage at all"
+# when the real finding was a capacity shortfall on links that are plainly there.
+_PROFILE_ALIASES = {
+    'Storage Uplink': ('Storage',),
+}
+
+
+def resolve_wired_profile(wired, label):
+    """(links, effective_label) for `label`, falling back to a known alias.
+
+    An exact match always wins, so a workbook that wires both names is scored on the
+    canonical one and the alias never inflates it. Only a canonical profile with no
+    wired links consults the alias list.
+    """
+    if wired.get(label):
+        return wired[label], label
+    for alt in _PROFILE_ALIASES.get(label, ()):
+        if wired.get(alt):
+            return wired[alt], alt
+    return 0, label
+
+
+def validate_uplink_bandwidth_floors(wb, settings, result):
+    """External uplink capacity must meet the ERA per-GPU floors.
+
+    ERA-00008/00010/00011/00012/00016 all state the same two minimums, verbatim
+    and at every published scale point:
+
+      "network connections towards the customers' network ... designed to
+       provide at least 25Gb of bandwidth per GPU"
+      "network connections for storage attachment ... at least 12.5Gb of
+       bandwidth per GPU"
+
+    These are CLUSTER-LEVEL AGGREGATE floors, not per-node cabling. The guides
+    express them as a count of shared uplinks sized against the cluster's total
+    GPU count, which is exactly why storage is external (ADR-0047): the floor
+    governs what the fabric provisions *toward* storage, not what any node is
+    cabled with. Read per node they reproduce none of the published designs.
+
+        aggregate_gbps = wired_uplinks x per_link_speed
+        floor          = minimum_gbps_per_gpu x total_GPUs
+
+    The floors come from the model (`network.uplink_capacity`). The per-link
+    speed is the OEM's DEPLOYED breakout, read from the workbook's Port Profiles
+    Lanes column (ADR-0040: `lanes x 100G`), so an OEM who broke a port out
+    slower than the RA is credited at what they wired — an Edge Uplink at
+    breakout-8/lanes-1 counts as 100G, not the RA's 200G. Falls back to the
+    model `network.port_profiles` speed only when the workbook omits Lanes.
+
+    WARNING, not error. ADR-0047 explicitly leaves the gate-vs-warn decision
+    open, and the floors are "at least" minimums that some archs exceed by
+    design (2-4-3-200 ships 18.75 / 37.50). Over-provisioning is legal and is
+    not reported; only a shortfall is. Promoting this to a hard failure is a
+    deliberate follow-up, not something to backdoor in here.
+    """
+    if load_arch_model is None:
+        return  # public distribution: data-models/ is absent
+    if 'Wire Map' not in wb.sheetnames:
+        return
+    arch = str((settings or {}).get('architecture') or '').strip()
+    if not arch:
+        return
+    try:
+        model = load_arch_model(arch)
+    except ModelError:
+        return  # already reported by validate_switch_layout_ports
+
+    su = _su_count(wb)
+    gpus_per_su = (model or {}).get('gpus_per_su')
+    if not su or not gpus_per_su:
+        return
+    total_gpus = su * int(gpus_per_su)
+
+    network = (model or {}).get('network') or {}
+    policies = network.get('uplink_capacity') or {}
+    profiles = network.get('port_profiles') or {}
+    if not policies:
+        return
+
+    wm = wb['Wire Map']
+    header = [str(c.value or '').strip() for c in wm[1]]
+    if 'Network Profile' not in header:
+        return
+    c_prof = header.index('Network Profile')
+    wired = {}
+    for row in wm.iter_rows(min_row=2, values_only=True):
+        name = str(row[c_prof] or '').strip()
+        if name:
+            wired[name] = wired.get(name, 0) + 1
+
+    deployed = _deployed_link_gbps(wb)
+    for role, policy in sorted(policies.items()):
+        floor_per_gpu = policy.get('minimum_gbps_per_gpu')
+        profile = profiles.get(policy.get('profile') or role) or {}
+        label = profile.get('profile_name')
+        speed = str(profile.get('speed') or '').strip()
+        m = re.match(r'^(\d+)G$', speed)
+        if floor_per_gpu is None or not label:
+            continue
+        # Per-link speed: the OEM's DEPLOYED breakout (ADR-0040 lanes x 100G) when the
+        # workbook declares Lanes, else the model profile speed. Crediting the model
+        # speed over-credits an OEM who broke the port out slower than the RA — e.g.
+        # an Edge Uplink at breakout-8/lanes-1 (100G) vs the RA exit's 200G, which
+        # hid half the exit shortfall.
+        links, eff_label = resolve_wired_profile(wired, label)
+        per_link = deployed.get(eff_label)
+        if per_link is None:
+            per_link = deployed.get(label)
+        if per_link is None:
+            if not m:
+                continue
+            per_link = int(m.group(1))
+        aggregate = links * per_link
+        required = float(floor_per_gpu) * total_gpus
+        if aggregate + 1e-9 < required:
+            have = aggregate / total_gpus if total_gpus else 0
+            result.warn(
+                "Wire Map",
+                f"{label} capacity is below the ERA floor for {arch} at {su} SU: "
+                f"{links} x {per_link}G = {aggregate}G across {total_gpus} GPUs "
+                f"= {have:.2f} Gb/GPU, but the guides require at least "
+                f"{floor_per_gpu} Gb/GPU ({required:.0f}G aggregate). Add "
+                f"{-(-int(required - aggregate) // per_link)} more {label} "
+                f"link(s), or correct the Wire Map if they are wired under a "
+                f"different profile name."
+                + ("" if eff_label == label else
+                   f" Counted {links} link(s) wired as '{eff_label}', which this "
+                   f"architecture's template shipped as an interchangeable name for "
+                   f"'{label}'."))
+
+
+def _su_count(wb):
+    """Number of distinct `su-NN-` scalable units named on the Nodes sheet."""
+    if 'Nodes' not in wb.sheetnames:
+        return None
+    sus = set()
+    for row in wb['Nodes'].iter_rows(min_row=2, values_only=True):
+        if not row or len(row) < 2 or not row[1]:
+            continue
+        m = re.match(r'su-(\d+)', str(row[1]).strip(), re.IGNORECASE)
+        if m:
+            sus.add(m.group(1))
+    return len(sus) or None
+
+
+def _nodes_switch_functions(wb):
+    """{switch name: lowercased Function} from the Nodes sheet.
+
+    Columns are resolved BY HEADER NAME, not by position. ADR-0028 inserted an
+    `OOB VLAN` column at index 2, which shifted `Type` from index 2 to 3. Code
+    that hardcoded `row[3] == 'switch'` therefore matched nothing on any
+    pre-ADR-0028 workbook — including the ones the public release emits and the
+    ones OEM partners submit for endorsement.
+
+    The failure was silent and worse than no check: every switch resolved to
+    `''`, the `_NS_FABRIC_ISL_FUNCTIONS` filter dropped every ISL end, and the
+    link-count check reported "Wire Map wires 0" on a fabric wiring 142 ISL
+    rows — a fabricated under-cabling finding against a workbook that had
+    already passed a full 5-phase validate-all. See ERA-81.
+
+    `Function` and `Name` are index 0/1 in both schemas, so they are only used
+    as a fallback when the header row is missing or unrecognisable.
+    """
+    if 'Nodes' not in wb.sheetnames:
+        return {}
+    ws = wb['Nodes']
+    header = [str(c.value or '').strip().lower() for c in ws[1]]
+
+    def col(label, fallback):
+        try:
+            return header.index(label)
+        except ValueError:
+            return fallback
+
+    i_fn, i_name, i_type = col('function', 0), col('name', 1), col('type', None)
+    functions = {}
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row:
+            continue
+        need = max(i for i in (i_fn, i_name, i_type) if i is not None)
+        if len(row) <= need:
+            continue
+        fn, nm = row[i_fn], row[i_name]
+        if not fn or not nm:
+            continue
+        # Without a resolvable Type column, fall back to accepting the row:
+        # a wrong-but-present mapping beats silently classifying nothing.
+        if i_type is not None and str(row[i_type] or '').strip().lower() != 'switch':
+            continue
+        functions[str(nm).strip()] = str(fn).strip().lower()
+    return functions
+
+
+def _switch_function(wb, name):
+    """Nodes-sheet Function for a switch, lowercased ('' when unknown)."""
+    cache = getattr(wb, '_era_fn_cache', None)
+    if cache is None:
+        cache = _nodes_switch_functions(wb)
+        try:
+            wb._era_fn_cache = cache
+        except AttributeError:
+            pass
+    return cache.get(name, '')
+
+
 def validate_cross_sheet_data(settings, parsed_nodes, parsed_vlans, result):
-    """Cross-validate data between Settings, Nodes, and VLANs sheets."""
-    # --- Node mgmt IPs within mgmt_subnets ---
-    mgmt_raw = settings.get('mgmt_subnets')
-    if mgmt_raw and parsed_nodes:
-        mgmt_nets = []
-        for part in str(mgmt_raw).split(','):
-            part = part.strip()
-            if part:
-                try:
-                    mgmt_nets.append(ipaddress.IPv4Network(part, strict=False))
-                except ValueError:
-                    pass  # Already reported in Settings validation
+    """Cross-validate data between Settings, Nodes, and VLANs sheets.
 
-        if mgmt_nets:
-            for node in parsed_nodes:
-                if not node['ip']:
-                    continue
-                try:
-                    addr = ipaddress.IPv4Address(node['ip'])
-                except ValueError:
-                    continue
-                in_any = any(addr in net for net in mgmt_nets)
-                if not in_any:
-                    result.warn("Cross-sheet",
-                                f"Node {node['function']} (row {node['row']}): "
-                                f"mgmt IP {node['ip']} is not within any mgmt_subnet "
-                                f"({', '.join(str(n) for n in mgmt_nets)})")
+    The mgmt_subnets-based node-IP-containment and VLAN-overlap checks that
+    used to live here were removed with mgmt_subnets itself. This
+    is the OOB-VLAN-based replacement, built on the same
+    resolve_oob_vlans() mapping the topology/inventory generator uses:
 
-    # --- mgmt_subnets overlap with VLAN subnets ---
-    if mgmt_raw and parsed_vlans:
-        mgmt_nets = []
-        for part in str(mgmt_raw).split(','):
-            part = part.strip()
-            if part:
-                try:
-                    mgmt_nets.append(ipaddress.IPv4Network(part, strict=False))
-                except ValueError:
-                    pass
+      a. VLAN-id collision — an id can't be both an OOB VLAN (VRF=OOB) and
+         a non-OOB VLAN.
+      b. Invalid OOB-VLAN reference — an OOB switch's Nodes-tab 'OOB VLAN'
+         value must name a real VRF=OOB VLAN.
+      c. Device mgmt IP within an OOB VLAN subnet (hard-fail, ERA-41) — a
+         mgmt IP outside every OOB subnet is unreachable. Replaces the
+         mgmt_subnets-based node-IP-containment check.
+      d. Multiple distinct OOB VLAN subnets require L3 OOB.
+    """
+    oob_nodes = [
+        n for n in parsed_nodes
+        if canonical_category(n.get('function'), n.get('name')) == 'oob-switch'
+    ]
+    mapping = resolve_oob_vlans(parsed_vlans, oob_nodes)
 
-        for mnet in mgmt_nets:
-            for vlan in parsed_vlans:
-                if vlan['network'] and mnet.overlaps(vlan['network']):
-                    # OOB VLAN (200) overlapping with mgmt is expected
-                    # since mgmt_subnets ARE the OOB management networks.
-                    # Only warn for non-OOB VLANs.
-                    if vlan['name'].upper() != 'OOB':
-                        result.warn("Cross-sheet",
-                                    f"mgmt_subnet {mnet} overlaps with "
-                                    f"VLAN {vlan['id']} ({vlan['name']}) subnet {vlan['network']}")
+    # (a) VLAN-id collision: an id used by both an OOB and a non-OOB VLAN.
+    oob_ids = {int(v['id']) for v in mapping['oob_vlans']}
+    non_oob_ids = {
+        int(v['id']) for v in parsed_vlans
+        if str(v.get('vrf', '')).upper() != 'OOB'
+        and str(v.get('id', '')).strip().lstrip('-').isdigit()
+    }
+    for vid in oob_ids & non_oob_ids:
+        result.error(
+            "VLANs & Profiles",
+            f"VLAN id {vid} is used by both an OOB and a non-OOB VLAN; "
+            f"OOB VLAN ids must be unique.")
+
+    # (b) Invalid OOB-VLAN reference: OOB switch names an OOB VLAN id that
+    # doesn't resolve to a real VRF=OOB VLAN. A blank 'OOB VLAN' cell is only
+    # valid when there is exactly one OOB VLAN to default to (resolve_oob_vlans
+    # sets default_vlan_id in that case); with zero or >1 OOB VLANs, a blank
+    # cell resolves to None and must be flagged too, otherwise the switch's
+    # SVI silently drops with no error.
+    for node in oob_nodes:
+        raw = str(node.get('oob_vlan', '') or '').strip()
+        name = node.get('name')
+        if mapping['vlan_by_switch'].get(name) is not None:
+            continue
+        if raw:
+            result.error(
+                "Nodes",
+                f"OOB switch {name} names OOB VLAN '{raw}', which is not "
+                f"a VRF-OOB VLAN in 'VLANs & Profiles'.")
+        elif mapping['default_vlan_id'] is None:
+            result.error(
+                "Nodes",
+                f"OOB switch {name} must name an OOB VLAN in its 'OOB VLAN' "
+                f"column when more than one OOB VLAN exists.")
+
+    # (c) Device mgmt IP within an OOB VLAN subnet (hard-fail, ERA-41). A mgmt
+    # IP outside every OOB subnet is unreachable (surfaced live in the field:
+    # storage-07 assigned .160, outside the declared /27 → server unreachable).
+    # Only runs when at least one OOB VLAN subnet resolved — otherwise there's
+    # nothing to check against (and every device would spuriously fail).
+    oob_nets = []
+    for subnet in mapping['subnets']:
+        try:
+            oob_nets.append(ipaddress.IPv4Network(subnet, strict=False))
+        except ValueError:
+            continue  # malformed subnet already reported elsewhere
+    # A SWITCH may instead be addressed on the air-mgmt plane: that is the
+    # plane its eth0 actually lands on, and the one `ansible_host` targets
+    # (excel_parser.py assigns switch eth0 IPs across it). So a switch is
+    # reachable if its mgmt IP is inside an OOB VLAN subnet OR inside
+    # air_mgmt_subnet. This preserves ADR-0041's intent — the question is
+    # "is this device reachable", not "is it on the OOB plane specifically" —
+    # while letting a brownfield operator pin the real addresses their
+    # switches already answer on. A switch outside BOTH planes still fails.
+    _air_net = None
+    _air_subnet_str = (settings or {}).get('air_mgmt_subnet') or DEFAULT_AIR_MGMT_SUBNET
+    try:
+        _air_net = ipaddress.IPv4Network(str(_air_subnet_str).strip(), strict=False)
+    except ValueError:
+        _air_net = None  # malformed CIDR already reported by _validate_air_mgmt_overlap
+
+    if oob_nets:
+        nets_str = ', '.join(str(n) for n in oob_nets)
+        for n in parsed_nodes:
+            category = canonical_category(n.get('function'), n.get('name'))
+            if category in _OOB_SUBNET_EXEMPT_CATEGORIES:
+                continue
+            ip_str = n.get('ip')
+            if not ip_str:
+                continue
+            try:
+                addr = ipaddress.IPv4Address(ip_str)
+            except ValueError:
+                continue  # malformed IP already reported elsewhere
+            if any(addr in net for net in oob_nets):
+                continue
+            is_switch_cat = category in _SWITCH_CATEGORIES
+            if is_switch_cat and _air_net is not None and addr in _air_net:
+                continue  # operator-pinned on the air-mgmt plane — reachable
+            _planes = nets_str
+            if is_switch_cat and _air_net is not None:
+                _planes = f"{nets_str}, or the air-mgmt subnet {_air_net}"
+            result.error(
+                "Cross-sheet",
+                f"Node {n.get('function')} (row {n.get('row')}): mgmt "
+                f"IP {ip_str} is not within any OOB VLAN subnet "
+                f"({_planes}). It would be unreachable — assign an IP "
+                f"inside the node's OOB subnet, or widen the subnet.")
+
+    # (d) Distinct OOB subnets require L3 OOB.
+    mode = str(settings.get('oob_uplink_mode', 'l2') or 'l2').strip().lower()
+    if len(mapping['subnets']) > 1 and mode != 'l3':
+        result.error(
+            "VLANs & Profiles",
+            "Multiple distinct OOB VLAN subnets require L3 OOB (set "
+            "oob_uplink_mode = l3). A single shared OOB subnet is the "
+            "only L2-OOB option.")
+
+    # (e) OOB subnet capacity (hard-fail, ERA-41). Every host that lands on an
+    # OOB subnet must fit: the Active Nodes-tab mgmt IPs inside it plus the
+    # auto-derived infra that is NOT in the Nodes tab — gateway (oob-server-01)
+    # + dhcp-oob in L2, and additionally external-dhcp/utility/external-conn/
+    # ztp_server in L3. Surfaced live in the field: a /27 (30 usable) had to
+    # hold 33, so dhcp-oob spilled to a different /27 and servers were
+    # unreachable. The infra count tracks oob_reserved_for_mode() minus its 3
+    # structural octets (network/.254/.255) — 2 in L2, 6 in L3.
+    if oob_nets:
+        infra = max(len(oob_reserved_for_mode(mode)) - 3, 0)
+        node_addrs = []
+        for n in parsed_nodes:
+            ip_str = n.get('ip')
+            if not ip_str:
+                continue
+            try:
+                node_addrs.append(ipaddress.IPv4Address(ip_str))
+            except ValueError:
+                continue  # malformed IP already reported elsewhere
+        for net in oob_nets:
+            usable = net.num_addresses - 2  # minus network + broadcast
+            on_subnet = sum(1 for a in node_addrs if a in net)
+            required = on_subnet + infra
+            if required > usable:
+                extra = ("gateway + dhcp-oob + external-dhcp/utility/"
+                         "external-conn + ztp_server" if mode == 'l3'
+                         else "gateway + dhcp-oob")
+                result.error(
+                    "VLANs & Profiles",
+                    f"OOB subnet {net} holds {usable} usable addresses but the "
+                    f"deployment needs {required} ({on_subnet} Nodes-tab mgmt "
+                    f"IPs + {infra} auto-derived infra: {extra}). Widen the OOB "
+                    f"subnet, or split hosts across multiple OOB VLANs (L3 OOB).")
 
 
-def _validate_air_mgmt_overlap(air_mgmt_subnet, mgmt_csv, result):
+def _validate_air_mgmt_overlap(air_mgmt_subnet, oob_subnets, result):
     """The air-mgmt subnet (Air_Only "Air Management Subnet") and the OOB
-    mgmt_subnets (Settings) must be disjoint — Air virtual-node IPs and OOB
-    switch management IPs collide otherwise. Lives here (not validate_settings)
-    because air_mgmt_subnet is authored on the Air_Only sheet and is only
-    resolved after that sheet is parsed.
+    VLAN subnet(s) (VLANs & Profiles, VRF=OOB) must be disjoint — Air
+    virtual-node IPs and OOB switch management IPs collide otherwise. Lives
+    here (not validate_settings) because air_mgmt_subnet is authored on the
+    Air_Only sheet, and the OOB VLAN subnets require the Nodes + VLANs sheets
+    to be parsed first — both only resolved later in
+    validate_excel().
     """
     if not air_mgmt_subnet or not str(air_mgmt_subnet).strip():
         return
@@ -3533,26 +4945,82 @@ def _validate_air_mgmt_overlap(air_mgmt_subnet, mgmt_csv, result):
     except ValueError:
         result.error("Air_Only", f"Invalid air_mgmt_subnet CIDR: '{air_mgmt_subnet}'")
         return
-    for part in str(mgmt_csv or '').split(','):
-        part = part.strip()
+    for part in (oob_subnets or []):
+        part = str(part).strip()
         if not part:
             continue
         try:
             mnet = ipaddress.IPv4Network(part, strict=False)
         except ValueError:
-            continue  # malformed mgmt_subnets entry already reported in Settings
+            continue  # malformed OOB VLAN subnet already reported elsewhere
         if air_net.overlaps(mnet):
             result.error("Air_Only",
                          f"air_mgmt_subnet '{air_mgmt_subnet}' overlaps with "
-                         f"mgmt_subnets entry '{mnet}'. These must be disjoint — "
+                         f"OOB VLAN subnet '{mnet}'. These must be disjoint — "
                          f"Air virtual node IPs vs. OOB switch management IPs "
                          f"collide otherwise.")
 
 
-def validate_oob_mgmt_ip_collisions(parsed_nodes, result, settings=None):
+def validate_ldap_servers_plane(settings, result):
+    """ERA-93: catch an `ldap_servers` pre-fill left on the default air-mgmt plane.
+
+    Every shipped workbook pre-fills `ldap_servers = 172.20.0.78` — the
+    `utility` jump on the default air-mgmt subnet. That is a helpful default
+    only while the plane IS the default. Move `air_mgmt_subnet` and the
+    pre-fill silently points at an address on a network the deployment does not
+    have; nothing complains, because the value is a syntactically valid IP.
+
+    Inert wherever `ldap.enabled` is false, which is why it has never bitten —
+    but it is a live trap for the first deployment that enables LDAP on a moved
+    subnet, so it is reported when (and only when) both conditions hold.
+    """
+    settings = settings or {}
+    if str(settings.get('ldap_enabled', '') or '').strip().lower() not in ('yes', 'true', '1'):
+        return
+
+    declared = str(settings.get('air_mgmt_subnet') or '').strip()
+    if not declared:
+        return
+    try:
+        declared_net = ipaddress.IPv4Network(declared, strict=False)
+        default_net = ipaddress.IPv4Network(DEFAULT_AIR_MGMT_SUBNET)
+    except ValueError:
+        return  # a malformed CIDR is reported by its own gate
+    if declared_net == default_net:
+        return
+
+    for part in str(settings.get('ldap_servers') or '').split(','):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            addr = ipaddress.IPv4Address(part.split('/')[0])
+        except ValueError:
+            continue  # invalid IPs are reported by validate_settings
+        if addr in default_net and addr not in declared_net:
+            result.error(
+                "Settings",
+                f"ldap_servers contains {part}, which is on the DEFAULT "
+                f"air-mgmt subnet ({DEFAULT_AIR_MGMT_SUBNET}), but this "
+                f"deployment declares air_mgmt_subnet {declared}. That address "
+                f"does not exist here — the shipped template pre-fills the "
+                f"utility jump's default address and it was not updated when "
+                f"the plane moved. With ldap_enabled=Yes the switches will ship "
+                f"pointing at an unreachable LDAP server."
+            )
+
+
+def validate_oob_mgmt_ip_collisions(parsed_nodes, result, settings=None,
+                                    oob_subnets=None, parsed_vlans=None):
     """Hard gate against silent mgmt-IP collisions on either management plane.
 
-    OOB plane (192.168.200.0/24, matching production VLAN 200): no two hosts
+    ERA-93: `oob_subnets` is the list of OOB VLAN subnets the workbook actually
+    declares. This gate used to assume 192.168.200.0/24, so on a brownfield
+    workbook every claim fell outside the registry's view and the check passed
+    while inspecting nothing — it was structurally unable to see ERA-92. Passing
+    the declared subnets is what lets it fail on a real input.
+
+    OOB plane (192.168.200.0/24 by default, matching production VLAN 200): no two hosts
     may share a mgmt IP, and no Nodes-tab host may land on an octet reserved
     for Air infrastructure. The reserved set is OOB-mode-aware — L3 reserves the
     EXIT-VRF trio (external-dhcp .77 / utility .78 / external-conn .79); L2 (the
@@ -3569,24 +5037,88 @@ def validate_oob_mgmt_ip_collisions(parsed_nodes, result, settings=None):
     loudly at validate-excel time instead. See oob_reserved.py.
     """
     claims = []
+    switch_claims = []
     for node in parsed_nodes:
         if not node.get('ip'):
             continue
         label = f"{node.get('function') or node.get('name') or '?'} (row {node.get('row')})"
         claims.append((label, node['ip']))
+        if canonical_category(node.get('function'), node.get('name')) in _SWITCH_CATEGORIES:
+            switch_claims.append((label, node['ip']))
+
+    # Switch SVI addresses are GENERATED, not declared on the Nodes tab, so the
+    # gate below could not see them and a switch SVI landing on a real host's
+    # eth0 passed silently. Four largescale sites shipped 8 such duplicates
+    # each (e.g. cl-01's eth0 and oob-switch-09's SVI both 192.168.200.10).
+    # Derive them with the same helper the generator uses and claim them here,
+    # so the gate covers every address that actually appears on the OOB VLAN.
+    # Attribute switches to subnets the way the generator does. It indexes
+    # PER SUBNET (`per_subnet_index` in build_oob_switch_configs), so a site
+    # with two OOB VLANs and 6 switches on each gives every subnet idx 0..5 —
+    # NOT idx 0..11. Claiming a global count against every subnet invents
+    # phantom SVIs in the high block and fails a legitimate multi-subnet
+    # workbook on a collision that does not exist. Caught in review on !264.
+    _oob_nodes = [n for n in parsed_nodes
+                  if canonical_category(n.get('function'), n.get('name')) == 'oob-switch']
+    _per_subnet = {}
+    if _oob_nodes:
+        try:
+            _map = resolve_oob_vlans(parsed_vlans or [], _oob_nodes)
+            for _n in _oob_nodes:
+                _vlan = (_map.get('vlan_by_switch') or {}).get(_n['name']) or {}
+                _sub = (_vlan.get('subnet') or '').strip()
+                if _sub:
+                    _per_subnet.setdefault(_sub, []).append(_n['name'])
+        except Exception:
+            _per_subnet = {}
+    if not _per_subnet:
+        # No VLAN attribution available (older caller, or a workbook the
+        # resolver could not map). Only safe to claim when a single subnet is
+        # declared; with several, the split is unknown and guessing produces
+        # false-positive build failures.
+        _subs = [s for s in (oob_subnets or []) if str(s).strip()] or [OOB_SUBNET]
+        if len(_subs) == 1:
+            _per_subnet = {_subs[0]: [n['name'] for n in _oob_nodes]}
+
+    for _sub, _members in _per_subnet.items():
+        _parsed = _parse_cidr(_sub, context="OOB VLAN")
+        if not _parsed:
+            continue
+        _net_ip, _prefix = _parsed
+        _base = _net_ip.rsplit('.', 1)[0]
+        try:
+            _last = int(_net_ip.rsplit('.', 1)[1])
+        except (ValueError, IndexError):
+            _last = 0
+        for _i, _name in enumerate(sorted(_members)):
+            claims.append((f"{_name} SVI (generated)",
+                           _oob_switch_svi_ip(_base, _last, _i, _prefix)))
 
     oob_mode = (settings or {}).get('oob_uplink_mode')
-    for octet, owners in find_oob_collisions(claims, oob_reserved_for_mode(oob_mode)):
+    _planes = [s for s in (oob_subnets or []) if str(s).strip()] or None
+    _plane_desc = ", ".join(str(s) for s in _planes) if _planes else OOB_SUBNET
+    for address, owners in find_oob_collisions(claims,
+                                               oob_reserved_for_mode(oob_mode),
+                                               subnets=_planes):
         result.error(
             "Nodes",
-            f"mgmt IP 192.168.200.{octet} claimed by multiple owners on the "
-            f"flat OOB subnet ({OOB_SUBNET}): {'; '.join(owners)}. Duplicate "
-            f"OOB addresses cause an ARP/DAD war on VLAN 200 and ~60% packet "
-            f"loss to the colliding host. Reassign the host to a free octet."
+            f"mgmt IP {address} claimed by multiple owners on the OOB "
+            f"management plane ({_plane_desc}): {'; '.join(owners)}. Duplicate "
+            f"OOB addresses cause an ARP/DAD war on the OOB VLAN and ~60% "
+            f"packet loss to the colliding host. Reassign the host to a free "
+            f"address."
         )
 
     air_mgmt_subnet = (settings or {}).get('air_mgmt_subnet') or DEFAULT_AIR_MGMT_SUBNET
+
+    # A SWITCH inside the air-mgmt subnet is an operator PIN, not an intruder:
+    # that plane is where switch eth0 lives, and excel_parser honours the pin
+    # verbatim instead of auto-assigning. Non-switch hosts have no business
+    # there and still fail. Pins get their own two gates below.
+    _switch_labels = {label for label, _ in switch_claims}
     for label, ip_str in air_mgmt_intruders(claims, air_mgmt_subnet):
+        if label in _switch_labels:
+            continue
         result.error(
             "Nodes",
             f"mgmt IP {ip_str} for {label} is inside the air-mgmt subnet "
@@ -3595,6 +5127,43 @@ def validate_oob_mgmt_ip_collisions(parsed_nodes, result, settings=None):
             f"bridge SVI .254). A Nodes-tab host here silently collides with a "
             f"switch eth0. Put the host on an OOB management subnet instead."
         )
+
+    # Gates on operator-pinned switch eth0 addresses.
+    try:
+        _air_net = ipaddress.IPv4Network(str(air_mgmt_subnet).strip(), strict=False)
+    except ValueError:
+        _air_net = None
+    if _air_net is not None:
+        _pins = {}
+        for label, ip_str in switch_claims:
+            try:
+                addr = ipaddress.IPv4Address(str(ip_str).strip().split('/')[0])
+            except ValueError:
+                continue  # malformed IP already reported elsewhere
+            if addr not in _air_net:
+                continue
+            octet = int(addr) - int(_air_net.network_address)
+            # (1) A pin must not squat an octet air-deploy.py provisions for
+            # Air infrastructure — the switch and the infra node would both
+            # claim it and one of them silently loses.
+            owner = AIR_MGMT_RESERVED_OWNERS.get(octet)
+            if owner:
+                result.error(
+                    "Nodes",
+                    f"switch mgmt IP {addr} for {label} collides with "
+                    f"{owner}, which Air provisions on that address. Pick "
+                    f"another address inside {_air_net} for this switch."
+                )
+            _pins.setdefault(str(addr), []).append(label)
+        # (2) Two switches must not pin the same address.
+        for ip_str, owners in sorted(_pins.items()):
+            if len(owners) > 1:
+                result.error(
+                    "Nodes",
+                    f"switch mgmt IP {ip_str} is pinned by multiple switches "
+                    f"({'; '.join(owners)}). Each switch eth0 needs its own "
+                    f"address on the air-mgmt plane."
+                )
 
 
 _PREFIX_LIST_ID_RE = re.compile(r'^[A-Za-z0-9_-]+$')
@@ -3650,6 +5219,75 @@ def validate_prefix_lists(ws, result):
                              f"injection.")
 
 
+_ACL_PROTOCOLS = frozenset({'tcp', 'udp', 'ip', 'icmp'})
+# Baseline control-plane security ACLs (ADR-0030). Suppressing either drops the
+# switch's control-plane protection — honored, but warned.
+_SECURITY_DEFAULT_ACLS = frozenset({'acl-default-dos', 'acl-default-whitelist'})
+
+
+def validate_acls(ws, result):
+    """Validate the optional 'ACLs' sheet (ADR-0030).
+
+    `acl name` / `rule id` / `protocol` / `dest port` are interpolated into
+    root-executed `nv set acl ...` lines (each `| quote`'d at render time; this
+    is the input-layer backstop). Enforce a strict charset and sane
+    protocol/port values. Columns: 1=ACL name, 2=Rule id, 3=Protocol,
+    4=Dest port, 5=Action. Suppressing a baseline control-plane ACL is allowed
+    but warned. Absent/empty sheet ⇒ no checks (derive-by-default).
+    """
+    if ws.max_row < 2:
+        return
+    header_row = 1
+    for r in range(1, min(ws.max_row + 1, 5)):
+        val = ws.cell(row=r, column=1).value
+        if val and str(val).strip().lower() == 'acl name':
+            header_row = r
+            break
+    for row in range(header_row + 1, ws.max_row + 1):
+        acl_name = ws.cell(row=row, column=1).value
+        if not acl_name or not str(acl_name).strip():
+            continue
+        name = str(acl_name).strip()
+        if name.lower() == 'acl name':
+            continue
+        rule_id = ws.cell(row=row, column=2).value
+        protocol = ws.cell(row=row, column=3).value
+        dest_port = ws.cell(row=row, column=4).value
+        action_val = ws.cell(row=row, column=5).value
+        action = str(action_val).strip().lower() if action_val else ''
+        if not _PREFIX_LIST_ID_RE.match(name):
+            result.error("ACLs",
+                         f"row {row}: ACL name {name!r} must match [A-Za-z0-9_-]+ "
+                         f"(rendered into a root-executed switch config — no "
+                         f"spaces or shell metacharacters).")
+        if action == 'suppress':
+            if name in _SECURITY_DEFAULT_ACLS:
+                result.warn("ACLs",
+                            f"row {row}: suppressing {name!r} removes a baseline "
+                            f"control-plane security ACL from every switch — make "
+                            f"sure that's intended.")
+            continue  # a suppress row carries no rule to validate
+        if rule_id is not None and str(rule_id).strip():
+            rid = str(rule_id).strip()
+            if not re.fullmatch(r'\d+', rid):
+                result.error("ACLs",
+                             f"row {row}: rule id {rid!r} must be a positive integer.")
+        if protocol is not None and str(protocol).strip():
+            proto = str(protocol).strip().lower()
+            if proto not in _ACL_PROTOCOLS:
+                result.error("ACLs",
+                             f"row {row}: protocol {proto!r} must be one of "
+                             f"{sorted(_ACL_PROTOCOLS)}.")
+        if dest_port is not None and str(dest_port).strip():
+            dp = str(dest_port).strip()
+            if isinstance(dest_port, float) and dest_port.is_integer():
+                dp = str(int(dest_port))
+            if not re.fullmatch(r'\d+', dp) or not (1 <= int(dp) <= 65535):
+                result.error("ACLs",
+                             f"row {row}: dest port {dp!r} must be an integer "
+                             f"1..65535.")
+
+
 # ---------------------------------------------------------------------------
 # Main validation
 # ---------------------------------------------------------------------------
@@ -3691,13 +5329,12 @@ def validate_excel(xlsx_path):
     #     (excel_parser.parse_air_settings). Surface it into `settings` so the
     #     mgmt-IP collision gate (8b) honors a customized subnet instead of the
     #     hardcoded default. Air_Only is authoritative (matches the deploy).
+    # The S9 overlap check itself (vs. the OOB VLAN subnets)
+    #     runs below, once Nodes + VLANs & Profiles are parsed.
     if 'Air_Only' in wb.sheetnames:
         _air_settings = parse_air_settings(wb['Air_Only'])
         if _air_settings.get('air_mgmt_subnet'):
             settings['air_mgmt_subnet'] = _air_settings['air_mgmt_subnet']
-        # S9 overlap check, now that the Air_Only-sourced subnet is resolved.
-        _validate_air_mgmt_overlap(settings.get('air_mgmt_subnet'),
-                                   settings.get('mgmt_subnets'), result)
 
     # 3. Nodes
     parsed_nodes = []
@@ -3740,6 +5377,28 @@ def validate_excel(xlsx_path):
         # Port Profile / VLAN row / Air- prefix.
         print("  Checking Wire Map Network Profile names...")
         validate_wiremap_network_profiles(wb, result)
+        validate_wiremap_subports_fit_breakout(wb, result)
+        validate_isl_parents_fully_accounted(wb, result)
+        validate_isl_matches_arch_model(wb, settings, result)
+        validate_fabric_optic_integrity(wb, result)
+        validate_uplink_bandwidth_floors(wb, settings, result)
+        # DRB Guidelines slides 10 and 12 — the E/W endorsement criteria.
+        print("  Checking E/W network against DRB criteria...")
+        validate_ew_uses_private_ips(wb, settings, result)
+        validate_ew_not_oversubscribed(wb, settings, result)
+        validate_ew_bandwidth_per_gpu(wb, settings, result)
+
+    # 4e. S9 overlap check: air_mgmt_subnet (Air_Only) vs. the OOB VLAN
+    # subnet(s) (VRF=OOB rows on VLANs & Profiles). Runs here —
+    # not in step 2b — because it needs both parsed_nodes (to find the
+    # OOB switches) and parsed_vlans (to resolve their VLAN subnets).
+    _oob_nodes_for_overlap = [
+        n for n in parsed_nodes
+        if canonical_category(n.get('function'), n.get('name')) == 'oob-switch'
+    ]
+    _oob_subnets = resolve_oob_vlans(parsed_vlans, _oob_nodes_for_overlap)['subnets']
+    _validate_air_mgmt_overlap(settings.get('air_mgmt_subnet'), _oob_subnets, result)
+    validate_ldap_servers_plane(settings, result)
 
     def _print_wm_summary(sheet_name, total_rows, ports):
         """Print a wire-map summary breakdown: cables + skip reasons + dup status."""
@@ -3755,7 +5414,14 @@ def validate_excel(xlsx_path):
             if dup_count:
                 print(f"    ✗ {dup_count} duplicate switch-port assignment(s) — see errors above")
             else:
-                print(f"    ✓ no duplicate switch-port assignments")
+                print("    ✓ no duplicate switch-port assignments")
+
+    # 4z. Shell-injection safety for every Excel cell that renders unquoted
+    #     into a root-executed config (VRF/VLAN names, Port Profiles
+    #     VRF/Speed/Auto-Negotiate, and the policy sheets).
+    print("  Checking shell safety of unquoted Excel values...")
+    validate_unquoted_excel_cells(wb, result)
+    validate_node_name_charset(wb, result)
 
     # 5. Wire Map — port validation and duplicate detection
     wm_ports = {}
@@ -3767,8 +5433,8 @@ def validate_excel(xlsx_path):
         _print_wm_summary("Wire Map", wb['Wire Map'].max_row - 1, wm_ports)
         # 8x breakout convention check — odd base port + adjacent disabled.
         validate_8x_breakout_odd_ports(wb['Wire Map'], result, "Wire Map")
-        print("  Checking switch layout port ranges...")
-        validate_switch_layout_ports(wb, settings, nodes_function_map, result)
+        print("  Checking switch hardware port limits...")
+        validate_switch_hardware_ports(wb, settings, nodes_function_map, result)
 
     # 6. Air_Only
     air_ports = {}
@@ -3824,9 +5490,18 @@ def validate_excel(xlsx_path):
             result.error("Settings", msg)
 
     # 7c. Loopbacks sheet (optional — only validates structure if present)
-    if 'Loopbacks' in wb.sheetnames:
+    _lb_name = loopbacks_sheet_name(wb)
+    if _lb_name:
         print("  Checking Loopbacks...")
-        validate_loopbacks(wb['Loopbacks'], parsed_nodes, parsed_vlans, settings, result)
+        validate_loopbacks(wb[_lb_name], parsed_nodes, parsed_vlans, settings, result)
+
+    # There must be an ASN source — Settings.bgp_asn (legacy) OR a
+    # populated Loopbacks ASN column. Without one, no base ASN resolves.
+    if not settings.get('bgp_asn') and not loopbacks_asn_populated(wb):
+        result.error("Settings",
+                     "No BGP ASN source: Settings.bgp_asn is absent and the "
+                     "Loopbacks tab has no populated ASN column. Provide one "
+                     ".")
 
     # 8. Cross-sheet data validation (IPs within subnets, overlaps)
     if settings or parsed_nodes or parsed_vlans:
@@ -3838,12 +5513,32 @@ def validate_excel(xlsx_path):
     #     air-mgmt /24 (both silently collide → ~60% packet loss / unreachable).
     if parsed_nodes:
         print("  Checking mgmt-IP collisions (OOB + air-mgmt planes)...")
-        validate_oob_mgmt_ip_collisions(parsed_nodes, result, settings=settings)
+        validate_oob_mgmt_ip_collisions(parsed_nodes, result, settings=settings,
+                                        oob_subnets=_oob_subnets,
+                                        parsed_vlans=parsed_vlans)
+        validate_plane_symmetry(parsed_nodes, result)
+        validate_dataplane_subnet_capacity(parsed_nodes, parsed_vlans, result)
+        validate_dataplane_svi_collisions(parsed_nodes, parsed_vlans, result)
+
+    # 8c. ERA-40 — prefix alignment. An isolated (GPU) subnet that lands inside
+    #     the advertised loopback supernet leaks the compute fabric to the
+    #     customer network via a rule that never names it.
+    if parsed_vlans:
+        print("  Checking prefix alignment (advertised vs isolated VRFs)...")
+        validate_prefix_alignment(settings, parsed_vlans, result)
 
     # 8b. Prefix lists sheet (routed fabrics) — charset/CIDR gate (security review #7)
     if 'Prefix lists' in wb.sheetnames:
         print("  Checking Prefix lists...")
         validate_prefix_lists(wb['Prefix lists'], result)
+
+    if 'ACLs' in wb.sheetnames:
+        print("  Checking ACLs...")
+        validate_acls(wb['ACLs'], result)
+
+    if 'Custom_Config' in wb.sheetnames:
+        print("  Checking Custom_Config...")
+        validate_custom_config(wb['Custom_Config'], parsed_nodes, result)
 
     # 9. Single-tier SU scaling check
     if parsed_nodes:
@@ -3856,7 +5551,7 @@ def validate_excel(xlsx_path):
     #     plain Ubuntu doesn't handle bonded OOB the way real servers do)
     if 'Wire Map' in wb.sheetnames:
         print("  Checking Air OOB single-cable rule...")
-        validate_air_oob_single_cable(wb['Wire Map'], parsed_nodes, result)
+        validate_air_oob_single_cable(wb['Wire Map'], parsed_nodes, result, settings)
 
     wb.close()
     return result
@@ -3871,6 +5566,466 @@ def _node_name_to_su_for_model(name, nodes_per_su, fallback):
     return fallback(text)
 
 
+# ERA-40. VRFs whose subnets must reach cust-net-edge via ERA_PREFIXES, and
+# those that must never. The parser derives ERA_PREFIXES by walking exactly
+# these advertised VRFs; this check exists so the derivation cannot silently
+# disagree with what the operator declared.
+_ADVERTISED_VRFS = frozenset({'INBAND', 'OOB'})
+_ISOLATED_VRFS = frozenset({'GPU'})
+# Routed externally, but NOT through ERA_PREFIXES/cust-net-edge — the STORAGE
+# VRF carries its own uplink and peering (ADR-0047: storage is L3-only and
+# external). Absence from ERA_PREFIXES is correct for these, so they must not
+# warn. Listed explicitly rather than folded into _ISOLATED_VRFS, because
+# "isolated" would be a lie: storage is very much reachable, just not by this
+# path.
+_SEPARATELY_ROUTED_VRFS = frozenset({'STORAGE'})
+
+
+def validate_custom_config(ws, parsed_nodes, result):
+    """Validate the optional 'Custom_Config' sheet (ADR-0055).
+
+    `make import` gates on THIS file, not on excel_parser — import runs
+    validate_excel.py then copies the workbook; the parser only runs at
+    `make generate`. Without this check a bad target would sail through the
+    documented first step and only fail later, which is the wrong place to learn
+    that a switch name is misspelled.
+
+    Delegates to the parser so there is exactly one implementation of the rules;
+    a second copy here would drift and start disagreeing about what is valid.
+    """
+    try:
+        from excel_parser import (
+            parse_custom_config_sheet,
+            switches_by_function_from_nodes,
+            servers_by_function_from_nodes,
+            CustomConfigError,
+        )
+    except ImportError:  # pragma: no cover - parser always ships beside this
+        return
+    try:
+        parse_custom_config_sheet(
+            ws,
+            switches_by_function=switches_by_function_from_nodes(parsed_nodes),
+            servers_by_function=servers_by_function_from_nodes(parsed_nodes),
+        )
+    except CustomConfigError as exc:
+        result.error('Custom_Config', str(exc))
+
+
+def validate_prefix_alignment(settings, parsed_vlans, result):
+    """ERA-40: an isolated VRF's subnet must not fall inside the advertised supernet.
+
+    `ERA_PREFIXES` rule 10 is `<loopback_base>.0/21 max-prefix-len 24`, and it
+    is applied outbound toward `cust-net-edge`. Any subnet that lands inside
+    that supernet at /24 or shorter is therefore advertised *automatically*,
+    with no explicit rule naming it.
+
+    That is exactly what makes it dangerous. A GPU (East/West compute) VLAN
+    given an address inside the loopback range would be published to the
+    customer network by a rule that never mentions it — an isolation failure
+    with nothing in the workbook or the generated config that looks wrong.
+
+    The converse direction (an advertised subnet with no coverage) is handled
+    by the parser, which adds an explicit rule for any INBAND/OOB subnet the
+    supernet misses. It is asserted end-to-end in
+    `tests/test_prefix_alignment.py` against the shipped workbooks; here we
+    guard the direction the parser cannot fix for itself.
+    """
+    lb = str((settings or {}).get('loopback_base') or '').strip()
+    if not lb:
+        return
+    try:
+        supernet = ipaddress.ip_network(f'{lb}.0/21', strict=False)
+    except ValueError:
+        # loopback_base itself is validated elsewhere; nothing to do here.
+        return
+
+    for vlan in parsed_vlans or []:
+        vrf = str(vlan.get('vrf') or '').strip().upper()
+        subnet = str(vlan.get('subnet') or '').strip()
+        if not vrf or '/' not in subnet:
+            continue
+        try:
+            net = ipaddress.ip_network(subnet, strict=False)
+        except ValueError:
+            continue
+
+        if vrf in _ISOLATED_VRFS:
+            if net.prefixlen <= 24 and net.subnet_of(supernet):
+                result.error(
+                    "VLANs & Profiles",
+                    f"VLAN {vlan.get('id') or vlan.get('name')}: subnet "
+                    f"{subnet} is in VRF {vrf}, which must stay isolated, but "
+                    f"it falls inside the advertised supernet {supernet} "
+                    f"(ERA_PREFIXES rule 10, max-prefix-len 24). It would be "
+                    f"advertised to cust-net-edge by a rule that never names "
+                    f"it. Move it outside {supernet}.")
+        elif vrf in _SEPARATELY_ROUTED_VRFS:
+            continue
+        elif vrf not in _ADVERTISED_VRFS:
+            result.warn(
+                "VLANs & Profiles",
+                f"VLAN {vlan.get('id') or vlan.get('name')}: VRF {vrf!r} is "
+                f"classified neither advertised {sorted(_ADVERTISED_VRFS)} nor "
+                f"isolated {sorted(_ISOLATED_VRFS)}. Its subnet {subnet} will "
+                f"NOT be advertised to cust-net-edge unless it happens to fall "
+                f"inside {supernet}. If it should be reachable externally, the "
+                f"prefix-list derivation needs to know about this VRF.")
+
+
+def validate_dataplane_subnet_capacity(parsed_nodes, parsed_vlans, result):
+    """ERA-42: hard-fail when a data-plane VLAN subnet can't hold the servers
+    assigned to it. Reuses the parser's `_dataplane_host_ips` allocator so this
+    check never diverges from the actual assignment. Covers the L2 bond subnets:
+    compute -> CPU/In-Band VLAN (1 addr/node), storage/support -> their VLAN
+    (2 addrs/node). GPU subnets (variable NIC count, often /20) are not checked
+    here.
+    """
+    def _subnet_for(*keys):
+        for v in parsed_vlans:
+            nm = str(v.get('name') or '').lower()
+            if any(k in nm for k in keys):
+                return v.get('subnet')
+        return None
+
+    counts = Counter()
+    for n in parsed_nodes:
+        if n.get('enabled') is False or n.get('is_air_documentary'):
+            continue
+        counts[classify_host_role(n.get('function') or n.get('name') or '')] += 1
+
+    # (role bucket, subnet, addrs/node, legacy /24 start, stride, label)
+    checks = [
+        (('compute',), _subnet_for('cpu', 'in-band', 'inband'), 1, 201, 1, 'CPU/In-Band'),
+        (('storage',), _subnet_for('storage'), 2, 101, 2, 'Storage'),
+        (('support', 'k8s', 'bcme'), _subnet_for('support'), 2, 101, 2, 'Support'),
+    ]
+    for roles, subnet, per_node, start, stride, label in checks:
+        n = sum(counts.get(r, 0) for r in roles)
+        if not subnet or n == 0:
+            continue
+        try:
+            # Parsed purely to skip malformed subnets; the shape of the subnet
+            # no longer changes what this check does, now that /24 has no
+            # special case.
+            ipaddress.ip_network(subnet, strict=False)
+        except ValueError:
+            continue  # malformed subnet already reported elsewhere
+        # the LAST node must fit the subnet
+        # `total=n` so this models what the parser will ACTUALLY allocate,
+        # including the repack-from-the-bottom path. Without it the validator
+        # evaluates the legacy `.201` layout and reports a shortfall the
+        # generator no longer has — crying wolf, which is how a guard gets
+        # ignored.
+        if _dataplane_host_ips(subnet, n - 1, per_node, start, stride,
+                               total=n) is None:
+            # How many actually fit, so the operator sees the shortfall rather
+            # than just "too small".
+            fits = 0
+            while (fits < n
+                   and _dataplane_host_ips(subnet, fits, per_node, start,
+                                           stride, total=n) is not None):
+                fits += 1
+            # No /24 special case. This check used to `continue` on /24
+            # entirely, which hid the real defect: the allocator's legacy
+            # `.201` base left only 54 usable slots in a /24, so four shipped
+            # largescale workbooks addressed barely half their compute nodes
+            # (2-8-9-800 and 2-8-9-400-SP 54 of 128, 2-4-5-800 54 of 144,
+            # 2-8-9-400 54 of 64) while `validate_excel` printed "No errors
+            # found". The identical 54 across four different architectures was
+            # the tell — one constant, not four undersized subnets.
+            #
+            # The subnets were never too small: only .0 and .1 were in use
+            # below .201, leaving 197 free addresses. `_dataplane_host_ips`
+            # now repacks from the bottom when the legacy base will not seat
+            # everyone, so a /24 that still does not fit is genuinely too
+            # small and earns the same hard error as any other prefix.
+            result.error(
+                "VLANs & Profiles",
+                f"{label} VLAN subnet {subnet} holds only {fits} of {n} "
+                f"server(s) at {per_node} address(es) each — the remaining "
+                f"{n - fits} get NO {label.lower()} address. Widen the subnet "
+                f"or reduce the host count.")
+
+
+def fabric_claimed_ips(subnet, gateway, svi_switch_count):
+    """The addresses the FABRIC takes at the bottom of a data VLAN.
+
+    ``network + 1`` (or the declared gateway) is the VRR/anycast address, and
+    each SVI-bearing switch then takes one more from the host range with the
+    gateway excluded — exactly what ``_svi_switch_ip`` emits into the configs.
+    Returns ``{address: owner}``.
+    """
+    claimed = {}
+    try:
+        gw = _svi_gateway_ip(subnet, gateway)
+    except Exception:  # pragma: no cover - malformed subnet reported elsewhere
+        return claimed
+    claimed[gw] = "VRR / anycast gateway"
+    for core_num in range(1, max(int(svi_switch_count or 0), 0) + 1):
+        addr = _svi_switch_ip(subnet, gateway, core_num)
+        claimed.setdefault(addr, f"switch SVI (core-{core_num:02d})")
+    return claimed
+
+
+def find_dataplane_svi_collisions(host_ips, fabric_ips):
+    """``[(address, host_label, fabric_owner)]`` for server IPs the fabric owns.
+
+    ``host_ips`` is ``[(label, 'a.b.c.d/NN' or 'a.b.c.d')]``; ``fabric_ips`` is
+    the ``{address: owner}`` map from :func:`fabric_claimed_ips`.
+    """
+    hits = []
+    for label, ip_str in host_ips:
+        addr = str(ip_str).split('/')[0]
+        owner = fabric_ips.get(addr)
+        if owner:
+            hits.append((addr, label, owner))
+    return hits
+
+
+def validate_dataplane_svi_collisions(parsed_nodes, parsed_vlans, result):
+    """ERA-93: a server data-plane IP must never equal a fabric address.
+
+    ADR-0058 fixed the ALLOCATOR — hosts now pack from ``network + 2 + one per
+    SVI-bearing switch`` instead of reserving the gateway alone. Nothing
+    CHECKED it, which is why ERA-92 cost a day: on a Support VLAN
+    ``10.78.220.32/27`` the cores' SVIs were ``.34``/``.35`` and ``k8s-01`` was
+    allocated exactly those, the gateway ``.33`` never ARPed, and the entire
+    support data plane was dead while every validator reported green.
+
+    With the allocator fixed this gate should never fire. That is the point: it
+    exists so the next regression in the reservation arithmetic is caught here
+    rather than in an Air sim.
+    """
+    def _subnet_and_gw(*keys):
+        for v in parsed_vlans:
+            nm = str(v.get('name') or '').lower()
+            if any(k in nm for k in keys):
+                return v.get('subnet'), v.get('gateway')
+        return None, None
+
+    svi_switches = sum(
+        1 for n in parsed_nodes
+        if n.get('enabled') is not False and not n.get('is_air_documentary')
+        and canonical_category(n.get('function'), n.get('name')) in ('core', 'csl', 'cl')
+    )
+    # Mirror the parser: with no SVI-bearing switch found, assume the standard
+    # pair rather than reserving nothing (see _svi_reserved_offsets).
+    reserved = 2 + (svi_switches if svi_switches else 2)
+
+    counts = Counter()
+    for n in parsed_nodes:
+        if n.get('enabled') is False or n.get('is_air_documentary'):
+            continue
+        counts[classify_host_role(n.get('function') or n.get('name') or '')] += 1
+
+    checks = [
+        (('compute',), _subnet_and_gw('cpu', 'in-band', 'inband'), 1, 201, 1, 'CPU/In-Band'),
+        (('storage',), _subnet_and_gw('storage'), 2, 101, 2, 'Storage'),
+        (('support', 'k8s', 'bcme'), _subnet_and_gw('support'), 2, 101, 2, 'Support'),
+    ]
+    for roles, (subnet, gateway), per_node, start, stride, label in checks:
+        n = sum(counts.get(r, 0) for r in roles)
+        if not subnet or n == 0:
+            continue
+        host_ips = []
+        for idx in range(n):
+            # `total=n` matters MOST here: repacking moves hosts down out of
+            # the .201+ range and toward the bottom of the subnet, which is
+            # exactly where the gateway and the per-switch SVIs live. Modelling
+            # the legacy layout would check collisions against addresses no
+            # node is actually given.
+            ips = _dataplane_host_ips(subnet, idx, per_node, start, stride,
+                                      reserved=reserved, total=n)
+            if ips is None:
+                break  # capacity is validate_dataplane_subnet_capacity's job
+            host_ips += [(f"{label} server #{idx + 1}", ip) for ip in ips]
+
+        fabric = fabric_claimed_ips(subnet, gateway, svi_switches or 2)
+        for addr, host_label, owner in find_dataplane_svi_collisions(host_ips, fabric):
+            result.error(
+                "VLANs & Profiles",
+                f"{label} VLAN {subnet}: {host_label} is allocated {addr}, "
+                f"which the fabric already claims as the {owner}. A server and "
+                f"a switch on the same address kill the segment — the gateway "
+                f"stops resolving and the whole data plane goes dark, while "
+                f"every reachability check still reports the link up. Widen the "
+                f"VLAN subnet or move the fabric addressing.")
+
+
+# Switch-to-switch fabric populations. These are the links the ERA guides size
+# in whole ports, and the only ones where a partially-cabled cage is a defect
+# rather than a design choice (an uplink profile is legitimately broken out and
+# partly cabled, leaving spare capacity).
+FABRIC_LINK_PROFILES = ('ISL', 'N/S Leaf Peer')
+
+
+def validate_fabric_optic_integrity(wb, result):
+    """Switch-to-switch links must be cabled in whole optics.
+
+    Model-FREE on purpose. `validate_isl_matches_arch_model` returns early when
+    `data-models/` is absent, so in the public distribution — where OEM
+    submissions are validated — nothing checks the fabric links at all. This
+    compares the workbook against itself and therefore runs everywhere.
+
+    It also answers a narrower question than the model check, which is why it
+    does not need a spec decision to be useful: whatever the RA figure turns out
+    to be, a cage holding half a transceiver is wrong.
+
+    Warning, not error, deliberately. `2-4-3-200` violates it today (its N/S
+    peer is 7 cables across 4 holes), and failing `make import` for a shipped
+    arch would block the release rather than inform it. Once that workbook is
+    corrected this can be promoted.
+    """
+    if 'Wire Map' not in wb.sheetnames or 'VLANs & Profiles' not in wb.sheetnames:
+        return
+
+    breakouts = {}
+    ws = wb['VLANs & Profiles']
+    hdr = None
+    for r in range(1, min(ws.max_row, 60) + 1):
+        if str(ws.cell(r, 1).value or '').strip() == 'Profile':
+            hdr = r
+            break
+    if hdr is None:
+        return
+    header = [str(ws.cell(hdr, c).value or '').strip() for c in range(1, ws.max_column + 1)]
+    try:
+        b_col = header.index('Breakout') + 1
+    except ValueError:
+        return
+    for r in range(hdr + 1, ws.max_row + 1):
+        name = ws.cell(r, 1).value
+        if not name:
+            break
+        raw = str(ws.cell(r, b_col).value or '').strip()
+        try:
+            breakouts[str(name).strip()] = int(float(raw)) if raw else 1
+        except ValueError:
+            breakouts[str(name).strip()] = 1
+
+    wm = wb['Wire Map']
+    wm_header = [str(c.value or '').strip() for c in wm[1]]
+    try:
+        cols = {n: wm_header.index(n) for n in
+                ('System Name (A)', 'Port (A)', 'System Name (B)',
+                 'Port (B)', 'Network Profile')}
+    except ValueError:
+        return
+
+    by_profile = {}
+    for row in wm.iter_rows(min_row=2, values_only=True):
+        if not row:
+            continue
+        profile = str(row[cols['Network Profile']] or '').strip()
+        if profile not in FABRIC_LINK_PROFILES:
+            continue
+        for name_col, port_col in (('System Name (A)', 'Port (A)'),
+                                   ('System Name (B)', 'Port (B)')):
+            switch = str(row[cols[name_col]] or '').strip()
+            port = str(row[cols[port_col]] or '').strip()
+            if switch and port:
+                by_profile.setdefault(profile, []).append((switch, port))
+
+    for profile, cables in sorted(by_profile.items()):
+        for switch, parent, got, want in find_partial_optics(
+                cables, breakouts.get(profile, 1)):
+            result.warn(
+                "Wire Map",
+                f"{switch} {parent} carries {got} of {want} cables on the "
+                f"'{profile}' link. A {want}x breakout cage holds one "
+                f"transceiver — {want - got} of its lanes are unwired, so the "
+                f"optic and the faceplate port are half spent. Cable the "
+                f"remaining sub-port(s) or move the link onto a full cage.")
+
+    for switch, parent, profiles in find_shared_fabric_optics(by_profile):
+        result.warn(
+            "Wire Map",
+            f"{switch} {parent} splits one transceiver across {' and '.join(profiles)}. "
+            f"Each of those populations is sized separately in the ERA guides, so "
+            f"a shared cage is counted against two budgets at once and neither "
+            f"can be checked against the faceplate. Give each population its own "
+            f"cage(s).")
+
+
+def find_partial_optics(cables, breakout):
+    """Holes carrying fewer than `breakout` cables.
+
+    `cables` is an iterable of ``(switch, port)`` where port is ``swpN`` or
+    ``swpNsX``. Returns ``[(switch, parent, got, want), ...]`` sorted.
+
+    A cage fitted with a breakout transceiver carries exactly `breakout`
+    cables; fewer means half a transceiver, which is not a thing you can buy.
+    Ports with no sub-port suffix are not broken out and are never partial.
+    """
+    if not breakout or breakout < 2:
+        return []
+    seen = {}
+    unbroken = set()
+    for switch, port in cables:
+        m = re.match(r'(swp\d+)(?:s(\d+))?$', str(port or '').strip())
+        if not m:
+            continue
+        key = (switch, m.group(1))
+        if m.group(2) is None:
+            unbroken.add(key)
+            continue
+        seen.setdefault(key, set()).add(m.group(2))
+    return sorted((sw, parent, len(subs), breakout)
+                  for (sw, parent), subs in seen.items()
+                  if (sw, parent) not in unbroken and len(subs) != breakout)
+
+
+def find_shared_fabric_optics(cables_by_profile):
+    """Holes whose cables are split across two fabric populations.
+
+    `cables_by_profile` maps profile name -> iterable of ``(switch, port)``.
+    Returns ``[(switch, parent, [profiles]), ...]`` sorted.
+
+    One transceiver serving two populations is counted against two different
+    RA budget lines, so neither line's arithmetic can be checked against the
+    faceplate. Observed on `2-4-3-200`, where `core-01 swp30` puts `s0` in the
+    N/S peer link and `s1` in the ISL.
+    """
+    owners = {}
+    for profile, cables in (cables_by_profile or {}).items():
+        for switch, port in cables:
+            m = re.match(r'(swp\d+)(?:s\d+)?$', str(port or '').strip())
+            if m:
+                owners.setdefault((switch, m.group(1)), set()).add(profile)
+    return sorted((sw, parent, sorted(profs))
+                  for (sw, parent), profs in owners.items() if len(profs) > 1)
+
+
+def validate_plane_symmetry(parsed_nodes, result):
+    """ERA-45: warn on asymmetric per-role switch counts across GPU planes.
+
+    Dual-plane fabrics normally have the same number of switches per role on
+    plane1 and plane2 (e.g. 8 gs-plane1 spines <-> 8 gs-plane2). An asymmetry
+    usually means a mislabeled or missing switch (an 8SU submission had a
+    gs-plane spine given a gl-plane Function). A warning, not an error — the
+    tool trusts the Function, and some designs may legitimately differ. Only
+    compares when both planes of a role family are present (single-plane
+    archs never warn).
+    """
+    counts = Counter()
+    for n in parsed_nodes:
+        if n.get('enabled') is False or n.get('is_air_documentary'):
+            continue
+        role = canonical_category(n.get('function'), n.get('name'))
+        if role and (role.endswith('-plane1') or role.endswith('-plane2')):
+            counts[role] += 1
+    for base in ('gl', 'gs', 'gsl'):
+        p1 = counts.get(f'{base}-plane1', 0)
+        p2 = counts.get(f'{base}-plane2', 0)
+        if p1 and p2 and p1 != p2:
+            result.warn(
+                "Nodes",
+                f"Plane asymmetry: {p1} {base}-plane1 switch(es) but {p2} "
+                f"{base}-plane2. Dual-plane fabrics are normally symmetric — "
+                f"check for a mislabeled Function or a missing switch.")
+
+
 def validate_single_tier_su(settings, parsed_nodes, result):
     """Flag deployments outside the generator-supported architecture model.
 
@@ -3880,7 +6035,7 @@ def validate_single_tier_su(settings, parsed_nodes, result):
     are documented but intentionally skipped until templates exist.
     """
     try:
-        from arch_scaling import max_single_tier_su, get_tier, node_name_to_su
+        from arch_scaling import get_tier, node_name_to_su
     except ImportError:
         return  # tooling not available in this environment
     if not settings:
@@ -3888,7 +6043,6 @@ def validate_single_tier_su(settings, parsed_nodes, result):
     arch = str(settings.get('architecture', '')).strip()
     if not arch:
         return
-    cap = max_single_tier_su(arch)
 
     supported_sus = None
     model_row = None
@@ -3981,16 +6135,33 @@ def validate_single_tier_su(settings, parsed_nodes, result):
             f"architecture's fan-out table.")
 
 
-def validate_air_oob_single_cable(ws, parsed_nodes, result):
+def validate_air_oob_single_cable(ws, parsed_nodes, result, settings=None):
     """Each active node should have exactly ONE Display=Yes OOB row.
 
     Air's plain-Ubuntu nodes can't bond two OOB links — they'd either
     drop one silently or loop the bridge. Reflect that by enforcing
-    1 Display=Yes OOB row per node. Real-HW LOM/iLO rows are kept as
-    Display=No (the new CRA strategy explicitly drops LOM HA).
+    1 Display=Yes OOB row per node.
+
+    AIR-ONLY, and gated on `deploy_in_air`. The column this reads,
+    `Display in Air`, feeds nothing but the Air topology — every consumer of
+    `display_in_air` lives in `utils.py` / `topology_generator.py`, none in the
+    switch configs or the Ansible inventory. On a physical deployment two OOB
+    NICs per node are ordinary cabling (a host management port plus a separate
+    BMC/LOM), so warning about them is noise aimed at a simulation the operator
+    is not building.
+
+    Absent `deploy_in_air` defaults to Yes, matching `excel_parser._…` at
+    excel_parser.py:5324, so a workbook predating the key keeps today's
+    behaviour and only an explicit `No` silences the check. (Note the sibling
+    read at line ~920 defaults the same key to False for the switch-mgmt-IP
+    rule; that asymmetry is pre-existing and left alone here.)
     """
     if not parsed_nodes:
         return
+    if settings is not None:
+        raw = str(settings.get('deploy_in_air', 'Yes')).strip().lower()
+        if raw not in ('yes', 'true', '1'):
+            return
     # Resolve Wire Map column indices via the header-alias map so we don't
     # silently mis-read if a future Excel reorders columns (every other
     # Wire Map validator in this file uses build_wiremap_column_map).
@@ -4034,9 +6205,12 @@ def validate_air_oob_single_cable(ws, parsed_nodes, result):
             result.warn(
                 "Wire Map",
                 f"Node '{node}' has {len(rows)} Display=Yes OOB rows "
-                f"(rows {rows}). Air's plain Ubuntu can't bond OOB "
-                f"links — set Display=No on all but the BMC row to "
-                f"avoid sim loop/bond weirdness.")
+                f"(rows {rows}). Air's plain Ubuntu can't bond OOB links, so "
+                f"leave ONE row Display=Yes — the host's OOB management port — "
+                f"and set Display=No on the rest, including any BMC/LOM/iLO "
+                f"row. This affects the Air topology only; the cabling itself "
+                f"is unchanged. Set deploy_in_air=No if you are not building "
+                f"a simulation.")
 
 
 def main():

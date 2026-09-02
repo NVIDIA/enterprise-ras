@@ -8,7 +8,8 @@
 #
 # Modes:
 #   Direct:     make deploy-servers              (servers reachable directly)
-#   Via server: make deploy-servers-via-jump    (SSH through oob-server-01)
+#   Via server: make deploy-servers-via-jump    (SSH through the OOB jump host:
+#               utility in L3 OOB, oob-server-01 in legacy L2)
 
 - name: Configure LDAP on OOB server
   hosts: jump

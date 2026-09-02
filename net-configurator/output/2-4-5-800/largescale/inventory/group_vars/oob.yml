@@ -3,34 +3,7 @@
 # SPDX-License-Identifier: MIT
 # OOB Switch Configuration (Generated from Excel + Source Inventory - 2-4-5-800)
 
-pre_login_message: '#####################################################################################
-
-  #  Welcome to NVIDIA Cumulus VX (TM)                                                #
-
-  #  NVIDIA Cumulus VX (TM) is a community supported virtual appliance designed       #
-
-  #  for experiencing, testing and prototyping NVIDIA Cumulus'' latest technology.
-  #
-
-  #  For any questions or technical support, visit our community site at:             #
-
-  #  https://www.nvidia.com/en-us/support                                             #
-
-  #####################################################################################
-
-  '
 timezone: Etc/Zulu
 oob_vlan: '200'
 oob_uplink_mode: l3
-cumulus_target_version: 5.15.1
-oob_vni: 245200
-oob_vrf: OOB
-vrf_oob_evpn_vlan: 3001
-vrf_oob_vni: 245001
-spine_uplink_ports:
-- swp49
-- swp51
-access_ports: swp1-48
-overlay_peers:
-- 172.16.1.2
-- 172.16.1.3
+cumulus_target_version: 5.18.0

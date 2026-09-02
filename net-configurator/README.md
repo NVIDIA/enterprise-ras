@@ -9,7 +9,7 @@ Ansible automation for ERA (Enterprise Reference Architecture) network switch co
 
 | Term | What it means |
 |---|---|
-| **ERA** | NVIDIA's Enterprise Reference Architecture — the set of network topologies this tool configures (2-4-3-200, 2-4-5-800, 2-8-5-200, 2-8-9-400, 2-8-9-800, 2-8-9-400-SP). |
+| **ERA** | NVIDIA's Enterprise Reference Architecture — the set of network topologies this tool configures (2-4-3-200, 2-4-5-400, 2-4-5-800, 2-8-5-200, 2-8-9-400, 2-8-9-800, 2-8-9-400-SP). |
 | **NVUE** | NVIDIA User Experience CLI — the config language for Cumulus Linux switches (`nv set ...`). This tool generates `.sh` scripts of NVUE commands. |
 | **Cumulus Linux** | The switch OS running on NVIDIA Spectrum hardware. NVUE is its management interface. |
 | **ZTP** | Zero Touch Provisioning — the switch boots, DHCP hands it a provisioning script, the script applies the NVUE config, done. No console access required. |
@@ -33,6 +33,7 @@ network, in Gbps**.
 |---|---|---|---|---|---|
 | `2-4-3-200` | 2 | 4 | 3 | 200 Gbps* | Converged (core) |
 | `2-8-5-200` | 2 | 8 | 5 | 200 Gbps* | Converged (core); dedicated CSL+GSL split at larger deployments |
+| `2-4-5-400` | 2 | 4 | 5 | 400 Gbps | Depopulated `2-8-5-200` — same fabric, half the GPUs, half the external uplink capacity |
 | `2-8-9-400` | 2 | 8 | 9 | 400 Gbps | Converged (core); dedicated-GPU CSL+GSL 2-tier at larger deployments |
 | `2-4-5-800` | 2 | 4 | 5 | 800 Gbps | **Multi-tier dedicated-GPU dual-plane** (GB300 NVL72 Mini-Cloud) |
 | `2-8-9-800` | 2 | 8 | 9 | 800 Gbps | **Dual-plane** (CSL + GSL) |
@@ -44,7 +45,7 @@ network, in Gbps**.
 
 - **Converged (`core-*` switches):** one switch tier handles CPU/in-band,
   storage, support, OOB, *and* GPU east-west traffic on the same fabric.
-  Used by 2-4-3-200 / 2-8-5-200 / 2-8-9-400.
+  Used by 2-4-3-200 / 2-4-5-400 / 2-8-5-200 / 2-8-9-400.
 - **Dual-plane (`csl-*` + `gsl-plane1-*` + `gsl-plane2-*`):** CSL leaves
   carry CPU/in-band, storage, support, and OOB. The GPU fabric is split
   across two independent planes — `gsl-plane1-*` and `gsl-plane2-*` — each
@@ -67,7 +68,7 @@ deployments (not in the 1-SU default); — = not applicable to that architecture
 It is a record of what has been tested here, not a statement of official product
 support — see the ERA reference architecture documents for that.
 
-| Feature | `2-4-3-200` | `2-8-5-200` | `2-8-9-400` | `2-4-5-800` | `2-8-9-800` | `2-8-9-400-SP` |
+| Feature | `2-4-3-200` | `2-8-5-200` / `2-4-5-400` | `2-8-9-400` | `2-4-5-800` | `2-8-9-800` | `2-8-9-400-SP` |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | L3 OOB underlay + EVPN | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Inter-VRF DHCP relay (OOB + EXIT) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -183,6 +184,7 @@ Copy the template for your architecture and fill it in:
 |---|---|---|
 | `2-4-3-200` | `input/sample-2-4-3-200.xlsx` | 2 CPU, 4 GPU, 3 NIC, 200G — converged |
 | `2-8-5-200` | `input/sample-2-8-5-200.xlsx` | 2 CPU, 8 GPU, 5 NIC, 200G — converged |
+| `2-4-5-400` | `input/sample-2-4-5-400.xlsx` | 2 CPU, 4 GPU, 5 NIC, 400G — depopulated `2-8-5-200`, identical fabric |
 | `2-8-9-400` | `input/sample-2-8-9-400.xlsx` | 2 CPU, 8 GPU, 9 NIC, 400G — converged |
 | `2-4-5-800` | `input/sample-2-4-5-800.xlsx` | 2 CPU, 4 GPU, 5 NIC, 800G — multi-tier dedicated-GPU dual-plane |
 | `2-8-9-800` | `input/sample-2-8-9-800.xlsx` | 2 CPU, 8 GPU, 9 NIC, 800G — dual-plane (CSL + GSL) |
@@ -218,6 +220,7 @@ make deploy EXCEL=~/my-deployment.xlsx
 |---|---|
 | `2-4-3-200` | `input/2-4-3-200/default/2-4-3-200.xlsx` |
 | `2-8-5-200` | `input/2-8-5-200/default/2-8-5-200.xlsx` |
+| `2-4-5-400` | `input/2-4-5-400/default/2-4-5-400.xlsx` |
 | `2-8-9-400` | `input/2-8-9-400/default/2-8-9-400.xlsx` |
 | `2-4-5-800` | `input/2-4-5-800/default/2-4-5-800.xlsx` |
 | `2-8-9-800` | `input/2-8-9-800/default/2-8-9-800.xlsx` |
@@ -246,7 +249,7 @@ Run the onboarding wizard:
 make air-setup
 ```
 
-The wizard prompts for your NGC API key, which Air instance to use (public NGC Air at `https://air-ngc.nvidia.com` vs. internal air-inside), optional username, SSH key path, and a **vault password** you choose. The vault password encrypts the credentials file at rest (`.era-secrets/air-secrets.yml`). If you choose to save it to `.era-secrets/vault-pass`, subsequent `make` commands use it automatically. If you skip saving it, you will be prompted for it each time. The `.era-secrets/` directory is gitignored. Every arch/site in this checkout reads from that single shared vault — no per-deployment credential setup needed.
+The wizard prompts for your NGC API key, which Air instance to use (public Air at `https://dsx-air.nvidia.com` vs. internal `https://inside.dsx-air.nvidia.com`), optional username, SSH key path, and a **vault password** you choose. The vault password encrypts the credentials file at rest (`.era-secrets/air-secrets.yml`). If you choose to save it to `.era-secrets/vault-pass`, subsequent `make` commands use it automatically. If you skip saving it, you will be prompted for it each time. The `.era-secrets/` directory is gitignored. Every arch/site in this checkout reads from that single shared vault — no per-deployment credential setup needed.
 
 For one-off overrides (e.g. CI), export `AIR_API_KEY` / `AIR_BASE_URL` as shell environment variables instead of running the wizard.
 
@@ -254,8 +257,8 @@ For one-off overrides (e.g. CI), export `AIR_API_KEY` / `AIR_BASE_URL` as shell 
 > `make air-setup` only records the *local* path to your SSH key; it does not
 > upload it. Air grants jump-host/node access based on keys registered in the
 > web UI, so before `make deploy` you must add your **public** key at
-> `https://air-ngc.nvidia.com` → **Settings → SSH Keys** (or the matching
-> air-inside URL). Verify (and auto-inject if missing) with:
+> `https://dsx-air.nvidia.com` → **Settings → SSH Keys** (or the matching
+> internal URL). Verify (and auto-inject if missing) with:
 >
 > ```bash
 > make air-ssh-check ARCH=<arch>            # report SSH access to jump hosts
@@ -349,9 +352,17 @@ You will be prompted to confirm before deployment begins.
 After `make deploy` finishes, the switches in the Air simulation will pick up their
 configurations automatically. The timeline:
 
-- **Switches**: 5–10 minutes per switch for ZTP to complete (boot → DHCP → download config → apply → reboot)
+- **Switches**: a core switch commonly needs **12–15 minutes**; an OOB switch is much
+  faster. ZTP is boot → DHCP → download config → apply → reboot, and a core carries
+  roughly 1900 config lines against an OOB switch's ~280, so the two are not
+  comparable. Measured in CI: both cores were **still converging at the 10-minute
+  mark** on healthy runs.
 - **Servers** (when using `make deploy`): 3–5 minutes for Node Instructions to run (boot → hostname + netplan + lldp)
-- **Full simulation**: Allow **15–20 minutes** for all nodes to be fully configured
+- **Full simulation**: allow **up to 30 minutes** before suspecting a hang. That is a
+  budget, not an expectation — a fast run finishes far sooner and costs nothing extra.
+
+> **Not applicable to `NOZTP=1`.** With config pre-injected as Node Instructions and
+> applied by a systemd unit on first boot, switches come up in roughly **90 seconds**.
 
 Each switch goes through this sequence:
 
@@ -367,7 +378,11 @@ To check ZTP progress, SSH into a switch through the Air console and run:
 cat /var/log/autoprovision    # ZTP log on the switch
 ```
 
-> **Tip:** If a switch shows no ZTP log after 10 minutes, try triggering ZTP manually:
+> **Do not re-trigger ZTP at 10 minutes.** A core switch is normally still applying
+> its config at that point, and `sudo ztp -r` restarts the run from the beginning.
+> Only re-trigger when `/var/log/autoprovision` is **absent or empty after ~30
+> minutes**, which indicates the switch never received the ZTP URL over DHCP —
+> a different failure from a slow apply:
 > `sudo ztp -r`
 
 ### Step 5 -- Validate
@@ -436,6 +451,25 @@ make validate-all                         # uses saved context
 
 If `SITE` is not specified, it defaults to `default`.
 
+**Case doesn't matter.** Variable names are accepted in any case —
+`site=`, `Site=` and `SITE=` all reach `SITE`, and the same applies to every
+operator-facing variable (`EXCEL`, `LDAP`, `NOZTP`, `SIM`, `FORCE`, …). Values
+are matched case-insensitively too: `arch=2-8-9-400-sp` resolves to
+`2-8-9-400-SP`, and `site=CUSTOMER-A` finds an existing `customer-a`. All four
+of these are equivalent:
+
+```bash
+make generate ARCH=2-8-9-400-SP SITE=customer-a
+make generate arch=2-8-9-400-SP site=customer-a
+make generate arch=2-8-9-400-sp site=CUSTOMER-A
+make generate ARCH=2-8-9-400-sp site=customer-a
+```
+
+If both spellings are given, the canonical uppercase form wins. A value that
+matches nothing is passed through as typed, so error messages quote what you
+actually wrote — and only *known* variables are aliased, so a typo like
+`sight=lab` stays a typo rather than silently becoming a real setting.
+
 ---
 
 ## Direct vs Via-Server Commands
@@ -449,7 +483,7 @@ Some commands have two variants -- **direct** and **via-server**:
 | `make restart-ldap-direct` | `make restart-ldap` | How LDAP is restarted |
 
 - **Direct**: Your machine SSHs directly to the switches/servers. Use this when you have direct network access (e.g., lab environment on the same network).
-- **Via-server**: Commands go through `oob-server-01` as an SSH jump host. Required for NVIDIA Air simulations, where your machine cannot reach switches directly.
+- **Via-server**: Commands go through the OOB jump host (`utility` in L3 OOB, `oob-server-01` in legacy L2) as an SSH jump host. Required for NVIDIA Air simulations, where your machine cannot reach switches directly.
 
 `make validate-all` uses the via-server path automatically, since it is designed for post-deployment validation in Air.
 
@@ -457,9 +491,9 @@ Some commands have two variants -- **direct** and **via-server**:
 
 ## After ZTP Completes
 
-Once `make deploy` or `make switch-ztp-deploy` finishes, the ZTP server is running and switches will auto-provision on their next boot. **Allow 15–20 minutes** for the full simulation to converge before running validation.
+Once `make deploy` or `make switch-ztp-deploy` finishes, the ZTP server is running and switches will auto-provision on their next boot. **Allow up to 30 minutes** for the full simulation to converge before running validation.
 
-1. **Wait for ZTP** — switches need 5–10 minutes each. Resist the urge to re-run commands; let the process complete.
+1. **Wait for ZTP** — cores commonly need 12–15 minutes, and were measured still converging at 10. Resist the urge to re-run commands; let the process complete.
 2. **Check progress** by SSHing to individual switches (via Air console) and inspecting the log:
    ```bash
    cat /var/log/autoprovision
@@ -506,7 +540,7 @@ make validate-all         # Runs all five phases below (via-server):
 make validate-excel EXCEL=/path/to/file.xlsx   # Validate Excel before import
 make validate-topology                          # Topology JSON matches wiremap
 make validate-ztp-direct                        # ZTP success (direct SSH)
-make validate-ztp                               # ZTP success (via oob-server-01)
+make validate-ztp                               # ZTP success (via the OOB jump host)
 make validate-config                            # Running config vs generated config
 make validate-servers                           # Server config (bonds, VLANs, connectivity)
 make validate-ping-matrix                       # Full server-to-server ping matrix (all VLANs)
@@ -547,8 +581,8 @@ make oob-setup                   # Configure OOB server (gateway/routing)
 make ztp-setup                   # Setup ZTP server (dnsmasq + nginx)
 make ztp-update                  # Regenerate configs and push to ZTP server
 make deploy-servers              # Deploy server configs (direct SSH)
-make deploy-servers-via-jump     # Deploy server configs (via oob-server-01, for Air)
-make push-switch-configs         # Push and apply generated NVUE configs to switches
+make deploy-servers-via-jump     # Deploy server configs (via the OOB jump host, for Air)
+make push-switch-configs         # Push NVUE configs (bootstraps factory/expired password if needed)
 make restart-ldap                # Restart LDAP on switches (via OOB)
 make restart-ldap-direct         # Restart LDAP on switches (direct SSH)
 ```
@@ -581,12 +615,83 @@ make validate-topology           # Validate topology against wiremap
 make list-archs              # Show available architectures
 make list-sites              # List existing sites
 make inventory               # Show Ansible inventory summary
+make ip-report               # Read-only report of every assigned IP (see below)
+make validation-bundle       # Package a deployment for endorsement (see below)
 make validate                # Validate Ansible playbook syntax
 make validate-excel          # Validate Excel file structure, IPs, ports
 make lint                    # Lint YAML and Python files
 make status                  # Project status overview
 make clean                   # Clean caches and temp files
 ```
+
+#### IP assignment report
+
+To see every IP the tool assigned — servers, switch loopbacks and SVIs, VRF
+loopbacks, management addresses — without opening the workbook:
+
+```bash
+make generate ARCH=2-8-5-200      # the report reads generated artifacts
+make ip-report ARCH=2-8-5-200     # optional: SITE=<name>
+```
+
+This writes `output/<arch>/<site>/reports/ip-assignments.xlsx` (one row per
+device / interface / IP, plus a per-node sheet) and prints a preview.
+
+The report is **read-only output**. It derives from the generated inventory and
+topology and never writes back into `input/` — your Excel workbook stays the
+single source of truth. To change an IP, edit the workbook and re-run
+`make generate`; re-running `make ip-report` alone will not alter anything.
+
+Column headers are copied from the Wire Map verbatim (`System Name (A)`,
+`Port (A)`, `System Name (B)`, `Port (B)`), so any row can be traced back to the
+sheet it came from.
+
+#### Validation bundle
+
+Package a completed deployment into a single `.zip` to send on for endorsement:
+
+```bash
+make validation-bundle ARCH=2-8-5-200          # or SITE=<name>
+```
+
+It writes the bundle next to the artifacts it packages:
+
+```
+output/<arch>/<site>/validation-bundle-<arch>-<site>-<timestamp>.zip
+```
+
+The run prints that path three ways — repo-relative, absolute, and as a
+`file://` URI most terminals turn into a clickable link. Use `--out` on the
+script directly to write it elsewhere:
+
+```bash
+python3 scripts/make_validation_bundle.py --arch 2-8-5-200 --out ~/acme-bundle.zip
+```
+
+The archive contains the rendered switch `configs/`, the generated `inventory/`, the
+`topology/`, any `reports/`, the source `.xlsx`, and a `MANIFEST.txt` listing a
+SHA-256 for every file so a reviewer can confirm nothing changed in transit.
+
+**The bundle is built to be safe to send.** `output/` contains a plaintext
+`group_vars/all/secrets.yml`, and an LDAP-enabled deployment renders its LDAP
+secret into the switch config scripts. So the bundle:
+
+1. never includes `secrets.yml`;
+2. redacts every value from it wherever else that value appears; and
+3. scans the staged files for anything credential-shaped and **fails the build**
+   rather than packaging a suspected leak.
+
+If step 3 trips, no archive is written and the offending `file:line` is printed.
+That usually means a template started emitting a new secret — fix the template
+(or extend the redaction rules in `scripts/make_validation_bundle.py`) rather
+than working around the check.
+
+> One caveat worth knowing: the redaction is value-based, so a password that is
+> also a common word would be blanked wherever that word appears. The bundler
+> warns when a single value matches many files — the fix is to change the
+> password, not to weaken the scrub.
+
+Bundles are gitignored; they are a per-run artifact, not reference output.
 
 ### Help
 
@@ -629,6 +734,7 @@ All passwords are stored in `output/<arch>/<site>/inventory/group_vars/all/secre
 
 ```yaml
 switch_ansible_password: "Cumu1usLinux!"   # SSH to switches
+switch_bootstrap_password: "cumulus"       # Factory / first-login password (optional; default cumulus)
 server_ansible_password: "nvidia"          # SSH to servers
 ansible_become_password: "nvidia"          # sudo (no --ask-become-pass needed)
 switch_password: "Cumu1usLinux!"           # Password set on switches during ZTP
@@ -682,7 +788,7 @@ See [docs/SECRETS_AND_VAULT.md](docs/SECRETS_AND_VAULT.md) for full details.
 - **[Ansible Sudo Setup](docs/ANSIBLE_SUDO_SETUP.md)** -- Configuring passwordless sudo for Ansible
 
 ### Development
-- **[Testing](docs/TESTING.md)** -- Unit tests and validation
+- **[Testing](tests/README.md)** -- Unit tests and validation
 - **[Scripts README](scripts/README.md)** -- Utility scripts reference
 - **[NVUE Version Compatibility](docs/NVUE_VERSION_COMPAT.md)** -- NVUE syntax changes across Cumulus versions
 
@@ -727,7 +833,7 @@ These changes are not needed for Air simulations or lab environments where node 
 
 **"architecture key not found in Settings tab"**
 - Open the Excel file and confirm the Settings sheet has an `architecture` field
-- The value must be one of: `2-4-3-200`, `2-4-5-800`, `2-8-5-200`, `2-8-9-400`, `2-8-9-800`, `2-8-9-400-SP`
+- The value must be one of: `2-4-3-200`, `2-4-5-400`, `2-4-5-800`, `2-8-5-200`, `2-8-9-400`, `2-8-9-800`, `2-8-9-400-SP`
 
 **"SameFileError" during import**
 This happens when your Excel file already lives at the exact destination
@@ -842,6 +948,14 @@ make air-show              # Show current Air connection settings
 - Ensure your SSH key path (set via `make air-setup`) matches the key registered in NGC
 - If using a passphrase-protected key, load it into the agent: `eval $(ssh-agent) && ssh-add ~/.ssh/id_ed25519`
 - If using an NGC Service API key (not personal), run `make air-ssh-check FIX=1` to inject your key
+- `air-ssh-check` names the failing host and prints the real `ssh` exit code
+  and stderr. It only points at `secrets.yml` when the password was genuinely
+  rejected — if password auth succeeded, the credential is not the problem
+
+**Validation returning NODATA, or can't reach switches from the jump host?**
+The jump host needs its own `sshpass` for the second hop (jump host → switch),
+and Air's image doesn't ship one. `make air-ssh-check FIX=1` checks for it and
+installs it.
 
 **Automated Air deploy failing mid-pipeline?** Fall back to the manual
 procedure: [`docs/MANUAL_FALLBACK_GUIDE.md`](docs/MANUAL_FALLBACK_GUIDE.md).

@@ -5,8 +5,24 @@
 
 ## Reporting a Vulnerability
 
-Open a GitHub issue and include **SECURITY** in the title. Describe the
-affected file(s), a minimal reproduction, and the impact you've observed.
+**Do not open a public GitHub issue for a security report.** The scope below
+includes flaws in generated switch configurations and in credential handling;
+a public report discloses those against live network fabric before a fix
+exists. Please use one of the coordinated-disclosure channels instead:
+
+1. **NVIDIA PSIRT** — email **psirt@nvidia.com**, or use the reporting form at
+   <https://www.nvidia.com/en-us/security/>. This is the preferred route and
+   the one to use if you are unsure.
+2. **GitHub private vulnerability reporting** — the *Security* tab →
+   *Report a vulnerability*, which opens a private advisory visible only to
+   the maintainers.
+
+In your report, please include the affected file(s), a minimal reproduction,
+the impact you've observed, and the release or commit you tested against.
+We will acknowledge your report and coordinate disclosure timing with you.
+
+Non-security bugs, questions, and feature requests are welcome as ordinary
+public GitHub issues.
 
 ## Scope
 
@@ -190,7 +206,7 @@ exposed, rotate your NGC API key immediately and re-run
 
 Before `make deploy` or `make switch-ztp-deploy` against real hardware:
 
-- [ ] Opened `output/<arch>/<site>/inventory/group_vars/all/secrets.yml` and replaced **every** placeholder password (`switch_ansible_password`, `server_ansible_password`, `ansible_become_password`, `switch_password`, `ldap_admin_password`, `ldap_user_default_password`, `status_page_password`).
+- [ ] Opened `output/<arch>/<site>/inventory/group_vars/all/secrets.yml` and replaced **every** placeholder password (`switch_ansible_password`, `switch_bootstrap_password` if you are not using factory `cumulus`, `server_ansible_password`, `ansible_become_password`, `switch_password`, `ldap_admin_password`, `ldap_user_default_password`, `status_page_password`).
 - [ ] Ran `ansible-vault encrypt output/<arch>/<site>/inventory/group_vars/all/secrets.yml` (or kept the file outside version control).
 - [ ] Verified none of the placeholders (`Cumu1usLinux!`, `nvidia`, `CHANGE_ME`, `Ldap@123`) appear in the encrypted file:
       `ansible-vault view output/<arch>/<site>/inventory/group_vars/all/secrets.yml | grep -E "Cumu1usLinux!|nvidia|CHANGE_ME|Ldap@123"` should return nothing.

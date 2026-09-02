@@ -33,14 +33,16 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Set, Tuple
 
 import openpyxl
 import yaml
 
-from utils import generate_mac, classify_node, is_switch, is_valid_hostname
+from utils import (generate_mac, classify_node, is_switch, is_valid_hostname,
+                   parse_swp_port)
 from excel_parser import (build_wiremap_column_map, _wm_cell_ws,
-                          parse_nodes, build_nodes_function_map)
+                          parse_nodes, build_nodes_function_map,
+                          parse_vlans, resolve_oob_vlans)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -62,21 +64,74 @@ SWITCH_MODELS = {
 # from servers / infra / unknown nodes.
 SWITCH_ROLES = frozenset(SWITCH_MODELS.keys())
 
-# Fallback OS images used when no version mapping is available in the workbook
+# Last-resort OS image. Only reachable for a switch whose role never appeared in
+# the workbook's VERSIONS table at all; a role that IS pinned but whose version
+# has no image-map row now raises UnresolvedSwitchVersionError instead of
+# silently landing here. See that class for why.
 SWITCH_OS_FALLBACK = "cumulus-linux-vx-amd64-5.16.0.qcow2"
 SERVER_OS = "generic/ubuntu2204"
+
+
+# SN5600-class platform port limit for the cust-net-edge sim switches. NVUE
+# will happily accept and apply config on swp65+, so nothing errors -- the
+# ports simply are not in the datapath. The margin absorbs late allocations
+# (a trunk for an edge added after sizing, an extra ext-storage node).
+EDGE_PORT_LIMIT = 64
+EDGE_PORT_MARGIN = 6
+MAX_EDGES = 32
+
+
+class UnresolvedSwitchVersionError(RuntimeError):
+    """A pinned Cumulus version has no row in the workbook's image map.
+
+    Raised instead of quietly substituting SWITCH_OS_FALLBACK. During the
+    5.18.0 upgrade the workbook pinned `core -> 5.18.0` with no matching image
+    map row, and the generator emitted cumulus-linux-vx-amd64-5.16.0.qcow2 —
+    not 5.18.0, and not even the previous 5.16.1 — with no warning. The sim
+    would have come up on 5.16.0 and been signed off as "5.18.0 validated".
+
+    A wrong-but-plausible image is worse than a hard stop: it invalidates the
+    test silently. Fail loudly and make the operator add the image-map row.
+    """
+
 
 # Node resource defaults by role.
 #
 # Storage is uniformly 20 GB across all roles: public NGC Air requires
 # a 20 GB minimum per node and we keep one value so Air-Inside runs use
 # the same topology without per-env conditionals.
+#
+# AIR LIMITATION — these are not tuning knobs, they are a hard floor.
+# Every Air image publishes `minimum_resources` (GET /api/v3/images/), and Air
+# ENFORCES it on all three axes (cpu, memory, storage) at exactly the declared
+# value. A node below the floor on ANY single axis does not fail on its own —
+# the ENTIRE simulation is rejected into state INVALID with ZERO nodes.
+#
+# The rejection is asynchronous and silent: POST /simulations/import/ still
+# returns HTTP 200 with a simulation id, and nothing on the simulation object
+# says why. Air rejects, it never clamps.
+#
+# So any role's values here must be >= the declared minimum of the image that
+# role actually runs. Measured 2026-08-11 (2-4-3-200, import-only):
+#   cumulus-vx-5.18.0 declares {cpu 2, memory 4096, storage 20}
+#   REJECTED: 1/2048, 2/2048, 1/4096, 2/2560, 2/3072, 2/4096/10GB, 2/4096/15GB
+#   ACCEPTED: 2/4096/20GB, and anything above it
+# oob/air-oob were 1 cpu / 2048 MB, which exactly matched cumulus-vx-5.15.1's
+# {1, 2048, 10} — 5.18.0 is the first pin that put a role BELOW its image floor.
+# Full evidence + reproduction:
+#   internal-docs/validation-evidence/2026-08-11-cumulus-518-air-minimum-resources.md
+#
+# NOTE: the declared values are arbitrary per-upload metadata and do NOT track
+# any measured requirement (cumulus-vx-5.16.0 was uploaded later than 5.16.1 and
+# declares a LOWER minimum). That makes them no less binding — but it also means
+# these numbers say nothing about what the OS needs on physical hardware.
 NODE_DEFAULTS = {
     "core":    {"cpu": 4, "memory": 4096, "storage": 20},
     "csl":     {"cpu": 4, "memory": 4096, "storage": 20},
     "gsl":     {"cpu": 4, "memory": 4096, "storage": 20},
-    "oob":     {"cpu": 1, "memory": 2048, "storage": 20},
-    "air-oob": {"cpu": 1, "memory": 2048, "storage": 20},
+    # 2/4096 is the cumulus-vx-5.18.0 floor — do NOT lower (see above).
+    "oob":     {"cpu": 2, "memory": 4096, "storage": 20},
+    "air-oob": {"cpu": 2, "memory": 4096, "storage": 20},
     "edge":    {"cpu": 4, "memory": 4096, "storage": 20},  # cust-net-edge: SN5600-class L2 bridge + eBGP underlay; 2GB/1CPU left it unable to boot the bridge config
     "compute": {"cpu": 1, "memory": 1024, "storage": 20},
     "storage": {"cpu": 1, "memory": 1024, "storage": 20},
@@ -139,27 +194,6 @@ class WiremapRow:
 
 # classify_node(), is_switch(), generate_mac(), is_valid_hostname()
 # imported from utils.py — shared with excel_parser.py
-
-
-def parse_swp_port(port_str: str) -> Optional[Tuple[int, Optional[int]]]:
-    """Parse a switch port string into (base_num, sub_port_or_None).
-
-    Examples:
-        'swp49'   -> (49, None)
-        'swp49s3' -> (49, 3)
-        '50'      -> (50, None)   (bare number for disabled ports)
-    Returns None if the string doesn't match.
-    """
-    m = re.match(r"swp(\d+)s(\d+)$", port_str)
-    if m:
-        return int(m.group(1)), int(m.group(2))
-    m = re.match(r"swp(\d+)$", port_str)
-    if m:
-        return int(m.group(1)), None
-    m = re.match(r"(\d+)$", port_str)
-    if m:
-        return int(m.group(1)), None
-    return None
 
 
 def _cell_str(ws, row: int, col: int) -> str:
@@ -426,10 +460,7 @@ class TopologyGenerator:
             # Build version → OS image mapping from Air_Only and per-function versions
             image_map = parse_version_image_map(wb)
             switch_versions = parse_switch_versions(wb)
-            self._switch_os: Dict[str, str] = {}
-            for func, version in switch_versions.items():
-                image = image_map.get(version, SWITCH_OS_FALLBACK)
-                self._switch_os[func] = image
+            self._switch_os = self._build_switch_os(image_map, switch_versions)
         else:
             self._switch_os = {}
 
@@ -502,6 +533,32 @@ class TopologyGenerator:
                 self._oob_eth0[r.system_name] = (r.switch_name, r.switch_port)
                 self._explicit_eth[r.system_name].add(0)  # reserve eth0
 
+        # Same reservation for ext-storage-*, which reaches the management
+        # network by a different route and so never matches the loop above.
+        #
+        # It has no oob-switch row in the Wire Map — its eth0 is synthesised
+        # later against cust-net-edge (the Air-mgmt bridge) so it can hold a
+        # 172.20.0.x address and reach NAT/DNS. Because that link is created
+        # after data-link allocation and was never registered here, _next_eth()
+        # started at 0 and handed eth0 to the FIRST STORAGE UPLINK. The mgmt
+        # link then claimed eth0 as well, and Air rejected the whole topology:
+        #
+        #   Interface eth0 is already defined for node ext-storage-01
+        #
+        # That failed the import in ~479ms and left an empty INVALID simulation,
+        # which is not visible in the Air UI — so `make air-deploy` was broken
+        # on every architecture with no obvious cause.
+        #
+        # eth0 is the management interface on every node, always. Reserving it
+        # here means the Wire Map's `swp1`/`swp2` for ext-storage land on
+        # eth1/eth2, matching both the compute-node convention (18 data links,
+        # none on eth0) and this file's own long-standing comment that
+        # ext-storage is "wired to CSL swp63 ports via Wire Map (eth1, eth2)".
+        for name in {r.system_name for r in self.rows
+                     if r.display_in_air and not is_switch(r.system_role)
+                     and (r.system_name or "").startswith("ext-storage-")}:
+            self._explicit_eth[name].add(0)
+
     # ---- public -----------------------------------------------------------
 
     def generate(self) -> dict:
@@ -521,6 +578,7 @@ class TopologyGenerator:
             nodes, links = self._strip_to_switches(nodes, links)
         # Re-run layout now that all infra/injected nodes exist.
         self._apply_layout(nodes)
+        self._assert_no_duplicate_interfaces(links)
 
         return {
             "format": "JSON",
@@ -651,6 +709,69 @@ class TopologyGenerator:
         # Layout is applied later (in generate()) once air-oob-switch
         # has been injected — see comment there.
         return nodes
+
+    @staticmethod
+    def _build_switch_os(image_map: dict, switch_versions: dict) -> Dict[str, str]:
+        """Resolve the VERSIONS table into a role → Air image mapping.
+
+        The workbook's VERSIONS table is keyed by the arch models' function
+        vocabulary (`oob-switch`, `gsl-plane1`, `cs`, …). `_resolve_os()` looks
+        roles up by the classify_node() vocabulary (`oob`, `gsl`, `csl`, …).
+        Those two only coincide for `core`, so keying this dict by the raw
+        function name meant every other role missed the lookup — a 7-model
+        version bump moved exactly one row. Index under BOTH spellings so
+        either vocabulary resolves.
+
+        Raises UnresolvedSwitchVersionError rather than substituting
+        SWITCH_OS_FALLBACK: a wrong-but-plausible image silently invalidates
+        whatever was validated on it.
+        """
+        by_key: Dict[str, str] = {}
+        conflicts: Dict[str, set] = {}
+
+        for func, version in switch_versions.items():
+            role = classify_node(func)
+            # Index under the model spelling AND the classified role.
+            for key in {str(func).strip().lower(), role}:
+                if not key:
+                    continue
+                if key in by_key and by_key[key] != version:
+                    conflicts.setdefault(key, {by_key[key]}).add(version)
+                by_key[key] = version
+
+        if conflicts:
+            detail = "; ".join(
+                f"{k} <- {sorted(v)}" for k, v in sorted(conflicts.items())
+            )
+            raise UnresolvedSwitchVersionError(
+                "Conflicting Cumulus versions collapse onto the same switch "
+                f"role: {detail}. Model functions that map to one role (e.g. "
+                "`csl` and `cs`, or `gsl-plane1` and `gs-plane1`) must pin the "
+                "same version."
+            )
+
+        resolved: Dict[str, str] = {}
+        unresolved: Dict[str, str] = {}
+        for key, version in by_key.items():
+            image = image_map.get(version)
+            if image:
+                resolved[key] = image
+            else:
+                unresolved[key] = version
+
+        if unresolved:
+            wanted = sorted(set(unresolved.values()))
+            known = sorted(image_map) or ["<empty>"]
+            raise UnresolvedSwitchVersionError(
+                f"No Air image mapping for Cumulus version(s) {wanted} "
+                f"pinned by switch function(s) {sorted(unresolved)}. "
+                f"The workbook's Air_Only image map knows: {known}. "
+                "Add the missing 'Friendly Version' → 'Air Image' row "
+                "(data-models/generate_arch_excel.py, append_air_only) and "
+                "regenerate the workbook. Refusing to substitute a different "
+                "image, which would silently validate the wrong version."
+            )
+        return resolved
 
     def _resolve_os(self, name: str) -> str:
         """Return the Air OS image string for a node.
@@ -1254,23 +1375,27 @@ class TopologyGenerator:
 
         return links, switch_connected
 
-    def _parse_mgmt_subnets(self) -> List[str]:
-        """Read mgmt_subnets from the Settings sheet.
+    def _oob_subnets(self) -> List[str]:
+        """Derive OOB subnets from the OOB VLAN rows + the Nodes `OOB VLAN`
+        mapping — replaces the old Settings-tab CSV field.
+
+        Uses the same `resolve_oob_vlans()` resolver as scripts/excel_parser.py
+        so topology and inventory generation always agree on which VLANs/
+        subnets constitute the OOB plane.
 
         Returns list of subnet strings, e.g., ['192.168.200.0/24', '192.168.210.0/24'].
         """
         wb = openpyxl.load_workbook(self.excel_path, data_only=True)
-        ws = wb["Settings"] if "Settings" in wb.sheetnames else None
-        result = []
-        if ws:
-            for row in range(1, ws.max_row + 1):
-                key = ws.cell(row=row, column=1).value
-                val = ws.cell(row=row, column=2).value
-                if key and str(key).lower().replace(' ', '_').replace('-', '_') == 'mgmt_subnets' and val:
-                    result = [s.strip() for s in str(val).split(',') if s.strip()]
-                    break
+        vlans = parse_vlans(wb["VLANs & Profiles"]) if "VLANs & Profiles" in wb.sheetnames else []
+        # NOTE: passes UNFILTERED parse_nodes() (all OOB-category nodes on the
+        # sheet, regardless of Active/Inactive status), unlike the deploy
+        # path's get_oob_nodes_for_inventory() which filters to Active only.
+        # There is no more Settings-driven trim/pad (management_switches is
+        # retired) — the only remaining divergence is the status filter,
+        # which can at most resolve a harmless superset of subnets here.
+        oob_nodes = parse_nodes(wb["Nodes"]) if "Nodes" in wb.sheetnames else []
         wb.close()
-        return result
+        return resolve_oob_vlans(vlans, oob_nodes)['subnets']
 
     # ---- air-oob-switch injection -------------------------------------------
 
@@ -1284,13 +1409,13 @@ class TopologyGenerator:
 
         air-oob-switch provides:
           - air-mgmt (untagged): switch eth0s for ZTP
-          - Per mgmt_subnet VLAN: uplink from each OOB switch, plus interfaces
+          - Per OOB subnet VLAN: uplink from each OOB switch, plus interfaces
             for oob-server-01 (gateway .1) and dhcp-oob (DHCP server)
 
         oob-server-01 and dhcp-oob each get:
           - eth0 → outbound (internet/SSH)
           - eth1 → air-oob-switch (air-mgmt, untagged)
-          - eth2+ → air-oob-switch (one per mgmt_subnet VLAN)
+          - eth2+ → air-oob-switch (one per OOB subnet VLAN)
         """
         AIR_OOB = "air-oob-switch"
         next_swp = 1
@@ -1303,9 +1428,9 @@ class TopologyGenerator:
             air_connected.add(port)
             return port
 
-        # Parse mgmt_subnets from Settings tab
-        mgmt_subnets = self._parse_mgmt_subnets()
-        n_subnets = len(mgmt_subnets)
+        # Derive OOB subnets from the OOB VLANs
+        oob_subnets = self._oob_subnets()
+        n_subnets = len(oob_subnets)
 
         # Collect OOB switch names present in the topology
         oob_switch_names = sorted(
@@ -1392,7 +1517,7 @@ class TopologyGenerator:
 
         # --- Pass 4: Create dhcp-oob and oob-server-01 ---
         # Each gets: eth0 → outbound, eth1 → air-oob-switch (air-mgmt),
-        #            eth2+ → air-oob-switch (one per mgmt_subnet)
+        #            eth2+ → air-oob-switch (one per OOB subnet)
         for infra_name in ["dhcp-oob", "oob-server-01"]:
             if infra_name not in nodes:
                 defaults = NODE_DEFAULTS.get("infra", NODE_DEFAULTS["unknown"])
@@ -1428,7 +1553,7 @@ class TopologyGenerator:
             # eth1 → air-oob-switch (air-mgmt, untagged)
             swp = _alloc_swp()
             new_links.append(self._make_link(infra_name, "eth1", AIR_OOB, swp))
-            # eth2+ → air-oob-switch (one per mgmt_subnet)
+            # eth2+ → air-oob-switch (one per OOB subnet)
             for i in range(n_subnets):
                 eth_name = f"eth{2 + i}"
                 swp = _alloc_swp()
@@ -1455,11 +1580,11 @@ class TopologyGenerator:
 
         print(f"    air-oob-switch: {len(air_connected)} ports connected "
               f"(swp1-swp{next_swp - 1}), "
-              f"{n_subnets} mgmt subnet{'s' if n_subnets != 1 else ''}")
+              f"{n_subnets} OOB subnet{'s' if n_subnets != 1 else ''}")
 
         # Store metadata for Node Instructions (used by air-deploy.py)
         self._air_oob_metadata = {
-            'mgmt_subnets': mgmt_subnets,
+            'oob_subnets': oob_subnets,
             'oob_switch_names': oob_switch_names,
             'connected_ports': sorted(air_connected, key=lambda p: int(p.replace("swp", ""))),
         }
@@ -1494,8 +1619,8 @@ class TopologyGenerator:
                     break
 
         if OOB not in nodes:
-            print(f"    [WARN] L3 OOB mode requested but OOB switch anchor "
-                  f"missing (need at least one oob-switch); skipping L3 injection.")
+            print("    [WARN] L3 OOB mode requested but OOB switch anchor "
+                  "missing (need at least one oob-switch); skipping L3 injection.")
             return nodes, links, switch_connected
         sw_defaults = NODE_DEFAULTS.get("edge", NODE_DEFAULTS["core"])
         edge_os = nodes.get(OOB, {}).get("os", SWITCH_OS_FALLBACK)
@@ -1515,7 +1640,7 @@ class TopologyGenerator:
                 "network_pci": {},
             }
 
-        # --- Multi-edge mgmt bridge (ADR-0002) -------------------------------
+        # --- Multi-edge mgmt bridge -------------------------------
         # A single cust-net-edge bridging every switch eth0 overflows the 64-port
         # switch limit past ~60 switches (maxscale 2-4-5-800=93, 2-8-9-800=112).
         # Spread switch eth0s across N edges and span the air-mgmt L2 as a
@@ -1529,17 +1654,26 @@ class TopologyGenerator:
 
         _cluster_switches = sorted(n for n in nodes if _is_cluster_sw(n))
 
-        # Start with the two EXIT/HA edges (-01 hub, -02); the final edge count
-        # is sized below from the REAL load (EXIT uplinks land on -01/-02 in
-        # Pass 1b, so we must size after that — see _ensure_edges()).
-        edge_names = ["cust-net-edge-01", "cust-net-edge-02"]
+        # The final edge count is sized below from the REAL load (EXIT uplinks
+        # land in Pass 1b, so we must size after that — see _ensure_edges()).
+        # Seed from every cust-net-edge the Nodes tab declares, not a
+        # hardcoded pair: generate_arch_excel spreads the fabric EXIT uplinks
+        # across CUST_EDGE_HA edges, and an edge missing from this list is
+        # invisible to BOTH the sizing pass below and _least_loaded_edge, so
+        # its Wire Map uplinks do not count toward the 64-port budget while
+        # management eth0s are still stacked on top of them.
+        # Names are zero-padded (cust-net-edge-01..NN) so a plain sort is
+        # already ordinal; -01 must stay first because it is the star hub.
+        edge_names = sorted(
+            {n for n in nodes if str(n).startswith("cust-net-edge-")}
+            | {"cust-net-edge-01", "cust-net-edge-02"}
+        )
         for _en in edge_names:
             if _en not in nodes:
                 nodes[_en] = _make_edge_node()
         # Per-edge used-port sets, shared with switch_connected so Pass 1b's
         # EXIT-uplink allocations are reflected when we balance eth0s.
         edge_used_map = {en: switch_connected.setdefault(en, set()) for en in edge_names}
-        edge_used = edge_used_map[EDGE]  # hub set, used by the legs below
 
         def _alloc_port_on(en: str) -> str:
             used = edge_used_map[en]
@@ -1551,28 +1685,103 @@ class TopologyGenerator:
             return port
 
         def _least_loaded_edge() -> str:
-            return min(edge_names, key=lambda e: len(edge_used_map[e]))
+            # The hub is charged its infra reserve so eth0s prefer the spokes;
+            # without this the hub wins ties, then the star lands on top of it.
+            return min(
+                edge_names,
+                key=lambda e: (
+                    len(edge_used_map[e])
+                    + (_hub_infra_reserve(len(edge_names)) if e == EDGE else 0)
+                ),
+            )
 
         def _alloc_edge_port() -> str:
             # Hub (cust-net-edge-01) allocator for infra legs that must land
             # on the management hub or edge-01 EXIT egress.
             return _alloc_port_on(EDGE)
 
+        # Ports cust-net-edge-01 alone must still have free AFTER the eth0
+        # balancing below: one trunk per spoke, the external-conn leg, both
+        # external-dhcp legs, utility, one per ext-storage node, and its own
+        # eth0 management stub. All of these are allocated later, so if they
+        # are not reserved here the hub silently finishes as the most loaded
+        # edge -- which is how it ended up on swp65+ (see ADR-0002).
+        _HUB_FIXED_INFRA = 4  # external-conn(1) + external-dhcp(2) + utility(1)
+
+        def _hub_infra_reserve(n_edges: int) -> int:
+            n_ext_storage = sum(1 for n in nodes if str(n).startswith("ext-storage-"))
+            return (n_edges - 1) + _HUB_FIXED_INFRA + n_ext_storage + 1
+
+        def _project_loads(n_edges: int, pending_eth0: int) -> list:
+            """Per-edge port count after eth0 placement, for `n_edges` edges.
+
+            Mirrors _least_loaded_edge exactly -- including charging the hub
+            its infra reserve while choosing -- so the projection the sizing
+            loop trusts is the placement that actually happens. Modelling
+            plain least-loaded here instead would under-count the spokes,
+            since biasing eth0s off the hub is what pushes them onto spokes.
+            """
+            reserve = _hub_infra_reserve(n_edges)
+            loads = [len(edge_used_map[e]) for e in edge_names[:n_edges]]
+            loads += [0] * (n_edges - len(loads))
+            # Each spoke costs 2 beyond its eth0 share: the trunk to the hub,
+            # and -- if it carries EXIT uplinks -- its own external-conn egress
+            # leg. Charged to every spoke rather than only the EXIT ones so the
+            # projection stays an upper bound; over-counting a mgmt-only spoke
+            # by one port is far cheaper than under-counting an EXIT one, which
+            # is what silently pushes ports past the platform limit.
+            # The hub's trunk ports are already in `reserve`.
+            for i in range(1, n_edges):
+                loads[i] += 2
+            for _ in range(pending_eth0):
+                biased = [n + (reserve if i == 0 else 0) for i, n in enumerate(loads)]
+                loads[biased.index(min(biased))] += 1
+            loads[0] += reserve
+            return loads
+
         def _ensure_edges_for_load(pending_eth0: int) -> None:
-            # Size the edge count from the actual load so no edge exceeds the
-            # 64-port limit: total = EXIT uplinks already placed + eth0s to home
-            # + infra headroom; keep each edge near SAFE_CAP, balanced by
-            # _least_loaded.
-            SAFE_CAP = 50
-            placed = sum(len(edge_used_map[e]) for e in edge_names)
-            total = placed + pending_eth0 + 3
-            need = max(2, -(-total // SAFE_CAP))
-            for i in range(len(edge_names) + 1, need + 1):
+            # Grow the edge count until the projected worst-case edge fits
+            # under the platform port limit with margin. NVUE accepts config
+            # on ports past the limit and `nv config apply` SUCCEEDS, so an
+            # over-subscribed edge fails silently at the datapath -- the
+            # air-mgmt bridge comes up with no working members and every
+            # switch goes unreachable. Sizing from the REAL per-edge load
+            # (Wire Map EXIT uplinks included) is what keeps that honest.
+            n = max(2, len(edge_names))
+            while n < MAX_EDGES and max(
+                _project_loads(n, pending_eth0)
+            ) > EDGE_PORT_LIMIT - EDGE_PORT_MARGIN:
+                n += 1
+            # Adding spokes only relieves eth0 pressure -- it cannot move a
+            # Wire Map EXIT uplink off the edge it is cabled to. If an edge is
+            # STILL over budget here, the workbook itself handed one edge more
+            # uplinks than the platform has ports, and no amount of spokes will
+            # fix it. Fail loudly: the alternative is a topology that deploys
+            # cleanly, applies cleanly, and silently does not forward.
+            projected = _project_loads(n, pending_eth0)
+            if max(projected) > EDGE_PORT_LIMIT:
+                worst = max(range(len(projected)), key=lambda i: projected[i])
+                raise ValueError(
+                    f"cust-net-edge-{worst + 1:02d} needs {projected[worst]} "
+                    f"ports but the platform has {EDGE_PORT_LIMIT}. The Wire "
+                    f"Map has concentrated too many EXIT uplinks on one edge "
+                    f"-- spread them across more cust-net-edge switches "
+                    f"(see cust_edge_count() in generate_arch_excel.py). "
+                    f"Ports past swp{EDGE_PORT_LIMIT} accept config and apply "
+                    f"successfully but are not in the datapath."
+                )
+            for i in range(len(edge_names) + 1, n + 1):
                 en = f"cust-net-edge-{i:02d}"
                 if en not in nodes:
                     nodes[en] = _make_edge_node()
                 edge_names.append(en)
                 edge_used_map[en] = switch_connected.setdefault(en, set())
+                # Declared edges get their unconnected eth0 management stub
+                # from _build_unconnected_stubs (they are Wire Map switches).
+                # Edges spun up here are not in the Wire Map, so emit the same
+                # stub explicitly rather than leaving them structurally
+                # different from cust-net-edge-01..CUST_EDGE_HA.
+                new_links.append(self._make_unconnected(en, "eth0"))
 
         oob_used = switch_connected.setdefault(OOB, set())
 
@@ -1642,6 +1851,17 @@ class TopologyGenerator:
             if isinstance(link[0], dict) and isinstance(link[1], dict):
                 used_endpoints.add((link[0]["node"], link[0]["interface"]))
                 used_endpoints.add((link[1]["node"], link[1]["interface"]))
+        # Edges that carry real fabric EXIT uplinks; drives which ones get an
+        # external-conn egress leg in Pass 3. Read from the Wire Map rather
+        # than from the links Pass 1b creates: once an edge is DECLARED in the
+        # Nodes tab, Pass 1 already wired it and Pass 1b skips the row as a
+        # duplicate endpoint, so counting Pass 1b's work would see nothing.
+        _edges_with_exit_uplinks = {
+            str(name)
+            for r in self.rows if r.display_in_air and r.enabled
+            for name in (r.system_name, r.switch_name)
+            if name and str(name).startswith("cust-net-edge")
+        }
         for r in self.rows:
             if not r.display_in_air:
                 continue
@@ -1692,7 +1912,7 @@ class TopologyGenerator:
             new_links.append(self._make_link(sw_name, "eth0", en, port))
             switch_connected.setdefault(sw_name, set()).add("eth0")
 
-        # Star trunks (ADR-0002): each spoke edge gets one trunk to the hub
+        # Star trunks: each spoke edge gets one trunk to the hub
         # (cust-net-edge-01) so the air-mgmt L2 bridge spans all edges. Loop-free
         # star → RSTP not relied upon. air-deploy detects these edge↔edge links
         # and puts both ends in br_default.
@@ -1727,7 +1947,16 @@ class TopologyGenerator:
         # The first two edges advertise default-route-origination, cores ECMP
         # between them, and each edge has a static 0/0 toward external-conn on
         # its own egress subnet (172.20.1.0/24 via -01, 172.20.2.0/24 via -02).
-        EDGE2 = "cust-net-edge-02"
+        # Every edge that carries EXIT uplinks needs its own routed egress leg
+        # or its customer traffic black-holes, so this is derived rather than
+        # hardcoded to -02. ADR-0002 left edges 03+ as mgmt-bridge spokes
+        # "until the topology generator deliberately adds more EXIT uplinks
+        # plus matching external-conn interfaces/subnets" — which this and the
+        # companion air-deploy.py change now do, numbered on the existing
+        # pattern (edge-0N <-> external-conn:ethN on 172.20.N.0/24). Spokes
+        # that _ensure_edges_for_load spun up purely to absorb management eth0s
+        # carry no customer traffic and are deliberately left without a leg.
+        EXIT_EDGES = [en for en in edge_names[1:] if en in _edges_with_exit_uplinks]
         edge_ext_conn_port = _alloc_edge_port()
         nodes["external-conn"] = _ubuntu_node()
         new_links.append([
@@ -1736,7 +1965,9 @@ class TopologyGenerator:
             "outbound",
         ])
         new_links.append(self._make_link("external-conn", "eth1", EDGE, edge_ext_conn_port))
-        if EDGE2 in nodes:
+        for _n, EDGE2 in enumerate(EXIT_EDGES, start=2):
+            if EDGE2 not in nodes:
+                continue
             edge2_used = switch_connected.setdefault(EDGE2, set())
             # Pick the next FREE port — don't hardcode swp1. The Wire Map may
             # already use swp1.. on cust-net-edge-02 for fabric EXIT uplinks
@@ -1750,7 +1981,7 @@ class TopologyGenerator:
             edge2_ext_conn_port = f"swp{edge2_port_n}"
             edge2_used.add(edge2_ext_conn_port)
             new_links.append(self._make_link(
-                "external-conn", "eth2", EDGE2, edge2_ext_conn_port,
+                "external-conn", f"eth{_n}", EDGE2, edge2_ext_conn_port,
             ))
 
         # external-dhcp: switch ZTP DHCP + EXIT-VRF relay scopes
@@ -2061,6 +2292,52 @@ class TopologyGenerator:
             idx += 1
         self._server_eth_counter[server_name] = idx + 1
         return f"eth{idx}"
+
+    def _assert_no_duplicate_interfaces(self, links: list) -> None:
+        """Hard-fail if one (node, interface) is wired by more than one link.
+
+        Air validates this server-side and rejects the ENTIRE topology:
+
+            Topology failed to pass validation: {"content": {"links":
+              {"271": {"0": {"interface": "Interface eth0 is already defined
+               for node ext-storage-01: index 0 of link index 247"}}}}}
+
+        The failure mode is what makes this worth a hard gate rather than a
+        warning. The import returns 200 with a simulation id, then flips to
+        INVALID about half a second later with no nodes, no links and no error
+        field. An INVALID simulation never appears in the Air UI, so the
+        operator sees `make air-deploy` emit "Node X not found in simulation"
+        for every node in turn and no reason for any of it.
+
+        It shipped in all six architectures at once and cost two failed
+        deploys to find, because nothing between `make generate` and Air had an
+        opinion about it. Checking here is trivially cheap and catches it at
+        generation, where the fix is.
+        """
+        seen: Dict[Tuple[str, str], int] = {}
+        clashes = []
+        for idx, link in enumerate(links):
+            if not isinstance(link, list):
+                continue
+            for ep in link:
+                if not isinstance(ep, dict):
+                    continue
+                node, iface = ep.get("node"), ep.get("interface")
+                if not node or not iface:
+                    continue
+                key = (node, iface)
+                if key in seen:
+                    clashes.append(
+                        f"{node} {iface}: link {seen[key]} and link {idx}"
+                    )
+                else:
+                    seen[key] = idx
+        if clashes:
+            raise ValueError(
+                "topology has duplicate (node, interface) endpoints — Air will "
+                "reject the whole import and leave an INVALID simulation:\n  "
+                + "\n  ".join(clashes)
+            )
 
     def _make_link(self, node_a: str, port_a: str,
                    node_b: str, port_b: str) -> list:

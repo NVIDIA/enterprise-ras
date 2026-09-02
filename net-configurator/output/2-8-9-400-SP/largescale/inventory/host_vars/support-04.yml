@@ -1,0 +1,4 @@
+---
+# Host variables for support-04 (Generated from Excel)
+ansible_host: 192.168.200.197
+hostname: support-04

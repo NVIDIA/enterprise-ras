@@ -30,7 +30,7 @@
     # cumulus password, hashed-password). Publishing those to the nginx
     # status page — basic-auth over plain HTTP in Air — would leak them, so
     # raw/ is NOT uploaded. Operators read raw detail locally from
-    # {{ reports_dir }}/raw/ on the controller. (See issue #32 / ADR-0016.)
+    # {{ reports_dir }}/raw/ on the controller. (See issue #32.)
     - name: Upload top-level summary report files (no secrets)
       copy:
         src: "{{ item }}"

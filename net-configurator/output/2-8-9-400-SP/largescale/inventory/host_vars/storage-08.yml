@@ -1,4 +1,0 @@
----
-# Host variables for storage-08 (Generated from Excel)
-ansible_host: 192.168.200.203
-hostname: storage-08

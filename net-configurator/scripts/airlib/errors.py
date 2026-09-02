@@ -1,14 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
-"""Typed exceptions for Air API scripts.
+"""Typed exceptions for the Air API helpers.
 
-Shared functions raise these instead of calling sys.exit() or
-printing directly, letting each script's main() format errors.
+Helpers in this package signal failure by raising one of these rather than
+calling sys.exit() or writing to stderr themselves. That keeps the decision
+about how to present a failure — and what to exit with — in each script's
+main(), which is the only place that knows whether it is running
+interactively, under make, or in CI.
 
-Exit code mapping:
-  1 = config error (missing .env, missing vars)  -> AirConfigError
-  2 = SSH error (connection, auth failure)        -> AirSSHError
-  3 = API error (HTTP, unexpected response)       -> AirAPIError
+Each subclass carries the process exit status that its failure should produce,
+so a caller can do `sys.exit(err.exit_code)` without re-deriving it:
+
+    AirConfigError  1   credentials or settings missing / unusable
+    AirSSHError     2   could not connect or authenticate over SSH
+    AirAPIError     3   Air answered, but with an error or something unexpected
 """
 
 # Exit codes

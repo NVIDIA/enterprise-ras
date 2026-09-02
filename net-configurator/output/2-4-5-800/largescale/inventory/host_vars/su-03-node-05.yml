@@ -1,4 +1,4 @@
 ---
 # Host variables for su-03-node-05 (Generated from Excel)
-ansible_host: 192.168.200.125
+ansible_host: 192.168.200.127
 hostname: su-03-node-05

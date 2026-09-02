@@ -17,6 +17,13 @@ SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+# The internal-only compare script lives in the sibling release/qa-scripts/ in
+# the monorepo; add it so internal test runs keep coverage. Absent in the public
+# distribution, where the import below skips.
+_QA_SCRIPTS = Path(__file__).resolve().parents[2] / "release" / "qa-scripts"
+if _QA_SCRIPTS.is_dir() and str(_QA_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_QA_SCRIPTS))
+
 from utils import generate_mac, classify_node, is_switch, is_valid_hostname
 from excel_parser import (
     classify_host_role,
@@ -26,9 +33,10 @@ from excel_parser import (
     _svi_switch_ip,
     _svi_gateway_ip,
 )
-# compare_excel_inventory_and_configs.py is an internal-only script (excluded
-# from the public distribution via .publicignore). Guard its import so the
-# public test tree still collects — the dependent classes skip when it's absent.
+# compare_excel_inventory_and_configs.py is an internal-only script (it lives in
+# the sibling release/qa-scripts/, never in the public net-configurator/ tree).
+# Guard its import so the public test tree still collects — the dependent classes
+# skip when it's absent.
 try:
     from compare_excel_inventory_and_configs import (
         _expand_iface_token,
@@ -373,7 +381,7 @@ class TestSviAddressing:
         assert _svi_gateway_ip("172.16.178.0/24", "") == "172.16.178.1"
 
     def test_offset_subnet_stays_in_network(self):
-        """Offset subnet: 100.82.254.128/27 + .129 gateway. SVI + VRR must land
+        """Field case: 100.82.254.128/27 + .129 gateway. SVI + VRR must land
         inside 100.82.254.128/27, NOT 100.82.254.0/27."""
         import ipaddress
         subnet, gw = "100.82.254.128/27", "100.82.254.129"

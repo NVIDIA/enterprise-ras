@@ -75,7 +75,7 @@ make oob-setup ARCH=2-8-5-200
 **Usage**:
 ```bash
 make deploy-servers ARCH=2-8-5-200              # Direct SSH
-make deploy-servers-via-jump ARCH=2-8-5-200   # Via oob-server-01 (for Air)
+make deploy-servers-via-jump ARCH=2-8-5-200   # Via the OOB jump host (for Air)
 ```
 
 ---
@@ -140,7 +140,18 @@ make validate-ping-matrix ARCH=2-8-5-200
 
 #### `push-switch-configs.yml` — Push Configs to Switches
 
-**Purpose**: Push and apply generated NVUE CLI configs to core and OOB switches
+**Purpose**: Push and apply generated NVUE CLI configs to core and OOB switches.
+
+If `switch_ansible_password` already works, the playbook skips the
+password-change step and does copy / run generated CLI / stage
+`nv set system aaa user … password` (last, so apply cannot drop
+Linux SSH) / `nv config apply` / confirm.
+
+If it does not (brand-new Cumulus `cumulus`, or an expired first-login
+password), it completes that forced change from
+`switch_bootstrap_password` (default `cumulus`) to
+`switch_ansible_password`, then continues. Requires `pexpect` and
+`sshpass` on the controller.
 
 ```bash
 make push-switch-configs ARCH=2-8-5-200
@@ -242,7 +253,7 @@ make ztp-update ARCH=2-8-5-200
 | `validate-oob-bgp.yml` | OOB↔CSL BGP Established check | `make validate-oob-bgp` |
 | `validate-servers.yml` | Server bonds/VLANs/LLDP/connectivity | `make validate-servers` |
 | `validate-ping-matrix.yml` | Server-to-server ping matrix | `make validate-ping-matrix` |
-| `push-switch-configs.yml` | Push NVUE configs to switches | `make push-switch-configs` |
+| `push-switch-configs.yml` | Push NVUE configs to switches (bootstraps factory/expired password if needed) | `make push-switch-configs` |
 | `restart-ldap-switches.yml` | Restart LDAP (via OOB) | `make restart-ldap` |
 | `restart-ldap-switches-direct.yml` | Restart LDAP (direct) | `make restart-ldap-direct` |
 | `setup-status-page.yml` | Status / validation-report page | *(pipeline)* |

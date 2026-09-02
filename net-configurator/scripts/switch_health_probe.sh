@@ -83,7 +83,7 @@ for vrf, vd in (d or {}).items():
             # 'NoNeg' = the BGP session is UP but this address-family was not
             # negotiated for this peer — e.g. l2vpn-evpn left enabled on an ISL
             # underlay peer-group while EVPN actually rides the loopback
-            # 'overlay' peer-group (the dedicated cl/cs design, ADR-0006). It is
+            # 'overlay' peer-group (the dedicated cl/cs design). It is
             # NOT a down session, so it must not count as a failure (nor inflate
             # the total).
             if st == 'NoNeg':

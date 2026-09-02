@@ -5,16 +5,146 @@
 # Push and apply generated NVUE CLI configs to core and OOB switches.
 #
 # Flow:
-#   Play 1 — Copy config script to switch, run it (stages nv set commands),
-#             then: nv config apply --assume-yes --confirm
-#             SSH session ends (log out).
-#   Play 2 — Fresh SSH session per switch: nv config apply
-#             Confirms the apply and reports result.
+#   Play 1 — If switch_ansible_password already works, this play is a
+#             no-op (probe + "password already usable") and the original
+#             copy/run/apply path below is unchanged.
+#             If it does not work (brand-new Cumulus "cumulus", or
+#             first-login expired password), complete the forced password
+#             change from switch_bootstrap_password (default: cumulus) to
+#             switch_ansible_password. Requires pexpect and sshpass on
+#             the controller. Probe and change run on localhost.
+#   Play 2 — Copy config script, run it (stage nv set), THEN stage
+#             `nv set system aaa user … password` LAST, then
+#             nv config apply --assume-yes --confirm.
+#             Generated CLI scripts set aaa user role/name and never
+#             password. Staging the password before the script is a
+#             no-op: later `nv set system aaa user` lines replace the
+#             user object and apply drops the Linux SSH password.
+#             ZTP already sets the password as the last nv set.
+#             meta: reset_connection so Play 3 cannot reuse ControlPersist.
+#   Play 3 — New SSH auth with switch_ansible_password, then
+#             nv config apply --confirm-yes. If apply dropped the
+#             password, this play fails instead of a green recap.
 #
 # Usage:
 #   ansible-playbook playbooks/push-switch-configs.yml \
 #     -i output/<arch>/<site>/inventory/hosts \
 #     -e "config_output_dir=../output/<arch>/<site>/configs"
+#
+#   Password-only (no config push):
+#   ansible-playbook playbooks/push-switch-configs.yml \
+#     -i output/<arch>/<site>/inventory/hosts \
+#     --limit <switch> --tags bootstrap-password
+
+- name: Bootstrap switch password
+  hosts: switches
+  gather_facts: false
+  tags: [bootstrap-password]
+  vars:
+    _bootstrap_user: "{{ ansible_user | default('cumulus') }}"
+    _bootstrap_password: "{{ switch_bootstrap_password | default('cumulus') }}"
+    _target_password: "{{ switch_ansible_password }}"
+    _ssh_opts: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10"  # pragma: allowlist secret
+
+  tasks:
+    - name: Probe whether switch_ansible_password already works
+      ansible.builtin.shell: >
+        sshpass -e ssh {{ _ssh_opts }}
+        {{ _bootstrap_user }}@{{ ansible_host }} /bin/true
+      environment:
+        SSHPASS: "{{ _target_password }}"
+      delegate_to: localhost
+      register: _target_login
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Complete factory or expired password change
+      ansible.builtin.expect:
+        command: >-
+          ssh -tt {{ _ssh_opts }}
+          {{ _bootstrap_user }}@{{ ansible_host }}
+        responses:
+          "(?i)current password:": "{{ _bootstrap_password }}"
+          "(?i)new password:": "{{ _target_password }}"
+          "(?i)retype": "{{ _target_password }}"
+          "(?i)'s password:": "{{ _bootstrap_password }}"
+          "(?i)(mgmt:|:~\\$|:~#)": exit
+        timeout: 45
+        echo: false
+      delegate_to: localhost
+      when: _target_login.rc != 0
+      failed_when: false
+      changed_when: true
+      no_log: true
+      register: _pw_change
+
+    - name: Confirm switch_ansible_password works
+      ansible.builtin.shell: >
+        sshpass -e ssh {{ _ssh_opts }}
+        {{ _bootstrap_user }}@{{ ansible_host }} /bin/true
+      environment:
+        SSHPASS: "{{ _target_password }}"
+      delegate_to: localhost
+      register: _target_login_after
+      failed_when: false
+      changed_when: false
+      no_log: true
+      when: _target_login.rc != 0
+
+    # Distinguish "cannot reach the switch" from "reached it, password rejected".
+    # Both surface as a non-zero rc, and blaming the password for a network failure
+    # sends the operator to fix a credential that was never wrong (ADR-0052: a
+    # diagnostic may only accuse what the evidence implicates).
+    #
+    # This bit on 2026-08-17: `make push-switch-configs` against an Air sim reported
+    # "could not log in with switch_ansible_password" for all six switches. The
+    # passwords were fine. The probe and password change run on LOCALHOST (see the
+    # header), and Air switches on 172.20.0.x are reachable only through the jump
+    # host -- this playbook never loads playbooks/vars/air_proxy.yml. ssh exits 255
+    # with a connect error; a genuine auth failure exits 5 with Permission denied.
+    - name: Classify the bootstrap failure
+      ansible.builtin.set_fact:
+        _probe_unreachable: >-
+          {{ (_target_login.stderr | default('') ~ ' ' ~ (_target_login_after.stderr | default('')))
+             is search('(?i)(network is unreachable|connection timed out|no route to host|connection refused|could not resolve)') }}
+      when:
+        - _target_login.rc != 0
+        - _target_login_after.rc | default(1) != 0
+
+    - name: Fail if the switch is unreachable from the controller
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }} ({{ ansible_host }}): the controller cannot reach
+          this switch over SSH, so the password was never tested. push-switch-configs
+          probes from LOCALHOST, which works for a physically-cabled deployment but
+          not for NVIDIA Air -- Air switches are reachable only through the jump host.
+          For Air use `make switch-ztp-deploy` (ZTP) or redeploy the simulation with
+          NOZTP=1, which injects configs via Air Node Instructions at boot. If this is
+          physical, check management-network routing to {{ ansible_host }}.
+      when:
+        - _target_login.rc != 0
+        - _target_login_after.rc | default(1) != 0
+        - _probe_unreachable | default(false) | bool
+
+    - name: Fail if target password still does not work
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }} ({{ ansible_host }}): reachable over SSH, but could
+          not log in with switch_ansible_password after bootstrap. Set
+          switch_bootstrap_password to the password currently on the switch (factory
+          default is cumulus).
+      when:
+        - _target_login.rc != 0
+        - _target_login_after.rc | default(1) != 0
+        - not (_probe_unreachable | default(false) | bool)
+
+    - name: Password bootstrap result
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}:
+          {{ 'password already usable' if _target_login.rc == 0
+             else 'changed factory/expired password to switch_ansible_password' }}
 
 - name: Push config and apply (with confirm)
   hosts: switches
@@ -34,6 +164,16 @@
       shell: bash {{ remote_config_path }}
       changed_when: true
 
+    # LAST nv set before apply. Must follow the generated script: that
+    # script sets `aaa user cumulus` role/name with no password, which
+    # replaces the user object and would drop Linux SSH on apply.
+    - name: Stage switch password in NVUE
+      ansible.builtin.shell: >
+        nv set system aaa user {{ ansible_user | default('cumulus') }}
+        password {{ switch_ansible_password | quote }}
+      no_log: true
+      changed_when: true
+
     - name: Apply staged config
       shell: nv config apply --assume-yes --confirm
       register: apply_result
@@ -42,6 +182,9 @@
     - name: Show apply output
       debug:
         msg: "{{ inventory_hostname }}: {{ apply_result.stdout_lines | default([apply_result.stdout | default('ok')]) }}"
+
+    - name: Drop SSH mux so confirm re-authenticates
+      meta: reset_connection
 
 - name: Confirm apply (new SSH session)
   hosts: switches

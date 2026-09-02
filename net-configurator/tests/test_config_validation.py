@@ -22,7 +22,11 @@ from utils import is_valid_hostname
 # ---------------------------------------------------------------------------
 # Architectures and their expected switch inventories
 # ---------------------------------------------------------------------------
-VALID_ARCHS = ["2-4-3-200", "2-8-5-200", "2-8-9-400"]
+# Collapsed-core archs only: these are the archs whose N/S fabric is a
+# core-01/core-02 pair. The dedicated-GPU archs (2-4-5-800, 2-8-9-800,
+# 2-8-9-400-SP) use csl/gsl naming and are covered elsewhere. NOT a registry
+# of supported architectures — see tests/test_arch_registry_is_consistent.py.
+COLLAPSED_CORE_ARCHS = ["2-4-3-200", "2-8-5-200", "2-8-9-400"]
 
 ARCH_CORE_SWITCHES = {
     "2-4-3-200": ["core-01", "core-02"],
@@ -438,7 +442,7 @@ OOB_REQUIRED_SECTIONS = {"system", "interface", "bridge", "vrf"}
 def _build_core_params():
     """Build pytest parametrize args for core switches across all architectures."""
     params = []
-    for arch in VALID_ARCHS:
+    for arch in COLLAPSED_CORE_ARCHS:
         for switch in ARCH_CORE_SWITCHES[arch]:
             params.append(pytest.param(arch, switch, id=f"{arch}/{switch}"))
     return params
@@ -447,7 +451,7 @@ def _build_core_params():
 def _build_oob_params():
     """Build pytest parametrize args for OOB switches across all architectures."""
     params = []
-    for arch in VALID_ARCHS:
+    for arch in COLLAPSED_CORE_ARCHS:
         for switch in ARCH_OOB_SWITCHES[arch]:
             params.append(pytest.param(arch, switch, id=f"{arch}/{switch}"))
     return params

@@ -8,7 +8,13 @@ from dataclasses import dataclass
 
 
 class SimState:
-    """Simulation state constants (legacy names used internally)."""
+    """The state vocabulary this codebase uses internally.
+
+    Deliberately not NGC's own spelling: these names predate the v3 API here
+    and are what the scripts, playbooks and logs read in terms of, so the
+    translation happens once at the boundary (see _NGC_STATE_MAP) instead of
+    leaking a vendor rename through the whole tool.
+    """
     NEW = "NEW"
     LOADING = "LOADING"
     LOADED = "LOADED"
@@ -16,7 +22,11 @@ class SimState:
     STORED = "STORED"
 
 
-# NGC v3 uses different internal state names — map them to legacy constants.
+# The boundary translation. NGC v3 reports a finer-grained set of states than
+# this tool distinguishes — several map onto one of ours (four flavours of
+# 'still coming up' are all LOADING). Unknown states fall through unchanged
+# rather than defaulting, so a new NGC state shows up in output as itself
+# instead of being silently mislabelled as a state we understand.
 _NGC_STATE_MAP = {
     "CREATING": "NEW", "IMPORTING": "NEW", "REQUESTING": "NEW", "PROVISIONING": "NEW",
     "PREPARE_BOOT": "LOADING", "BOOTING": "LOADING", "PREPARE_REBUILD": "LOADING", "REBUILDING": "LOADING",

@@ -122,3 +122,34 @@ class TestRegressionPinned:
         ``air-api``, which is NOT what the OpenAPI spec says. Make
         sure we don't regress to that."""
         assert _api("https://air-ngc.nvidia.com") != "https://air-api.nvidia.com"
+
+class TestDsxAirHosts:
+    """Air moved to dsx-air hostnames (2026-08-04).
+
+    Verified by resolution + unauthenticated probe at the time of the change:
+    api.inside.dsx-air.nvidia.com and the previous api.air-inside.nvidia.com
+    resolve to the SAME address and both answer 401 on /api/v1/, so the rename
+    is the same gateway under a new name. The address is not recorded here —
+    infrastructure detail, and it goes stale.
+    """
+
+    def test_internal_ui_maps_to_internal_api(self):
+        assert _api("https://inside.dsx-air.nvidia.com") == \
+            "https://api.inside.dsx-air.nvidia.com"
+
+    def test_internal_ui_trailing_slash(self):
+        assert _api("https://inside.dsx-air.nvidia.com/") == \
+            "https://api.inside.dsx-air.nvidia.com"
+
+    def test_internal_and_public_do_not_collide(self):
+        """Distinct gateways — internal must not funnel into the public API."""
+        assert _api("https://inside.dsx-air.nvidia.com") != \
+            _api("https://dsx-air.nvidia.com")
+
+    def test_legacy_internal_host_still_maps(self):
+        """Existing .era-secrets vaults keep working."""
+        assert _api("https://ngc.air-inside.nvidia.com") == \
+            "https://api.air-inside.nvidia.com"
+
+    def test_legacy_public_host_still_maps(self):
+        assert _api("https://air-ngc.nvidia.com") == "https://api.dsx-air.nvidia.com"

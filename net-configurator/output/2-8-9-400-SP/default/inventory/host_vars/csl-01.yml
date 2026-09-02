@@ -4,6 +4,15 @@ ansible_host: 172.20.0.201
 hostname: csl-01
 mac_address: 48:b0:2d:5b:32:38
 ip_assignment_mode: dhcp
+acls:
+- id: acl-default-dos
+  control_plane_inbound: true
+  type: null
+  rule: []
+- id: acl-default-whitelist
+  control_plane_inbound: true
+  type: null
+  rule: []
 lo_ip: 172.16.176.11/32
 router_id: 172.16.176.11
 vlan_interfaces:
@@ -17,16 +26,11 @@ vlan_interfaces:
   vrr: 172.16.179.1/24
   vlan: '400'
   vrf: INBAND
-- id: vlan500
-  ip: 172.16.180.2/24
-  vrr: 172.16.180.1/24
-  vlan: '500'
-  vrf: STORAGE
 vrf_loopbacks:
-  EXIT: 172.16.176.5/32
-  INBAND: 172.16.176.3/32
-  OOB: 172.16.176.1/32
-  STORAGE: 172.16.176.7/32
+  EXIT: 172.16.176.183/32
+  INBAND: 172.16.176.167/32
+  OOB: 172.16.176.151/32
+  STORAGE: 172.16.176.199/32
 prefix_list:
 - id: ALL_PREFIXES
   rule:
@@ -36,12 +40,12 @@ prefix_list:
 - id: EXIT_LOCAL_IF
   rule:
   - id: '10'
-    match: 172.16.176.5/32
+    match: 172.16.176.183/32
     max_len: '32'
 - id: INBAND_LOCAL_IF
   rule:
   - id: '10'
-    match: 172.16.176.3/32
+    match: 172.16.176.167/32
     max_len: '32'
   - id: '20'
     match: 172.16.178.2/32
@@ -58,7 +62,7 @@ prefix_list:
     match: 172.16.179.0/24
     max_len: '32'
   - id: '30'
-    match: 172.16.176.3/32
+    match: 172.16.176.167/32
     max_len: '32'
 - id: ERA_PREFIXES
   rule:
@@ -71,31 +75,67 @@ prefix_list:
   - id: '30'
     match: 192.168.200.0/24
     max_len: '32'
+- id: OOB_HOSTS
+  rule:
+  - id: '10'
+    match: 192.168.200.0/24
+    max_len: '32'
 - id: LOCAL_OOB_LOOPBACK
   rule:
   - id: '10'
-    match: 172.16.176.1/32
+    match: 172.16.176.151/32
     max_len: '32'
 - id: OOB_LOCAL_IF
   rule:
   - id: '10'
-    match: 172.16.176.1/32
+    match: 172.16.176.151/32
     max_len: '32'
 - id: OOB_PREFIXES
   rule:
   - id: '10'
-    match: 172.16.177.0/24
+    match: 192.168.200.0/24
     max_len: '32'
   - id: '20'
-    match: 172.16.176.1/32
+    match: 172.16.176.151/32
     max_len: '32'
 - id: VTEP_PREFIXES
   rule:
   - id: '5'
     match: 172.16.176.8/29
     max_len: '32'
+isl_interfaces:
+  ports:
+  - 29
+  - 30
+  - 31
+  - 32
+  - 33
+  breakout: 2
+  lanes: 4
+  port_overrides: {}
+  vrf: default
+  speed: 400G
+edge_interfaces:
+  ports:
+  - 64
+  breakout: 4
+  lanes: 2
+  port_overrides: {}
+  vrf: EXIT
+  speed: 200G
+oob_uplink_interfaces:
+  ports:
+  - 53
+  breakout: 8
+  lanes: 1
+  port_overrides:
+    53:
+      subports:
+      - 0
+      - 1
+  speed: 100G
 interfaces_disabled:
-- 60
+- 54
 bond_descriptions:
   bond1s0: su-01-node-01
   bond1s1: su-01-node-02
@@ -105,24 +145,26 @@ bond_descriptions:
   bond3s1: su-02-node-02
   bond4s0: su-02-node-03
   bond4s1: su-02-node-04
-  bond5s0: support-01
-  bond5s1: support-02
-  bond5s2: support-03
-  bond5s3: support-04
-  bond6s0: support-05
-  bond6s1: support-06
-  bond6s2: support-07
-  bond63s0: ext-storage-01
-  bond63s1: ext-storage-02
+  bond25s0: support-01
+  bond25s1: support-02
+  bond26s0: support-03
+  bond26s1: support-04
+  bond27s0: support-05
+  bond27s1: support-06
+  bond28s0: support-07
+  bond28s1: support-08
+  bond58s0: ext-storage-01
+  bond58s1: ext-storage-01
 storage_interfaces:
   ports:
-  - 63
-  breakout: 8
-  lanes: 1
+  - 58
+  breakout: 4
+  lanes: 2
   vrf: STORAGE
   subports: &id001
-  - swp63s0
-  - swp63s1
+  - swp58s0
+  - swp58s1
+  speed: 200G
 vrf_config_extra:
 - id: STORAGE
   vni: '5005'
@@ -138,12 +180,13 @@ vrf_config_extra:
         enable: true
     neighbors:
     - interfaces: *id001
-      peer_group: underlay-era-storage
+      peer_group: storage
       type: unnumbered
     peer_groups:
-    - id: underlay-era-storage
+    - id: storage
       remote_as: external
       bfd_enable: true
+      bfd_profile: storage
       description: underlay_era_storage_interconnect
       address_family:
         ipv4_unicast:

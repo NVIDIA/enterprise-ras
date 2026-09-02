@@ -20,6 +20,9 @@ import pytest
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
+DATA_MODELS_DIR = Path(__file__).resolve().parents[2] / "data-models"
+if str(DATA_MODELS_DIR) not in sys.path:
+    sys.path.insert(0, str(DATA_MODELS_DIR))
 
 from arch_scaling import (
     ARCH_SCALING,
@@ -32,6 +35,19 @@ from arch_scaling import (
     node_name_to_su,
 )
 from validate_excel import validate_excel
+try:                                                        # noqa: E402
+    from models import available_sus, get_arch_row
+except ModuleNotFoundError:                                 # public tree: no data-models/
+    available_sus = get_arch_row = None
+# Arch models are internal-only (data-models/, ADR-0027) and absent from the
+# public tree, so this skips there rather than failing. Defined locally rather
+# than imported from conftest: conftest is loaded by pytest, not importable.
+_HAVE_ARCH_MODELS = (Path(__file__).resolve().parents[2] / "data-models" / "models").exists()
+needs_arch_models = pytest.mark.skipif(
+    not _HAVE_ARCH_MODELS,
+    reason="arch models are internal-only (data-models/), absent in the public tree")
+
+pytestmark = needs_arch_models
 
 
 def _wm_cols(ws):
@@ -98,8 +114,9 @@ class TestMaxSingleTierSu:
         # changing them here means the table moved → review with arch docs.
         assert max_single_tier_su("2-4-3-200") == 8
         assert max_single_tier_su("2-8-5-200") == 8
-        assert max_single_tier_su("2-8-9-400") == 3
+        assert max_single_tier_su("2-8-9-400") == 4
         assert max_single_tier_su("2-8-9-800") == 4
+        assert max_single_tier_su("2-8-9-400-SP") == 4
 
     def test_unknown_arch_returns_none(self):
         assert max_single_tier_su("9-9-9-999") is None
@@ -119,14 +136,17 @@ class TestMaxSupportedSu:
         assert max_supported_su("2-8-9-800") == 32
         assert max_supported_su("2-8-9-400-SP") == 32
 
-    def test_all_six_archs_present(self):
+    def test_every_supported_arch_present(self):
+        # Renamed from test_all_six_archs_present: the count is not the point,
+        # and baking it into the name meant adding 2-4-5-400 (ERA-49) left a
+        # test whose name contradicted its own assertion.
         assert set(MAX_SUPPORTED_SU) == {
-            "2-4-3-200", "2-8-5-200", "2-8-9-400",
+            "2-4-3-200", "2-4-5-400", "2-8-5-200", "2-8-9-400",
             "2-4-5-800", "2-8-9-800", "2-8-9-400-SP"}
 
     def test_at_least_single_tier_max(self):
         # Where an arch has a single-tier cap, the validated max must be >= it.
-        # (2-4-5-800 / 2-8-9-400-SP have no single-tier mode → None; skip those.)
+        # 2-4-5-800 has E/W spines from SU1 and therefore no single-tier mode.
         for arch in MAX_SUPPORTED_SU:
             st = max_single_tier_su(arch)
             if st is not None:
@@ -155,8 +175,11 @@ class TestGetTier:
             ("2-8-9-400", 1, 2),
             ("2-8-9-400", 2, 2),
             ("2-8-9-400", 3, 3),
+            ("2-8-9-400", 4, 4),
             ("2-8-9-800", 1, 2),
             ("2-8-9-800", 4, 2),
+            ("2-8-9-400-SP", 1, 2),
+            ("2-8-9-400-SP", 4, 2),
         ],
     )
     def test_tier_oob_switches(self, arch, su, expect_oob):
@@ -167,7 +190,7 @@ class TestGetTier:
     def test_over_max_returns_none(self):
         assert get_tier("2-4-3-200", 9) is None
         assert get_tier("2-8-5-200", 9) is None
-        assert get_tier("2-8-9-400", 4) is None
+        assert get_tier("2-8-9-400", 5) is None
         assert get_tier("2-8-9-800", 5) is None
 
     def test_invalid_inputs_return_none(self):
@@ -183,7 +206,7 @@ class TestIsSupportedSingleTier:
 
     def test_unsupported_above_cap(self):
         assert not is_supported_single_tier("2-4-3-200", 9)
-        assert not is_supported_single_tier("2-8-9-400", 4)
+        assert not is_supported_single_tier("2-8-9-400", 5)
 
     def test_unsupported_below_one(self):
         assert not is_supported_single_tier("2-4-3-200", 0)
@@ -206,6 +229,25 @@ class TestScalingTableStructure:
             assert t.core_or_csl_leaves == 2  # documented invariant
             assert t.oob_switches >= 1
             prev_max = t.max_su
+
+    def test_public_fallback_matches_canonical_topology_snapshots(self):
+        for arch, tiers in ARCH_SCALING.items():
+            variant = None
+            for tier in tiers:
+                for su in range(tier.min_su, tier.max_su + 1):
+                    _, row = get_arch_row(arch, su, variant)
+                    expected_ns_leaves = row["ew_leaf"] if row["converged"] else row["ns_leaf"]
+                    assert tier.core_or_csl_leaves == expected_ns_leaves, (arch, su)
+                    expected_gsl = None
+                    if not row["converged"]:
+                        model, _ = get_arch_row(arch, su, variant)
+                        expected_gsl = row["ew_leaf"] // int(model.get("ew_plane_count") or 1)
+                    assert tier.gsl_leaves_per_plane == expected_gsl, (arch, su)
+                    assert tier.oob_switches == row["oob"], (arch, su)
+
+    def test_public_supported_max_matches_generator_supported_rows(self):
+        for arch, expected in MAX_SUPPORTED_SU.items():
+            assert expected == max(available_sus(arch)), arch
 
 
 # ---------------------------------------------------------------------------

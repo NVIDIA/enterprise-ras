@@ -2,13 +2,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for gsl-plane2-01
-# Generated: 2026-07-02T12:36:57Z
+# Generated: 2026-09-02T02:45:09Z
 # Format: NVUE CLI commands (GSL - GPU Spine/Leaf, plane 2)
 #============================================================================
 # Bridge and VLAN
 #============================================================================
 nv set bridge domain br_default type vlan-aware
-nv set bridge domain br_default vlan 900 vni 289900
+nv set bridge domain br_default vlan 921 vni 4921
+nv set bridge domain br_default vlan 922 vni 4922
+nv set bridge domain br_default vlan 923 vni 4923
+nv set bridge domain br_default vlan 924 vni 4924
+nv set bridge domain br_default vlan 925 vni 4925
+nv set bridge domain br_default vlan 926 vni 4926
+nv set bridge domain br_default vlan 927 vni 4927
+nv set bridge domain br_default vlan 928 vni 4928
 
 #============================================================================
 # EVPN
@@ -26,22 +33,47 @@ nv set interface lo ipv4 address 10.2.1.1/32
 nv set interface lo type loopback
 
 # 2x breakout on GPU access ports + ISL ports
-nv set interface swp1,swp2,swp3,swp4,swp5,swp6,swp7,swp8,swp9,swp10,swp11,swp12,swp13,swp14,swp15,swp16,swp49,swp50,swp51,swp52,swp53,swp54,swp55,swp56,swp57,swp58,swp59,swp60,swp61,swp62,swp63,swp64 link breakout 2x
+nv set interface swp1,swp2,swp3,swp4,swp5,swp6,swp7,swp8,swp9,swp10,swp11,swp12,swp13,swp14,swp15,swp16,swp33,swp34,swp35,swp36,swp37,swp38,swp39,swp40,swp41,swp42,swp43,swp44,swp45,swp46,swp47,swp48 link breakout 2x
 
-nv set interface swp17,swp18,swp19,swp20,swp21,swp22,swp23,swp24,swp25,swp26,swp27,swp28,swp29,swp30,swp31,swp32,swp33,swp34,swp35,swp36,swp37,swp38,swp39,swp40,swp41,swp42,swp43,swp44,swp45,swp46,swp47,swp48,swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp49s0,swp49s1,swp50s0,swp50s1,swp51s0,swp51s1,swp52s0,swp52s1,swp53s0,swp53s1,swp54s0,swp54s1,swp55s0,swp55s1,swp56s0,swp56s1,swp57s0,swp57s1,swp58s0,swp58s1,swp59s0,swp59s1,swp60s0,swp60s1,swp61s0,swp61s1,swp62s0,swp62s1,swp63s0,swp63s1,swp64s0,swp64s1 type swp
+nv set interface swp17,swp18,swp19,swp20,swp21,swp22,swp23,swp24,swp25,swp26,swp27,swp28,swp29,swp30,swp31,swp32,swp49,swp50,swp51,swp52,swp53,swp54,swp55,swp56,swp57,swp58,swp59,swp60,swp61,swp62,swp63,swp64,swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp48s0,swp48s1 type swp
 
-# GPU access ports -> VLAN 900 (untagged / access)
-nv set interface swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1 bridge domain br_default access 900
-
-# vlan900 SVI (GPU VRF + VRR)
-# 5.16 NVUE: SVI uses ipv4/ipv6 sub-objects; vrf is set without "ip" prefix.
-nv set interface vlan900 ipv4 address 192.168.16.2/20
-nv set interface vlan900 vrf GPU
-nv set interface vlan900 ipv4 vrr address 192.168.16.1/20
-nv set interface vlan900 ipv4 vrr state enabled
-nv set interface vlan900 ipv4 vrr vrr-state up
-nv set interface vlan900 type svi
-nv set interface vlan900 vlan 900
+# GPU access ports per (rail, plane) - gpu_vlan_mode = per_rail_per_plane
+nv set interface swp1s0,swp3s0,swp5s0,swp7s0,swp9s0,swp11s0,swp13s0,swp15s0 bridge domain br_default access 921
+# vlan921 SVI (rail rail1_plane2)
+nv set interface vlan921 ipv4 address 192.168.21.2/24
+nv set interface vlan921 vrf GPU
+nv set interface vlan921 ipv4 vrr address 192.168.21.1/24
+nv set interface vlan921 ipv4 vrr state enabled
+nv set interface vlan921 ipv4 vrr vrr-state up
+nv set interface vlan921 type svi
+nv set interface vlan921 vlan 921
+nv set interface swp1s1,swp3s1,swp5s1,swp7s1,swp9s1,swp11s1,swp13s1,swp15s1 bridge domain br_default access 923
+# vlan923 SVI (rail rail3_plane2)
+nv set interface vlan923 ipv4 address 192.168.23.2/24
+nv set interface vlan923 vrf GPU
+nv set interface vlan923 ipv4 vrr address 192.168.23.1/24
+nv set interface vlan923 ipv4 vrr state enabled
+nv set interface vlan923 ipv4 vrr vrr-state up
+nv set interface vlan923 type svi
+nv set interface vlan923 vlan 923
+nv set interface swp2s0,swp4s0,swp6s0,swp8s0,swp10s0,swp12s0,swp14s0,swp16s0 bridge domain br_default access 925
+# vlan925 SVI (rail rail5_plane2)
+nv set interface vlan925 ipv4 address 192.168.25.2/24
+nv set interface vlan925 vrf GPU
+nv set interface vlan925 ipv4 vrr address 192.168.25.1/24
+nv set interface vlan925 ipv4 vrr state enabled
+nv set interface vlan925 ipv4 vrr vrr-state up
+nv set interface vlan925 type svi
+nv set interface vlan925 vlan 925
+nv set interface swp2s1,swp4s1,swp6s1,swp8s1,swp10s1,swp12s1,swp14s1,swp16s1 bridge domain br_default access 927
+# vlan927 SVI (rail rail7_plane2)
+nv set interface vlan927 ipv4 address 192.168.27.2/24
+nv set interface vlan927 vrf GPU
+nv set interface vlan927 ipv4 vrr address 192.168.27.1/24
+nv set interface vlan927 ipv4 vrr state enabled
+nv set interface vlan927 ipv4 vrr vrr-state up
+nv set interface vlan927 type svi
+nv set interface vlan927 vlan 927
 
 #============================================================================
 # NVE / VxLAN
@@ -61,7 +93,10 @@ nv set qos traffic-pool default-lossy memory-percent 10
 nv set qos traffic-pool roce-lossless memory-percent 90
 
 # GPU role - QoS PFC watchdog
-nv set interface swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1 qos pfc-watchdog state enable
+nv set interface swp1s0,swp3s0,swp5s0,swp7s0,swp9s0,swp11s0,swp13s0,swp15s0 qos pfc-watchdog state enable
+nv set interface swp1s1,swp3s1,swp5s1,swp7s1,swp9s1,swp11s1,swp13s1,swp15s1 qos pfc-watchdog state enable
+nv set interface swp2s0,swp4s0,swp6s0,swp8s0,swp10s0,swp12s0,swp14s0,swp16s0 qos pfc-watchdog state enable
+nv set interface swp2s1,swp4s1,swp6s1,swp8s1,swp10s1,swp12s1,swp14s1,swp16s1 qos pfc-watchdog state enable
 
 #============================================================================
 # Router policy
@@ -70,6 +105,7 @@ nv set router bgp autonomous-system 4260396888
 nv set router bgp state enabled
 nv set router bgp router-id 10.2.1.1
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 description permit_loopback_interface_routes
 nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
 nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
 nv set router vrr state enabled
@@ -77,10 +113,10 @@ nv set router vrr state enabled
 #============================================================================
 # NTP
 #============================================================================
-nv set system ntp server 0.cumulusnetworks.pool.ntp.org
-nv set system ntp server 1.cumulusnetworks.pool.ntp.org
-nv set system ntp server 2.cumulusnetworks.pool.ntp.org
-nv set system ntp server 3.cumulusnetworks.pool.ntp.org
+nv set system ntp server 0.cumulusnetworks.pool.ntp.org association-type server
+nv set system ntp server 1.cumulusnetworks.pool.ntp.org association-type server
+nv set system ntp server 2.cumulusnetworks.pool.ntp.org association-type server
+nv set system ntp server 3.cumulusnetworks.pool.ntp.org association-type server
 
 #============================================================================
 # AAA - local user 'cumulus' (password set via ZTP)
@@ -128,8 +164,8 @@ nv set system wjh state enabled
 #============================================================================
 nv set vrf GPU evpn state enabled
 nv set vrf GPU evpn vlan 3003
-nv set vrf GPU evpn vni 289003
-nv set vrf GPU loopback ip address 10.2.1.11/32
+nv set vrf GPU evpn vni 5003
+nv set vrf GPU loopback ip address 10.2.1.21/32
 nv set vrf GPU router bgp address-family ipv4-unicast state enabled
 nv set vrf GPU router bgp address-family ipv4-unicast redistribute connected state enabled
 nv set vrf GPU router bgp address-family ipv4-unicast route-export to-evpn state enabled
@@ -153,70 +189,70 @@ nv set vrf default router bgp state enabled
 nv set vrf default router bgp neighbor 10.2.1.2 peer-group overlay
 nv set vrf default router bgp neighbor 10.2.1.2 type numbered
 # internal_isl peers - every breakout subport on the ISL trunk ports (unnumbered)
-nv set vrf default router bgp neighbor swp49s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp49s0 type unnumbered
-nv set vrf default router bgp neighbor swp49s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp49s1 type unnumbered
-nv set vrf default router bgp neighbor swp50s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp50s0 type unnumbered
-nv set vrf default router bgp neighbor swp50s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp50s1 type unnumbered
-nv set vrf default router bgp neighbor swp51s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp51s0 type unnumbered
-nv set vrf default router bgp neighbor swp51s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp51s1 type unnumbered
-nv set vrf default router bgp neighbor swp52s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp52s0 type unnumbered
-nv set vrf default router bgp neighbor swp52s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp52s1 type unnumbered
-nv set vrf default router bgp neighbor swp53s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp53s0 type unnumbered
-nv set vrf default router bgp neighbor swp53s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp53s1 type unnumbered
-nv set vrf default router bgp neighbor swp54s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp54s0 type unnumbered
-nv set vrf default router bgp neighbor swp54s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp54s1 type unnumbered
-nv set vrf default router bgp neighbor swp55s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp55s0 type unnumbered
-nv set vrf default router bgp neighbor swp55s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp55s1 type unnumbered
-nv set vrf default router bgp neighbor swp56s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp56s0 type unnumbered
-nv set vrf default router bgp neighbor swp56s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp56s1 type unnumbered
-nv set vrf default router bgp neighbor swp57s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp57s0 type unnumbered
-nv set vrf default router bgp neighbor swp57s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp57s1 type unnumbered
-nv set vrf default router bgp neighbor swp58s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp58s0 type unnumbered
-nv set vrf default router bgp neighbor swp58s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp58s1 type unnumbered
-nv set vrf default router bgp neighbor swp59s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp59s0 type unnumbered
-nv set vrf default router bgp neighbor swp59s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp59s1 type unnumbered
-nv set vrf default router bgp neighbor swp60s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp60s0 type unnumbered
-nv set vrf default router bgp neighbor swp60s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp60s1 type unnumbered
-nv set vrf default router bgp neighbor swp61s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp61s0 type unnumbered
-nv set vrf default router bgp neighbor swp61s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp61s1 type unnumbered
-nv set vrf default router bgp neighbor swp62s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp62s0 type unnumbered
-nv set vrf default router bgp neighbor swp62s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp62s1 type unnumbered
-nv set vrf default router bgp neighbor swp63s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp63s0 type unnumbered
-nv set vrf default router bgp neighbor swp63s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp63s1 type unnumbered
-nv set vrf default router bgp neighbor swp64s0 peer-group internal_isl
-nv set vrf default router bgp neighbor swp64s0 type unnumbered
-nv set vrf default router bgp neighbor swp64s1 peer-group internal_isl
-nv set vrf default router bgp neighbor swp64s1 type unnumbered
+nv set vrf default router bgp neighbor swp33s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp33s0 type unnumbered
+nv set vrf default router bgp neighbor swp33s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp33s1 type unnumbered
+nv set vrf default router bgp neighbor swp34s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp34s0 type unnumbered
+nv set vrf default router bgp neighbor swp34s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp34s1 type unnumbered
+nv set vrf default router bgp neighbor swp35s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp35s0 type unnumbered
+nv set vrf default router bgp neighbor swp35s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp35s1 type unnumbered
+nv set vrf default router bgp neighbor swp36s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp36s0 type unnumbered
+nv set vrf default router bgp neighbor swp36s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp36s1 type unnumbered
+nv set vrf default router bgp neighbor swp37s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp37s0 type unnumbered
+nv set vrf default router bgp neighbor swp37s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp37s1 type unnumbered
+nv set vrf default router bgp neighbor swp38s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp38s0 type unnumbered
+nv set vrf default router bgp neighbor swp38s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp38s1 type unnumbered
+nv set vrf default router bgp neighbor swp39s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp39s0 type unnumbered
+nv set vrf default router bgp neighbor swp39s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp39s1 type unnumbered
+nv set vrf default router bgp neighbor swp40s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp40s0 type unnumbered
+nv set vrf default router bgp neighbor swp40s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp40s1 type unnumbered
+nv set vrf default router bgp neighbor swp41s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp41s0 type unnumbered
+nv set vrf default router bgp neighbor swp41s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp41s1 type unnumbered
+nv set vrf default router bgp neighbor swp42s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp42s0 type unnumbered
+nv set vrf default router bgp neighbor swp42s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp42s1 type unnumbered
+nv set vrf default router bgp neighbor swp43s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp43s0 type unnumbered
+nv set vrf default router bgp neighbor swp43s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp43s1 type unnumbered
+nv set vrf default router bgp neighbor swp44s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp44s0 type unnumbered
+nv set vrf default router bgp neighbor swp44s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp44s1 type unnumbered
+nv set vrf default router bgp neighbor swp45s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp45s0 type unnumbered
+nv set vrf default router bgp neighbor swp45s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp45s1 type unnumbered
+nv set vrf default router bgp neighbor swp46s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp46s0 type unnumbered
+nv set vrf default router bgp neighbor swp46s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp46s1 type unnumbered
+nv set vrf default router bgp neighbor swp47s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp47s0 type unnumbered
+nv set vrf default router bgp neighbor swp47s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp47s1 type unnumbered
+nv set vrf default router bgp neighbor swp48s0 peer-group internal_isl
+nv set vrf default router bgp neighbor swp48s0 type unnumbered
+nv set vrf default router bgp neighbor swp48s1 peer-group internal_isl
+nv set vrf default router bgp neighbor swp48s1 type unnumbered
 
 nv set vrf default router bgp path-selection multipath aspath-ignore enabled
 

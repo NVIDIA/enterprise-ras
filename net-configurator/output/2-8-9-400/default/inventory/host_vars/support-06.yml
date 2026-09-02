@@ -1,4 +1,4 @@
 ---
 # Host variables for support-06 (Generated from Excel)
-ansible_host: 192.168.200.49
+ansible_host: 192.168.200.32
 hostname: support-06

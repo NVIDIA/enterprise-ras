@@ -95,10 +95,10 @@ def main() -> int:
             elif budget.cpu > 0 and proj_cpu / budget.cpu > 0.90:
                 console.print(f"  [yellow]Warning:[/] CPU would be at {proj_cpu}/{budget.cpu} (>90%)")
 
-            if budget.memory > 0 and (budget.memory_used + req_mem) > budget.memory:
-                console.print(f"  [red]OVER BUDGET:[/] Memory {budget.memory_used + req_mem}/{budget.memory}")
-            elif budget.memory > 0 and (budget.memory_used + req_mem) / budget.memory > 0.90:
-                console.print(f"  [yellow]Warning:[/] Memory would be at {budget.memory_used + req_mem}/{budget.memory} (>90%)")
+            if budget.memory > 0 and proj_mem > budget.memory:
+                console.print(f"  [red]OVER BUDGET:[/] Memory {proj_mem}/{budget.memory}")
+            elif budget.memory > 0 and proj_mem / budget.memory > 0.90:
+                console.print(f"  [yellow]Warning:[/] Memory would be at {proj_mem}/{budget.memory} (>90%)")
         else:
             console.print(f"  No topology found at {topology_path}")
             console.print(f"  Run 'make generate ARCH={args.arch}' to project requirements")

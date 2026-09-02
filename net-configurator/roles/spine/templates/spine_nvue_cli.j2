@@ -72,12 +72,12 @@ nv set qos traffic-pool roce-lossless memory-percent 90
 # BFD Profiles
 #============================================================================
 nv set router bfd state enabled
-nv set router bfd profile pf1 detect-multiplier 3
-nv set router bfd profile pf1 min-rx-interval 1000
-nv set router bfd profile pf1 min-tx-interval 1000
-nv set router bfd profile pf2 detect-multiplier 3
-nv set router bfd profile pf2 min-rx-interval 300
-nv set router bfd profile pf2 min-tx-interval 300
+nv set router bfd profile overlay detect-multiplier 3
+nv set router bfd profile overlay min-rx-interval 1000
+nv set router bfd profile overlay min-tx-interval 1000
+nv set router bfd profile underlay detect-multiplier 3
+nv set router bfd profile underlay min-rx-interval 300
+nv set router bfd profile underlay min-tx-interval 300
 
 #============================================================================
 # BGP Global
@@ -90,6 +90,7 @@ nv set router bgp router-id {{ lo_ip.split('/')[0] }}
 # Route Maps
 #============================================================================
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 description permit_loopback_interface_routes
 nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
 nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
 {% if plane is not defined %}
@@ -106,13 +107,14 @@ nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
    deck's Leaf(uplink)/Spine(downlink) origin/cumulative split -- but
    NVIDIA's own Cumulus Linux docs' one fully-worked example for this
    exact spine-to-leaf underlay scenario uses 'multipaths', and it's the
-   only value ever seen in live production (grep across all 8
-   pdx01-m3-era-289-800 switches: 4/4 occurrences are 'multipaths', zero
+   only value ever seen in live production (grep across all 8 switches of a
+   live 2-8-9-800 deployment: 4/4 occurrences are 'multipaths', zero
    'cumulative'). 'cumulative' in NVIDIA's docs is only demonstrated for a
    VRF-to-EVPN route-export scenario, unrelated to this peer-group.
    Verified via a generated SU16 workbook; no live 2-tier deployment
    exists to verify byte-for-byte. #}
 nv set router policy route-map WEIGHTED_ECMP rule 10 action permit
+nv set router policy route-map WEIGHTED_ECMP rule 10 description enable_w_ecmp_adjustment
 nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths
 {% endif %}
 
@@ -120,7 +122,7 @@ nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multip
 # NTP
 #============================================================================
 {% for server in ntp_servers | default(['0.cumulusnetworks.pool.ntp.org', '1.cumulusnetworks.pool.ntp.org', '2.cumulusnetworks.pool.ntp.org', '3.cumulusnetworks.pool.ntp.org']) %}
-nv set system ntp server {{ server | quote }} association-type server
+nv set system ntp server {{ server | quote }} association-type {{ (ntp_association_types | default({})).get(server, 'server') }}
 {% endfor %}
 nv set system ntp vrf mgmt
 
@@ -146,10 +148,21 @@ nv set system aaa user cumulus state enabled
 #============================================================================
 nv set system api state enabled
 nv set system config auto-save state enabled
-nv set system control-plane acl acl-default-dos inbound
-nv set system control-plane acl acl-default-whitelist inbound
-nv set acl acl-default-whitelist rule 200 match ip tcp dest-port 8251
-nv set acl acl-default-whitelist type ipv4
+{# Control-plane ACLs (ADR-0030): tool-owned defaults + optional 'ACLs' sheet
+   override. Bindings render before rule/type lines to preserve output order. #}
+{% if acls is defined %}
+{% for acl in acls if acl.control_plane_inbound %}
+nv set system control-plane acl {{ acl.id | quote }} inbound
+{% endfor %}
+{% for acl in acls %}
+{% for rule in acl.rule %}
+nv set acl {{ acl.id | quote }} rule {{ rule.id | quote }} match ip {{ rule.protocol | quote }} dest-port {{ rule.dest_port | quote }}
+{% endfor %}
+{% if acl.type %}
+nv set acl {{ acl.id | quote }} type {{ acl.type | quote }}
+{% endif %}
+{% endfor %}
+{% endif %}
 nv set system hostname {{ hostname }}
 {# Operator-configurable SSH login banners sourced from the Excel
    `Settings.pre_login_message` / `post_login_message` fields — mirrors the
@@ -207,14 +220,27 @@ nv set vrf default router bgp path-selection multipath aspath-ignore enabled
 #============================================================================
 nv set vrf default router bgp peer-group overlay address-family ipv4-unicast state disabled
 nv set vrf default router bgp peer-group overlay address-family l2vpn-evpn state enabled
-nv set vrf default router bgp peer-group overlay bfd profile pf1
+nv set vrf default router bgp peer-group overlay bfd profile overlay
 nv set vrf default router bgp peer-group overlay multihop-ttl 2
 nv set vrf default router bgp peer-group overlay remote-as external
 nv set vrf default router bgp peer-group overlay update-source lo
 nv set vrf default router bgp peer-group underlay address-family ipv4-unicast state enabled
 {% if plane is not defined %}
 nv set vrf default router bgp peer-group underlay address-family ipv4-unicast policy outbound route-map WEIGHTED_ECMP
-nv set vrf default router bgp peer-group underlay bfd profile pf2
+nv set vrf default router bgp peer-group underlay bfd profile underlay
 {% endif %}
 nv set vrf default router bgp peer-group underlay remote-as external
 nv set vrf default router bgp router-id {{ lo_ip.split('/')[0] }}
+{% if custom_config is defined and custom_config %}
+
+#============================================================================
+# Custom Config  (Custom_Config sheet — ADR-0055)
+#
+# Operator-supplied, emitted LAST so it wins on any key set above. `nv config
+# apply` is issued by the consumer (push-switch-configs.yml / ztp.sh), so these
+# are the final lines staged before that apply.
+#============================================================================
+{% for line in custom_config %}
+{{ line }}
+{% endfor %}
+{% endif %}

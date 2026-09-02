@@ -1,0 +1,5 @@
+---
+# GPU Spine Plane 1 Configuration (Generated from Excel - 2-8-9-400-SP)
+
+roce_traffic_pool: true
+isl_breakout: 2x

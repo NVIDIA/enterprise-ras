@@ -1,0 +1,9 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+# OOB Switch Configuration (Generated from Excel + Source Inventory - 2-4-5-400)
+
+timezone: Etc/Zulu
+oob_vlan: '200'
+oob_uplink_mode: l3
+cumulus_target_version: 5.18.0

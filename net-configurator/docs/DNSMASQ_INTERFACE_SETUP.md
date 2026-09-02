@@ -23,6 +23,12 @@ dnsmasq_interface: "eth0"  # ❌ Doesn't exist
 dnsmasq_interface: "ens3"  # ✅ Or whatever yours is
 ```
 
+> `ens3` here is only a placeholder — interface names are assigned per host,
+> so run `ip -br link` and use the name your server actually reports. Do not
+> copy `ens3` across from [MULTI_INTERFACE_ZTP.md](MULTI_INTERFACE_ZTP.md):
+> that document describes a specific multi-NIC layout in which `ens3` is the
+> external interface that deliberately does **not** serve ZTP.
+
 Then re-run:
 ```bash
 make ztp-setup ARCH=<type>
