@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for gs-plane2-02
-# Generated: 2026-07-02T12:36:47Z
+# Generated: 2026-09-02T02:43:52Z
 # Format: NVUE CLI commands (Spine, Plane 2, EVPN Relay)
 #============================================================================
 # EVPN (relay — no local VTEPs)
@@ -15,7 +15,7 @@ nv set evpn state enabled
 nv set interface eth0 vrf mgmt
 nv set interface eth0 type eth
 
-nv set interface lo ipv4 address 10.1.2.6/32
+nv set interface lo ipv4 address 10.2.1.42/32
 nv set interface lo type loopback
 
 # Breakout 2x on ISL ports (leaves)
@@ -33,24 +33,25 @@ nv set qos traffic-pool roce-lossless memory-percent 90
 # BFD Profiles
 #============================================================================
 nv set router bfd state enabled
-nv set router bfd profile pf1 detect-multiplier 3
-nv set router bfd profile pf1 min-rx-interval 1000
-nv set router bfd profile pf1 min-tx-interval 1000
-nv set router bfd profile pf2 detect-multiplier 3
-nv set router bfd profile pf2 min-rx-interval 300
-nv set router bfd profile pf2 min-tx-interval 300
+nv set router bfd profile overlay detect-multiplier 3
+nv set router bfd profile overlay min-rx-interval 1000
+nv set router bfd profile overlay min-tx-interval 1000
+nv set router bfd profile underlay detect-multiplier 3
+nv set router bfd profile underlay min-rx-interval 300
+nv set router bfd profile underlay min-tx-interval 300
 
 #============================================================================
 # BGP Global
 #============================================================================
 nv set router bgp autonomous-system 4200102100
 nv set router bgp state enabled
-nv set router bgp router-id 10.1.2.6
+nv set router bgp router-id 10.2.1.42
 
 #============================================================================
 # Route Maps
 #============================================================================
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 description permit_loopback_interface_routes
 nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
 nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
 
@@ -118,14 +119,14 @@ nv set vrf default router bgp state enabled
 #============================================================================
 # BGP Overlay Peers (numbered, loopback-to-loopback)
 #============================================================================
-nv set vrf default router bgp neighbor 10.1.2.1 peer-group overlay
-nv set vrf default router bgp neighbor 10.1.2.1 type numbered
-nv set vrf default router bgp neighbor 10.1.2.2 peer-group overlay
-nv set vrf default router bgp neighbor 10.1.2.2 type numbered
-nv set vrf default router bgp neighbor 10.1.2.3 peer-group overlay
-nv set vrf default router bgp neighbor 10.1.2.3 type numbered
-nv set vrf default router bgp neighbor 10.1.2.4 peer-group overlay
-nv set vrf default router bgp neighbor 10.1.2.4 type numbered
+nv set vrf default router bgp neighbor 10.2.1.1 peer-group overlay
+nv set vrf default router bgp neighbor 10.2.1.1 type numbered
+nv set vrf default router bgp neighbor 10.2.1.2 peer-group overlay
+nv set vrf default router bgp neighbor 10.2.1.2 type numbered
+nv set vrf default router bgp neighbor 10.2.1.3 peer-group overlay
+nv set vrf default router bgp neighbor 10.2.1.3 type numbered
+nv set vrf default router bgp neighbor 10.2.1.4 peer-group overlay
+nv set vrf default router bgp neighbor 10.2.1.4 type numbered
 
 #============================================================================
 # BGP Underlay Peers (unnumbered, on breakout sub-ports)
@@ -285,10 +286,10 @@ nv set vrf default router bgp path-selection multipath aspath-ignore enabled
 #============================================================================
 nv set vrf default router bgp peer-group overlay address-family ipv4-unicast state disabled
 nv set vrf default router bgp peer-group overlay address-family l2vpn-evpn state enabled
-nv set vrf default router bgp peer-group overlay bfd profile pf1
+nv set vrf default router bgp peer-group overlay bfd profile overlay
 nv set vrf default router bgp peer-group overlay multihop-ttl 2
 nv set vrf default router bgp peer-group overlay remote-as external
 nv set vrf default router bgp peer-group overlay update-source lo
 nv set vrf default router bgp peer-group underlay address-family ipv4-unicast state enabled
 nv set vrf default router bgp peer-group underlay remote-as external
-nv set vrf default router bgp router-id 10.1.2.6
+nv set vrf default router bgp router-id 10.2.1.42

@@ -1,0 +1,34 @@
+---
+# Host variables for rack-oob-su-01-01 (Generated from Excel)
+ansible_host: 172.20.0.205
+hostname: rack-oob-su-01-01
+mac_address: 48:b0:2d:a7:57:6b
+ip_assignment_mode: dhcp
+acls:
+- id: acl-default-dos
+  control_plane_inbound: true
+  type: null
+  rule: []
+- id: acl-default-whitelist
+  control_plane_inbound: true
+  type: null
+  rule: []
+svi_ip: 192.168.200.4/24
+default_gateway: 192.168.200.1
+access_ports: swp1-48
+uplink_ports: swp1-49,swp51
+spine_bond_members:
+- swp49
+- swp51
+lo_ip: 172.16.1.103/32
+router_id: 172.16.1.103
+bgp_asn: 4200100004
+vrr_ip: 192.168.200.1/24
+oob_access_vlan: 200
+oob_vni: 4200
+oob_vrf_vni: 5001
+oob_vrf_vlan: 3001
+oob_vrf_loopback: 172.16.1.123/32
+overlay_peers:
+- 172.16.1.11
+- 172.16.1.12

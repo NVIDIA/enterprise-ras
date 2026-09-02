@@ -167,6 +167,4 @@ def test_all_playbooks_valid(project_root):
 
 ## Resources
 
-- [Testing Guide](../docs/TESTING.md) — comprehensive documentation
-- [Testing Quick Start](../docs/TESTING_QUICKSTART.md) — get started quickly
 - [Pytest Documentation](https://docs.pytest.org/)

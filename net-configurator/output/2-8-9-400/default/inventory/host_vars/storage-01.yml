@@ -1,4 +1,0 @@
----
-# Host variables for storage-01 (Generated from Excel)
-ansible_host: 192.168.200.30
-hostname: storage-01

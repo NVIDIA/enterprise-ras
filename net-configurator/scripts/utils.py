@@ -13,6 +13,70 @@ import re
 from collections import defaultdict
 
 
+# Canonical name for the per-switch loopback/ASN sheet. Renamed from the legacy
+# "Loopbacks" to "Loopbacks & ASNs" once it carried the ASN column.
+LOOPBACKS_SHEET_NAME = "Loopbacks & ASNs"
+
+
+# --- Switch port parsing -----------------------------------------------------
+#
+# ONE source of truth for what a switch port token looks like. This used to be
+# two: a case-INSENSITIVE regex in validate_excel.py and a case-SENSITIVE
+# parser in topology_generator.py. The validator therefore accepted `SWP49`,
+# and the topology generator then silently dropped the port — a cabled link
+# vanished from the fabric with no error at any stage (ERA-96 / GitLab #66).
+#
+# Case is normalised, so `SWP49`, `Swp49` and `swp49` are all the same port.
+# Cumulus itself names ports lowercase; accepting the operator's capitalisation
+# is a courtesy, not a new grammar. No shipped workbook contains an uppercase
+# token (63,335 lowercase across all 53 shipped workbooks at the time of the
+# change), so this is behaviour-preserving for every reference tree.
+SWP_PORT_RE = re.compile(r'^swp(\d+)(?:s(\d+))?$', re.IGNORECASE)
+
+
+def parse_swp_port(port_str):
+    """Parse a switch port token into ``(base_num, sub_port_or_None)``.
+
+    Accepts, case-insensitively::
+
+        'swp49'   -> (49, None)
+        'SWP49'   -> (49, None)
+        'swp49s3' -> (49, 3)
+
+    and, deliberately, a **bare number** for ports carried in the Wire Map
+    without the ``swp`` prefix::
+
+        '50'      -> (50, None)
+
+    Returns ``None`` if the token matches none of those.
+
+    NOTE the bare-number form is accepted here but rejected by the validator's
+    strict ``SWP_PORT_RE``. That asymmetry is intentional and safe: it fails
+    *closed*, so an operator who types a bare number is told about it at
+    ``make validate-excel`` rather than having the port silently accepted.
+    The case asymmetry was the opposite — it failed *open* — which is why it
+    was removed.
+    """
+    text = str(port_str or '').strip()
+    m = SWP_PORT_RE.match(text)
+    if m:
+        return int(m.group(1)), (int(m.group(2)) if m.group(2) is not None else None)
+    m = re.match(r'^(\d+)$', text)
+    if m:
+        return int(m.group(1)), None
+    return None
+
+
+def loopbacks_sheet_name(wb):
+    """Return the workbook's loopbacks sheet name, or None.
+
+    Accepts both the canonical "Loopbacks & ASNs" and the legacy "Loopbacks"
+    (any sheet whose name starts with "loopback", case-insensitively).
+    """
+    return next((s for s in getattr(wb, 'sheetnames', [])
+                 if str(s).strip().lower().startswith('loopback')), None)
+
+
 # Module-level MAC registry for collision detection within a generation run.
 _mac_registry: dict[str, str] = {}
 
@@ -30,7 +94,7 @@ def generate_mac(node: str, interface: str, seed: str = "era") -> str:
     key = f"{seed}:{node}:{interface}"
     for attempt in range(64):
         tag = key if attempt == 0 else f"{key}#{attempt}"
-        h = hashlib.md5(tag.encode()).hexdigest()
+        h = hashlib.md5(tag.encode(), usedforsecurity=False).hexdigest()
         mac = f"48:b0:2d:{h[0:2]}:{h[2:4]}:{h[4:6]}"
         existing = _mac_registry.get(mac)
         if existing is None:

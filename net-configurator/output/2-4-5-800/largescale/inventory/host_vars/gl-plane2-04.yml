@@ -1,21 +1,30 @@
 ---
 # Host variables for gl-plane2-04 (Generated from Excel)
-ansible_host: 172.20.0.48
+ansible_host: 172.20.0.50
 hostname: gl-plane2-04
 mac_address: 48:b0:2d:06:a3:7b
 ip_assignment_mode: dhcp
+acls:
+- id: acl-default-dos
+  control_plane_inbound: true
+  type: null
+  rule: []
+- id: acl-default-whitelist
+  control_plane_inbound: true
+  type: null
+  rule: []
 plane: 2
-lo_ip: 10.1.2.4/32
-vrf_gpu_loopback: 10.1.2.14/32
+lo_ip: 10.2.1.4/32
+vrf_gpu_loopback: 10.2.1.24/32
 asn: 4200102104
 overlay_peers:
-- 10.1.2.41
-- 10.1.2.42
-- 10.1.2.43
-- 10.1.2.44
-- 10.1.2.45
-- 10.1.2.46
-plane_mate_lo_ip: 10.1.2.41
+- 10.2.1.41
+- 10.2.1.42
+- 10.2.1.43
+- 10.2.1.44
+- 10.2.1.45
+- 10.2.1.46
+plane_mate_lo_ip: 10.2.1.41
 vlan900_ip: 192.168.16.5/20
 vlan900_vrr: 192.168.16.1/20
 gpu_subports: swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1

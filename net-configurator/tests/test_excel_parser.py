@@ -35,7 +35,10 @@ from excel_parser import (
     generate_prefix_lists,
     categorize_nodes,
     segment_esi_for_node,
+    build_per_switch_direct_interfaces,
     build_per_switch_server_roles,
+    build_per_switch_gpu_rail_interfaces,
+    process_excel_template,
 )
 
 
@@ -143,7 +146,7 @@ def _reset_mac_reg():
 
 
 # ---------------------------------------------------------------------------
-# ADR-0004: per-node ESI + per-switch server-role emission (dedicated cl tier)
+# Per-node ESI + per-switch server-role emission (dedicated cl tier)
 # ---------------------------------------------------------------------------
 
 class TestPerNodeESIandPerSwitchRoles:
@@ -177,14 +180,25 @@ class TestPerNodeESIandPerSwitchRoles:
              "Storage", None, None, None, "cl", "cl-01", "swp12s1"],
             ["Yes", "storage", "storage-02", "STOR P2", None, None,
              "Storage", None, None, None, "cl", "cl-05", "swp12s0"],
-            # converged csl leaf must be ignored (golden port-based ESI kept)
+            # csl-named leaf: same 'csl' role as cl-*, so on a dedicated tier it
+            # is treated identically (gating is by role+tier, never by name).
             ["Yes", "compute", "su-01-node-09", "B3240 P1", None, None,
              "CPU/In-Band Network", None, None, None, "csl", "csl-01", "swp1s0"],
         ]
         _make_wiremap_sheet(wb, rows)
         agg = {"cpu": {"breakout": 4, "lanes": 2, "vlan": 300},
                "storage": {"breakout": 4, "vlan": 500}}
-        per_switch = build_per_switch_server_roles(wb["Wire Map"], agg)
+        # Per-switch server bonds/ESI only exist on a DEDICATED N/S tier
+        # (ns_tiers > 1); this multi-leaf cl-06/cl-07 fixture is exactly that.
+        # Pass a realistic nodes_function_map (switch -> Function) exactly as the
+        # production parser does: a split leaf's Function is the bare 'cl'. This
+        # guards the regression where the leaf gate classified the Function value
+        # ('cl' -> 'cl' != 'csl' -> skip every leaf -> phantom bonds) instead of
+        # the hostname. The gate must include cl leaves regardless of this map.
+        nfm = {"cl-01": "cl", "cl-05": "cl", "cl-06": "cl",
+               "cl-07": "cl", "csl-01": "csl"}
+        per_switch = build_per_switch_server_roles(
+            wb["Wire Map"], agg, nodes_function_map=nfm, dedicated_ns_tier=True)
 
         # cl-06 and cl-07 both carry su-01-node-06's ESI (1006), on their own port.
         esi_06 = per_switch["cl-06"]["cpu"]["bond_overrides"]["bond1s1"]["segment_id"]
@@ -201,8 +215,140 @@ class TestPerNodeESIandPerSwitchRoles:
         assert per_switch["cl-07"]["cpu"]["port_overrides"][1]["subports"] == [0]
         assert "bond1s1" not in per_switch["cl-07"]["cpu"]["bond_overrides"]
 
-        # Converged csl-* is NOT included (keeps golden port-based ESI).
-        assert "csl-01" not in per_switch
+        # Name-independence: a csl-* leaf is the same 'csl' role as cl-* and is
+        # included on a dedicated tier (this was the cl-vs-csl name-gating bug).
+        assert "csl-01" in per_switch
+
+        # Tier-gating: on a CONVERGED tier (ns_tiers == 1) NO leaf gets
+        # per-switch roles — the shared group network_roles / golden ESI is kept.
+        assert build_per_switch_server_roles(
+            wb["Wire Map"], agg, dedicated_ns_tier=False) == {}
+
+    def test_multi_slot_bonds_get_distinct_esi(self):
+        """ADR-0061 quad-connected support servers ("ConnectX-7 SL1 P1/P2" +
+        "SL3 P1/P2") must get two DISTINCT ESIs, one per adapter slot.
+
+        nic_num alone (the trailing digit) can't tell them apart: "SL1 P1" and
+        "SL3 P1" both end in "1", so both bonds landed on bond_idx 0 -> the
+        SAME ESI on cl-01/cl-02 -> zebra rejected the second bond with "ESI
+        already exists on a different interface" -> nv config apply failed on
+        every cl-* leaf carrying a support bond -> the whole converged-leaf
+        tier never configured. Reproduced live on 2-4-5-800/largescale (148
+        unreachable, cross-ping 0/3) and confirmed on real switch syslog.
+        """
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+        rows = [
+            ["Yes", "support", "support-01", "ConnectX-7 SL1 P1", None, None,
+             "Support", None, None, None, "cl", "cl-01", "swp22s0"],
+            ["Yes", "support", "support-01", "ConnectX-7 SL1 P2", None, None,
+             "Support", None, None, None, "cl", "cl-02", "swp22s0"],
+            ["Yes", "support", "support-01", "ConnectX-7 SL3 P1", None, None,
+             "Support", None, None, None, "cl", "cl-01", "swp22s1"],
+            ["Yes", "support", "support-01", "ConnectX-7 SL3 P2", None, None,
+             "Support", None, None, None, "cl", "cl-02", "swp22s1"],
+        ]
+        _make_wiremap_sheet(wb, rows)
+        agg = {"support": {"breakout": 4, "vlan": 400}}
+        nfm = {"cl-01": "cl", "cl-02": "cl"}
+        per_switch = build_per_switch_server_roles(
+            wb["Wire Map"], agg, nodes_function_map=nfm, dedicated_ns_tier=True)
+
+        sl1 = per_switch["cl-01"]["support"]["bond_overrides"]["bond22s0"]["segment_id"]
+        sl3 = per_switch["cl-01"]["support"]["bond_overrides"]["bond22s1"]["segment_id"]
+        assert sl1 == 800001
+        assert sl3 == 1800001
+
+        # Still identical across the mirrored leaf for EACH bond (that's what
+        # makes EVPN-MH work at all).
+        assert sl1 == per_switch["cl-02"]["support"]["bond_overrides"]["bond22s0"]["segment_id"]
+        assert sl3 == per_switch["cl-02"]["support"]["bond_overrides"]["bond22s1"]["segment_id"]
+
+    def test_no_switch_has_duplicate_esi_across_bonds(self):
+        """Generator-side guard: no two bond interfaces on the same switch may
+        share an `evpn multihoming segment local-id`. FRR treats a duplicate
+        ESI as a hard config-apply failure (zebra: "ESI already exists on a
+        different interface"), so this must never regenerate. Covers every
+        `bond_overrides` entry produced for the sample mixed compute/storage/
+        multi-slot-support fixture used elsewhere in this file.
+        """
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+        rows = [
+            ["Yes", "compute", "su-01-node-06", "B3240 P1", None, None,
+             "CPU/In-Band Network", None, None, None, "cl", "cl-01", "swp1s0"],
+            ["Yes", "compute", "su-01-node-06", "B3240 P2", None, None,
+             "CPU/In-Band Network", None, None, None, "cl", "cl-02", "swp1s0"],
+            ["Yes", "support", "support-01", "ConnectX-7 SL1 P1", None, None,
+             "Support", None, None, None, "cl", "cl-01", "swp22s0"],
+            ["Yes", "support", "support-01", "ConnectX-7 SL1 P2", None, None,
+             "Support", None, None, None, "cl", "cl-02", "swp22s0"],
+            ["Yes", "support", "support-01", "ConnectX-7 SL3 P1", None, None,
+             "Support", None, None, None, "cl", "cl-01", "swp22s1"],
+            ["Yes", "support", "support-01", "ConnectX-7 SL3 P2", None, None,
+             "Support", None, None, None, "cl", "cl-02", "swp22s1"],
+        ]
+        _make_wiremap_sheet(wb, rows)
+        agg = {"cpu": {"breakout": 4, "lanes": 2, "vlan": 300},
+               "support": {"breakout": 4, "vlan": 400}}
+        nfm = {"cl-01": "cl", "cl-02": "cl"}
+        per_switch = build_per_switch_server_roles(
+            wb["Wire Map"], agg, nodes_function_map=nfm, dedicated_ns_tier=True)
+
+        for sw, roles in per_switch.items():
+            seen = {}
+            for role in roles.values():
+                for bond_name, override in role.get("bond_overrides", {}).items():
+                    esi = override["segment_id"]
+                    assert esi not in seen, (
+                        f"{sw}: duplicate ESI {esi} on {bond_name!r} and "
+                        f"{seen.get(esi)!r}"
+                    )
+                    seen[esi] = bond_name
+
+    def test_direct_interfaces_are_scoped_to_each_leaf(self):
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+        rows = [
+            ["Yes", "cl", "cl-01", "swp25s0", None, None,
+             "ISL", None, None, None, "cs", "cs-01", "swp1s0"],
+            ["Yes", "cl", "cl-02", "swp25s1", None, None,
+             "ISL", None, None, None, "cs", "cs-01", "swp1s1"],
+            ["Yes", "edge", "cust-net-edge-01", "swp1", None, None,
+             "Edge Uplink", None, None, None, "cl", "cl-01", "swp63s0"],
+            ["Yes", "edge", "cust-net-edge-01", "swp2", None, None,
+             "Edge Uplink", None, None, None, "cl", "cl-02", "swp64s1"],
+            ["Yes", "oob-switch", "oob-switch-01", "swp49", None, None,
+             "OOB Uplink", None, None, None, "cl", "cl-01", "swp61s0"],
+        ]
+        _make_wiremap_sheet(wb, rows)
+        aggregated = {
+            "isl_interfaces": {
+                "ports": [25], "breakout": 2, "lanes": 4,
+                "port_overrides": {},
+            },
+            "edge_interfaces": {
+                "ports": [63, 64], "breakout": 2, "lanes": 4,
+                "port_overrides": {},
+            },
+            "oob_uplink_interfaces": {
+                "ports": [61], "breakout": 8, "lanes": 1,
+                "port_overrides": {61: {"subports": [0]}},
+            },
+        }
+        result = build_per_switch_direct_interfaces(
+            wb["Wire Map"],
+            aggregated,
+            nodes_function_map={"cl-01": "cl", "cl-02": "cl", "cs-01": "cs"},
+            oob_uplink_mode="l3",
+        )
+
+        assert result["cl-01"]["isl_interfaces"]["port_overrides"][25]["subports"] == [0]
+        assert result["cl-02"]["isl_interfaces"]["port_overrides"][25]["subports"] == [1]
+        assert result["cl-01"]["edge_interfaces"]["ports"] == [63]
+        assert result["cl-02"]["edge_interfaces"]["ports"] == [64]
+        assert result["cl-01"]["oob_uplink_interfaces"]["ports"] == [61]
+        assert result["cl-02"]["oob_uplink_interfaces"]["ports"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -415,8 +561,8 @@ class TestGenerateGroupVars:
             },
         }
         nodes = [
-            {"role": "oob-switch", "name": "mg-01"},
-            {"role": "oob-switch", "name": "mg-02"},
+            {"role": "oob-switch", "name": "mg-01", "status": "Active", "category": "oob-switch"},
+            {"role": "oob-switch", "name": "mg-02", "status": "Active", "category": "oob-switch"},
         ]
         loopback_overrides = {
             "mg-01": {"lo": "10.187.4.35/32"},
@@ -447,11 +593,11 @@ class TestGenerateGroupVars:
         assert "oob_uplink_interfaces" in core_vars
         neighbors = core_vars["default_vrf_bgp"]["neighbors"]
         peer_groups = {pg["id"]: pg for pg in core_vars["default_vrf_bgp"]["peer_groups"]}
-        assert any(n["interfaces"] == "isl" and n["peer_group"] == "internal-isl" for n in neighbors)
+        assert any(n["interfaces"] == "isl" and n["peer_group"] == "internal_isl" for n in neighbors)
         assert any(n["interfaces"] == "oob_uplink" and n["peer_group"] == "underlay" for n in neighbors)
         assert any(n["interfaces"] == ["10.187.4.35", "10.187.4.36"] and n["peer_group"] == "overlay"
                    for n in neighbors)
-        assert peer_groups["internal-isl"]["remote_as"] == "internal"
+        assert peer_groups["internal_isl"]["remote_as"] == "internal"
         assert peer_groups["underlay"]["remote_as"] == "external"
         assert peer_groups["overlay"]["update_source"] == "lo"
         # W-ECMP only works over eBGP (confirmed via NVIDIA Cumulus Linux
@@ -459,7 +605,7 @@ class TestGenerateGroupVars:
         # peer-group (eBGP to MG) qualifies and mirrors the identical,
         # already-correct policy on the OOB/MG switch's own 'underlay'
         # peer-group in oob_nvue_cli.j2. Found via a from-scratch brownfield
-        # rebuild of pdx01-m3-era-289-800 diffed against its live config.
+        # rebuild of a live 2-8-9-800 site diffed against its live config.
         assert (peer_groups["underlay"]["address_family"]["ipv4_unicast"]["policy_outbound_route_map"]
                 == "WEIGHTED_ECMP")
 
@@ -512,6 +658,18 @@ class TestGenerateGroupVars:
         # Still parsed because default column indices 1-6 match the data layout
         assert len(result) == 1
 
+    def test_parse_nodes_reads_oob_vlan_column(self):
+        """Nodes tab reads OOB VLAN column and stores as oob_vlan (str, '' when absent)."""
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["Function", "Name", "MAC Address", "Mgmt IP", "Prefix", "Gateway", "OOB VLAN"])
+        ws.append(["OOB Switch", "oob-switch-01", "", "10.0.0.11", 24, "10.0.0.1", 201])
+        ws.append(["GPU", "su-01-node-01", "", "192.168.201.21", 24, "", ""])
+        nodes = parse_nodes(ws)
+        by_name = {n["name"]: n for n in nodes}
+        assert by_name["oob-switch-01"]["oob_vlan"] == "201"
+        assert by_name["su-01-node-01"]["oob_vlan"] == ""
+
 
 # ---------------------------------------------------------------------------
 # generate_prefix_lists
@@ -520,8 +678,8 @@ class TestGenerateGroupVars:
 class TestGeneratePrefixLists:
     """Tests for OOB_LOCAL_IF in l2 vs l3 oob_uplink_mode.
 
-    Found via a from-scratch brownfield rebuild of a live 2-8-9-800 site
-    (pdx01-m3-era-289-800): in l3 mode the core/CSL switch never owns an SVI
+    Found via a from-scratch brownfield rebuild of a live 2-8-9-800 site:
+    in l3 mode the core/CSL switch never owns an SVI
     on the OOB VLAN (the gateway lives on the OOB/MG switches), so the old
     formula computed a throwaway address instead of anything real.
 
@@ -557,7 +715,11 @@ class TestGeneratePrefixLists:
             oob_uplink_mode="l2",
         )
         oob_local_if = next(pl for pl in prefix_lists if pl["id"] == "OOB_LOCAL_IF")
-        assert oob_local_if["rule"] == [
+        # Fields under test only. Exact dict equality breaks whenever a
+        # descriptive field is added — ADR-0043 put `description` on every rule
+        # — and says nothing about the l2/l3 SVI behaviour these assert.
+        assert [{k: v for k, v in r.items() if k != "description"}
+                for r in oob_local_if["rule"]] == [
             {"id": "10", "match": "10.187.4.1/32", "max_len": "32"},
             {"id": "20", "match": "10.187.5.2/32", "max_len": "32"},  # own OOB VLAN SVI
         ]
@@ -570,7 +732,11 @@ class TestGeneratePrefixLists:
             oob_uplink_mode="l3",
         )
         oob_local_if = next(pl for pl in prefix_lists if pl["id"] == "OOB_LOCAL_IF")
-        assert oob_local_if["rule"] == [
+        # Fields under test only. Exact dict equality breaks whenever a
+        # descriptive field is added — ADR-0043 put `description` on every rule
+        # — and says nothing about the l2/l3 SVI behaviour these assert.
+        assert [{k: v for k, v in r.items() if k != "description"}
+                for r in oob_local_if["rule"]] == [
             {"id": "10", "match": "10.187.4.1/32", "max_len": "32"},
         ]
 
@@ -591,6 +757,17 @@ class TestGeneratePrefixLists:
         )
         oob_local_if = next(pl for pl in prefix_lists if pl["id"] == "OOB_LOCAL_IF")
         assert oob_local_if["rule"][-1]["match"] == "10.187.5.2/32"
+
+
+def test_generate_prefix_lists_era_prefixes_includes_oob_subnets():
+    from excel_parser import generate_prefix_lists
+    vlans = [{"id": 300, "name": "in-band", "subnet": "172.16.178.0/24", "vrf": "INBAND"}]
+    pls = generate_prefix_lists(vlans, core_num=1, loopback_base="172.16.176",
+                                oob_subnets=["192.168.200.0/24", "192.168.201.0/24"])
+    era = next(p for p in pls if p["id"] == "ERA_PREFIXES")
+    matches = {r["match"] for r in era["rule"]}
+    assert "192.168.200.0/24" in matches
+    assert "192.168.201.0/24" in matches
 
 
 # ---------------------------------------------------------------------------
@@ -784,6 +961,78 @@ class TestBuildWiremapRowList:
         assert result[0]["system_name"] == "core-01"
 
 
+def test_per_switch_gpu_rails_include_rows_hidden_from_air():
+    """Air display filtering must not remove physical GPU switch config."""
+    rows = [
+        {
+            "switch_name": "core-01",
+            "net_profile": "GPU Rail 1",
+            "switch_port": "swp9s0",
+            "display_in_air": True,
+        },
+        {
+            "switch_name": "core-01",
+            "net_profile": "GPU Rail 1",
+            "switch_port": "swp9s1",
+            "display_in_air": True,
+        },
+        {
+            "switch_name": "core-01",
+            "net_profile": "GPU Rail 1",
+            "switch_port": "swp11s0",
+            "display_in_air": False,
+        },
+        {
+            "switch_name": "core-01",
+            "net_profile": "GPU Rail 1",
+            "switch_port": "swp11s1",
+            "display_in_air": False,
+        },
+        {
+            "switch_name": "core-02",
+            "net_profile": "GPU Rail 1",
+            "switch_port": "swp12s0",
+            "display_in_air": False,
+        },
+    ]
+    vlans = [{"id": 901, "name": "gpu_rail1"}]
+
+    result = build_per_switch_gpu_rail_interfaces(rows, "core-01", vlans)
+
+    assert result["rail1"]["ports"] == [9, 11]
+    assert result["rail1"]["vlan"] == 901
+    assert result["rail1"]["port_overrides"] == {}
+
+
+@pytest.mark.parametrize(
+    ("arch", "expected_parents"),
+    [
+        ("2-4-3-200", list(range(9, 25))),
+        ("2-8-5-200", list(range(6, 26))),
+        ("2-8-9-400", list(range(4, 28))),
+    ],
+)
+def test_converged_inventory_keeps_disabled_scale_out_gpu_ports(
+        tmp_path, arch, expected_parents):
+    """Active-only Air filtering must not truncate physical switch rails."""
+    repo = Path(__file__).parent.parent
+    workbook = repo / "input" / arch / "default" / f"{arch}.xlsx"
+    output = tmp_path / arch
+
+    process_excel_template(workbook, output)
+
+    for switch in ("core-01", "core-02"):
+        host_vars = yaml.safe_load(
+            (output / "host_vars" / f"{switch}.yml").read_text()
+        )
+        configured = sorted({
+            parent
+            for rail in host_vars["gpu_rail_interfaces"].values()
+            for parent in rail["ports"]
+        })
+        assert configured == expected_parents
+
+
 # ---------------------------------------------------------------------------
 # parse_oob_switch_configs
 # ---------------------------------------------------------------------------
@@ -926,7 +1175,7 @@ class TestParseCorePortConfig:
         assert result["oob_uplink_interfaces"]["ports"] == [59]
 
     def test_edge_uplinks_forced_into_exit_vrf_when_profile_default(self):
-        """ADR-0007: edge uplinks must land in the EXIT VRF even if the Edge
+        """Edge uplinks must land in the EXIT VRF even if the Edge
         Uplink profile VRF column says 'default'.
 
         The EXIT-VRF BGP peers the edge interfaces; for unnumbered eBGP the
@@ -993,7 +1242,7 @@ class TestBuildDevices:
 
     def test_empty_nodes(self):
         """Empty nodes list returns empty devices dict."""
-        result = build_devices([], [], [])
+        result = build_devices([], [])
         assert result == {}
 
     def test_switches_excluded(self):
@@ -1001,7 +1250,7 @@ class TestBuildDevices:
         nodes = [
             {"name": "core-01", "role": "core-01", "mgmt_ip": "192.168.200.2", "enabled": True},
         ]
-        result = build_devices(nodes, [], [])
+        result = build_devices(nodes, [])
         assert "core-01" not in result
 
     def test_infra_excluded(self):
@@ -1009,7 +1258,7 @@ class TestBuildDevices:
         nodes = [
             {"name": "dhcp-oob", "role": "dhcp-oob", "mgmt_ip": "192.168.200.252", "enabled": True},
         ]
-        result = build_devices(nodes, [], [])
+        result = build_devices(nodes, [])
         assert "dhcp-oob" not in result
 
     def test_compute_node_included(self):
@@ -1018,7 +1267,7 @@ class TestBuildDevices:
             {"name": "su-01-node-01", "role": "su-01-node-01",
              "mgmt_ip": "192.168.200.11", "enabled": True},
         ]
-        result = build_devices(nodes, [], [])
+        result = build_devices(nodes, [])
         assert "su-01-node-01" in result
         assert result["su-01-node-01"]["eth0_ip"] == "192.168.200.11"
         assert result["su-01-node-01"]["mac"].startswith("48:b0:2d:")
@@ -1030,7 +1279,7 @@ class TestBuildDevices:
              "mac": "48:b0:2d:aa:bb:cc",
              "mgmt_ip": "192.168.200.11", "enabled": True},
         ]
-        result = build_devices(nodes, [], [])
+        result = build_devices(nodes, [])
         assert result["su-01-node-01"]["mac"] == "48:b0:2d:aa:bb:cc"
 
     def test_disabled_nodes_excluded(self):
@@ -1039,7 +1288,7 @@ class TestBuildDevices:
             {"name": "su-01-node-01", "role": "su-01-node-01",
              "mgmt_ip": "192.168.200.11", "enabled": False},
         ]
-        result = build_devices(nodes, [], [])
+        result = build_devices(nodes, [])
         assert "su-01-node-01" not in result
 
     def test_compute_data_plane_ips(self):
@@ -1052,7 +1301,7 @@ class TestBuildDevices:
             {"name": "CPU/In-Band", "subnet": "172.16.178.0/24"},
             {"name": "GPU Network", "subnet": "172.16.179.0/24"},
         ]
-        result = build_devices(nodes, vlans, [])
+        result = build_devices(nodes, vlans)
         dev = result["su-01-node-01"]
         assert "bond_ip" in dev
         assert dev["bond_ip"].startswith("172.16.178.")
@@ -1067,7 +1316,7 @@ class TestBuildDevices:
             {"name": "INBAND", "subnet": "172.16.3.0/24"},
             {"name": "GPU Network", "subnet": "192.168.0.0/20"},
         ]
-        result = build_devices(nodes, vlans, [])
+        result = build_devices(nodes, vlans)
         assert result["su-01-node-01"]["bond_ip"].startswith("172.16.3.")
 
     def test_support_nodes_fall_back_to_inband_subnet(self):
@@ -1079,7 +1328,7 @@ class TestBuildDevices:
         vlans = [
             {"name": "INBAND", "subnet": "172.16.3.0/24"},
         ]
-        result = build_devices(nodes, vlans, [])
+        result = build_devices(nodes, vlans)
         dev = result["support-01"]
         assert dev["bond_ip1"].startswith("172.16.3.")
         assert dev["bond_ip2"].startswith("172.16.3.")
@@ -1093,7 +1342,7 @@ class TestBuildDevices:
         vlans = [
             {"name": "Storage", "subnet": "172.16.180.0/24"},
         ]
-        result = build_devices(nodes, vlans, [])
+        result = build_devices(nodes, vlans)
         dev = result["storage-01"]
         assert "bond_ip1" in dev
         assert dev["bond_ip1"].startswith("172.16.180.")
@@ -1306,7 +1555,7 @@ class TestPerRailPerPlaneParser:
         nodes = [{'name': 'gpu-01', 'role': 'gpu', 'mac': '', 'mgmt_ip': '192.168.200.10', 'enabled': True}]
         vlans = self._make_test_vlans()
         wiremap = self._make_test_wiremap()
-        result = build_devices(nodes, vlans, [], wiremap_rows=wiremap,
+        result = build_devices(nodes, vlans, wiremap_rows=wiremap,
                                gpu_vlan_mode='single')
         # No gpu_interfaces emitted since the per-rail-per-plane path is gated off
         gpus = result.get('gpu-01', {}).get('gpu_interfaces', [])
@@ -1325,3 +1574,33 @@ def test_split_roles_bucket_into_new_groups():
     assert any(n["name"] == "cs-01" for n in c["cs"])
     assert any(n["name"] == "gl-plane1-01" for n in c["gl_plane1"])
     assert any(n["name"] == "gs-plane1-01" for n in c["gs_plane1"])
+
+
+def test_build_devices_signature_has_no_mgmt_subnets():
+    import inspect
+    from scripts.excel_parser import build_devices
+    assert "mgmt_subnets" not in inspect.signature(build_devices).parameters
+
+
+def test_ztp_interfaces_from_oob_vlans(tmp_path):
+    # Build a minimal parsed context and assert ztp_interfaces count == distinct OOB subnets.
+    from scripts.excel_parser import resolve_oob_vlans
+    vlans = [
+        {"id": 200, "name": "oob-1", "subnet": "192.168.200.0/24", "gateway": "192.168.200.1", "vrf": "OOB"},
+        {"id": 201, "name": "oob-2", "subnet": "192.168.201.0/24", "gateway": "192.168.201.1", "vrf": "OOB"},
+    ]
+    oob = [{"name": "oob-switch-01", "oob_vlan": "200"}, {"name": "oob-switch-02", "oob_vlan": "201"}]
+    subnets = resolve_oob_vlans(vlans, oob)["subnets"]
+    assert len(subnets) == 2  # one ztp interface per distinct OOB subnet
+
+
+def test_no_mgmt_subnets_left_in_excel_parser():
+    from pathlib import Path
+    src = Path("scripts/excel_parser.py").read_text()
+    assert "mgmt_subnets" not in src, "mgmt_subnets must be fully removed"
+
+
+def test_air_scripts_have_no_mgmt_subnets():
+    from pathlib import Path
+    for p in ["scripts/air-deploy.py", "scripts/generate-node-instructions.py"]:
+        assert "mgmt_subnets" not in Path(p).read_text(), p

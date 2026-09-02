@@ -1,12 +1,21 @@
 ---
 # Host variables for gl-plane1-13 (Generated from Excel)
-ansible_host: 172.20.0.41
+ansible_host: 172.20.0.43
 hostname: gl-plane1-13
 mac_address: 48:b0:2d:eb:6c:c1
 ip_assignment_mode: dhcp
+acls:
+- id: acl-default-dos
+  control_plane_inbound: true
+  type: null
+  rule: []
+- id: acl-default-whitelist
+  control_plane_inbound: true
+  type: null
+  rule: []
 plane: 1
 lo_ip: 10.1.1.13/32
-vrf_gpu_loopback: 10.1.1.23/32
+vrf_gpu_loopback: 10.1.1.33/32
 asn: 4200101113
 overlay_peers:
 - 10.1.1.41

@@ -35,14 +35,12 @@ from airlib.api import (
     delete_simulation,
     delete_userconfig,
     find_loaded_simulation,
-    list_simulations,
     list_userconfigs,
     resolve_simulation,
 )
 from airlib.auth import authenticate
 from airlib.env import load_air_config, require_config
 from airlib.errors import AirAPIError, AirError
-from airlib.models import SimState
 
 console = Console()
 

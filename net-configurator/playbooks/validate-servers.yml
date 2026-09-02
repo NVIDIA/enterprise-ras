@@ -61,7 +61,14 @@
         WORK=$(mktemp -d /tmp/srvv.XXXXXX)
         {% for item in server_groups %}
         {% set src_dev = devices.get(item, {}) %}
-        {% set src_is_compute = item.startswith('su-') or item.startswith('node-') or item.startswith('gpu-') %}
+        {# Excel `Function` -> devices[*].role is authoritative; the name test is a
+           fallback for pre-role inventories. Matching on the hostname alone made
+           `<site>-gpu-01` read as non-compute, so it looked up bond_ip1 (which
+           compute nodes do not have), the source IP came back empty and the gateway
+           check silently became SKIP — which all_pass counts as a PASS. #}
+        {% set src_dev_role = (devices.get(item, {}) or {}).get('role', '') %}
+        {% set src_is_compute = (src_dev_role == 'compute') if src_dev_role
+                                else (item.startswith('su-') or item.startswith('node-') or item.startswith('gpu-')) %}
         {% set src_inband_ip = (src_dev.get('bond_ip', '') if src_is_compute else src_dev.get('bond_ip1', '')) | regex_replace('/.*', '') %}
         {% set _gw = '' %}
         {% set _role = 'unknown' %}
@@ -69,7 +76,7 @@
         {% if item in groups.get('support', []) %}{% set _gw = common.support_gateway | default('') %}{% set _role = 'support' %}{% endif %}
         {% if src_dev.get('gpu_interfaces') or src_dev.get('gpu_ips') %}{% set _gw = common.cpu_gateway | default('') %}{% set _role = 'gpu' %}{% endif %}
         {% if item in groups.get('nodes', []) and not (src_dev.get('gpu_interfaces') or src_dev.get('gpu_ips')) %}{% set _gw = common.cpu_gateway | default('') %}{% set _role = 'compute' %}{% endif %}
-        bash /tmp/server_validate_probe.sh '{{ hostvars[item].ansible_host }}' '{{ server_ansible_password }}' '{{ item }}' '{{ src_inband_ip }}' '{{ _gw }}' '{{ _role }}' > "$WORK/{{ item }}.out" 2>/dev/null &
+        bash /tmp/server_validate_probe.sh '{{ hostvars[item].ansible_host }}' '{{ server_ansible_password }}' '{{ item }}' '{{ src_inband_ip }}' '{{ _gw }}' '{{ _role }}' '{{ common.oob_gateway | default('') }}' > "$WORK/{{ item }}.out" 2>/dev/null &
         {% endfor %}
         wait
         {% for item in server_groups %}
@@ -214,7 +221,24 @@
           {% set ns.unreachable = ns.unreachable + 1 %}
           ❌ {{ "%-20s" | format(s.name) }} UNREACHABLE ({{ s.ip }})
           {% else %}
-          {% set all_pass = (s.gw_ping == 'PASS' or s.gw_ping == 'SKIP') and s.eth0_ip != '' and s.lldpd == 'active' %}
+          {# oob_ping is now counted. It used to be rendered with a red ❌ while
+             having no bearing on the verdict, so a report could show seven ❌ OOB
+             lines and still conclude "All server validations passed".
+
+             ERA-93: a gateway check that did not RUN is not a pass. gw_ping is
+             SKIP only when the probe was handed an empty source IP or an empty
+             expected gateway — i.e. the tool could not work out what to test,
+             which is exactly the state ERA-91's role misclassification produced.
+             Four compute gateways were never probed and counted as passing,
+             under a green tick reading "Gateway: SKIP (no data interfaces)".
+             An unverified check now reads as unverified.
+
+             oob_ping keeps its SKIP allowance: it is SKIP only when eth0_ip is
+             empty, and that is already failed by bad_eth0 below — demanding it
+             twice would report one fault as two. #}
+          {% set all_pass = s.gw_ping == 'PASS' and s.eth0_ip != ''
+                            and s.lldpd == 'active'
+                            and (s.oob_ping == 'PASS' or s.oob_ping == 'SKIP') %}
           {% if all_pass %}{% set ns.pass = ns.pass + 1 %}{% else %}{% set ns.fail = ns.fail + 1 %}{% endif %}
           {{ "✅" if all_pass else "⚠️ " }} {{ "%-20s" | format(s.name) }} [{{ s.role }}]
              Hostname:    {{ s.hostname }}
@@ -222,7 +246,7 @@
              Bond:        {{ s.bond_mode | default('none') }}{{ " (active: " + s.bond_active + ")" if s.bond_active else "" }}
              VLANs:       {{ s.vlan_ifaces | default('none') }}
              LLDP:        {{ s.lldpd }}{{ " ✅" if s.lldpd == 'active' else " ❌" }}
-             Gateway:     {{ s.gw_ping }}{{ " ✅" if s.gw_ping == 'PASS' else (" ❌" if s.gw_ping == 'FAIL' else " ⏭️  (no data interfaces)") }}
+             Gateway:     {{ s.gw_ping }}{{ " ✅" if s.gw_ping == 'PASS' else (" ❌" if s.gw_ping == 'FAIL' else " ⚠️  NOT VERIFIED — no source IP or no gateway resolved for this role") }}
              OOB (eth0):  {{ s.oob_ping }}{{ " ✅" if s.oob_ping == 'PASS' else (" ❌" if s.oob_ping == 'FAIL' else "") }}
              Internet:    {{ s.inet_ping }}{{ " ✅" if s.inet_ping == 'PASS' else (" ❌" if s.inet_ping == 'FAIL' else "") }}
 
@@ -345,10 +369,12 @@
       vars:
         reachable: "{{ server_results | rejectattr('status', 'equalto', 'UNREACHABLE') | list }}"
         unreachable: "{{ server_results | selectattr('status', 'equalto', 'UNREACHABLE') | list }}"
-        bad_gw: "{{ reachable | rejectattr('gw_ping', 'in', ['PASS', 'SKIP']) | map(attribute='name') | list }}"
+        # ERA-93: SKIP is no longer an exemption — see the report block above.
+        bad_gw: "{{ reachable | rejectattr('gw_ping', 'equalto', 'PASS') | map(attribute='name') | list }}"
         bad_eth0: "{{ reachable | selectattr('eth0_ip', 'equalto', '') | map(attribute='name') | list }}"
         bad_lldp: "{{ reachable | rejectattr('lldpd', 'equalto', 'active') | map(attribute='name') | list }}"
-        with_issues: "{{ (bad_gw + bad_eth0 + bad_lldp) | unique | list }}"
+        bad_oob: "{{ reachable | rejectattr('oob_ping', 'in', ['PASS', 'SKIP']) | map(attribute='name') | list }}"
+        with_issues: "{{ (bad_gw + bad_eth0 + bad_lldp + bad_oob) | unique | list }}"
         xping_fail: "{{ xping_parsed | default([]) | selectattr('status', 'equalto', 'FAIL') | list }}"
       fail:
         msg: "Server validation failed: {{ unreachable | length }} unreachable, {{ with_issues | length }} with issues, {{ xping_fail | length }} cross-ping failures"

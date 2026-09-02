@@ -1,7 +1,7 @@
 # ============================================================================
 # 2-8-9-800 Deployment Inventory (Generated from Excel)
 # ============================================================================
-# 2 Core switches, 2 OOB switches
+# 8 switches: 2 CSL, 4 GSL, 2 OOB
 # ============================================================================
 
 [csl]
@@ -42,6 +42,7 @@ support-04
 support-05
 support-06
 support-07
+support-08
 
 [dhcp]
 external-dhcp

@@ -17,29 +17,82 @@ generating byte-identical output.
 
 ## Sheet schema
 
-Sheet name (case-sensitive): **`Loopbacks`**.
+Sheet name: **`Loopbacks & ASNs`** (the legacy name `Loopbacks` is still
+accepted). Matched by any sheet whose name starts with `Loopbacks`.
 
 One row per switch. The header row is the first row whose column-1
 cell starts with `Switch` (case-insensitive). Column headers are
 matched case-insensitively; unknown headers are warned and ignored.
 
-| Switch | Default | OOB | INBAND | EXIT | GPU |
-|---|---|---|---|---|---|
-| core-01 | 172.16.176.11/32 | 172.16.176.1/32 | 172.16.176.3/32 | 172.16.176.5/32 | 192.168.110.5/32 |
-| core-02 | 172.16.176.12/32 | 172.16.176.2/32 | 172.16.176.4/32 | 172.16.176.6/32 | 192.168.110.6/32 |
-| gsl-plane1-01 | 10.1.1.1/32 | | | | 10.1.1.11/32 |
-| gsl-plane1-02 | 10.1.1.2/32 | | | | 10.1.1.12/32 |
-| gsl-plane2-01 | 10.2.1.1/32 | | | | 10.2.1.11/32 |
-| gsl-plane2-02 | 10.2.1.2/32 | | | | 10.2.1.12/32 |
+| Switch | Default | OOB | INBAND | EXIT | GPU | STORAGE | ASN |
+|---|---|---|---|---|---|---|---|
+| core-01 | 172.16.176.11/32 | 172.16.176.151/32 | 172.16.176.167/32 | 172.16.176.183/32 | 192.168.110.5/32 | 172.16.176.199/32 | 4260394788 |
+| core-02 | 172.16.176.12/32 | 172.16.176.152/32 | 172.16.176.168/32 | 172.16.176.184/32 | 192.168.110.6/32 | 172.16.176.200/32 | 4260394788 |
+| gsl-plane1-01 | 10.1.1.1/32 | | | | 10.1.1.21/32 | | 4260395888 |
+| gsl-plane1-02 | 10.1.1.2/32 | | | | 10.1.1.22/32 | | 4260395888 |
+| gsl-plane2-01 | 10.2.1.1/32 | | | | 10.2.1.21/32 | | 4260396888 |
+| gsl-plane2-02 | 10.2.1.2/32 | | | | 10.2.1.22/32 | | 4260396888 |
+
+The values above are also what the parser computes when the cells are left
+blank — see [Computed defaults](#computed-defaults--block-map).
 
 - **Switch** — hostname, must match the `Name` column on the Nodes tab.
 - **Default** — the underlay loopback (`lo_ip` + underlay BGP router-id).
-- **OOB / INBAND / EXIT / GPU** — per-VRF loopbacks.
+- **OOB / INBAND / EXIT / GPU / STORAGE** — per-VRF loopbacks.
+- **ASN** — the switch's BGP autonomous-system number (see
+  [Per-node BGP ASN](#per-node-bgp-asn) below).
 - Blank cells fall back to the computed default — override only the
   values you care about.
-- `/32` mask is auto-appended when omitted.
+- `/32` mask is auto-appended when omitted (loopback columns).
 - Header aliases accepted: `Default` / `lo` / `Loopback`; `In-Band` for
-  INBAND.
+  INBAND; `ASN` / `BGP ASN` / `Autonomous System` for the ASN column.
+
+## Computed defaults — block map
+
+Where a cell is blank, the parser allocates from a **declared block** whose
+capacity is checked. Each role and each VRF owns a contiguous range, so a
+series can never grow into its neighbour; outgrowing a block raises a
+parse-time error naming the block rather than silently issuing a duplicate
+/32. Both tables live in `scripts/excel_parser.py`.
+
+**N/S fabric**, within `Settings.loopback_base`'s /24 (`VRF_LOOPBACK_BLOCKS`,
+`n` = switch index):
+
+| Range | Contents |
+|---|---|
+| `.11 - .60` | N/S leaf switch loopbacks |
+| `.61 - .100` | N/S spine switch loopbacks |
+| `.101 - .150` | OOB switch loopbacks |
+| `.151 - .166` | OOB VRF loopback — `.150 + n` |
+| `.167 - .182` | INBAND VRF loopback — `.166 + n` |
+| `.183 - .198` | EXIT VRF loopback — `.182 + n` |
+| `.199 - .214` | STORAGE VRF loopback — `.198 + n` |
+| `.215 - .254` | spare |
+
+The GPU VRF loopback is the exception: it rides the GPU VLAN subnet rather
+than `loopback_base`, at `<gpu-subnet>.4 + n`.
+
+**E/W plane fabric**, within each plane's own /24 (`PLANE_LOOPBACK_BLOCKS`,
+`n` = the switch's trailing index):
+
+| Range | Contents |
+|---|---|
+| `.1 - .20` | `gl` / `gsl` leaf switch loopback — `.0 + n` |
+| `.21 - .40` | `gl` / `gsl` GPU VRF loopback — `.20 + n` |
+| `.41 - .50` | `gs` spine switch loopback — `.40 + n` |
+| `.51 - .60` | `gs` GPU VRF loopback — `.50 + n` |
+| `.61 - .254` | spare |
+
+Leaf capacity is 20 and spine capacity 10, both above the largest shipped
+plane (16 leaves, 8 spines), so a plane can grow without a re-space.
+
+> **Upgrading from an older workbook.** Both layouts previously used narrow
+> strides — N/S VRFs at `.n`/`.2 + n`/`.4 + n`, and on a plane the GPU VRF at
+> `.10 + n` with `gs` spines at `.4 + n`. Those only stay disjoint on a small
+> fabric; at scale they overlapped each other and the switch loopbacks. If you
+> hand-authored a sheet against the old pattern, move it onto the blocks above.
+> `make validate-excel` reports any pinned value that lands outside its block,
+> so you can fix them one at a time until it reports clean.
 
 ## Behavior
 
@@ -72,12 +125,46 @@ produce byte-identical output.
   Default IPs outside it produce one warning per divergent /24.
   Dual-plane archs intentionally diverge, hence warn not error.
 
+## Per-node BGP ASN
+
+The **ASN** column is the home for each switch's BGP autonomous-system
+number. The shipped default workbooks populate it explicitly (one value per
+switch), and `Settings.bgp_asn` has been **removed** — the tab is the single
+source. Edit any cell to assign an arbitrary ASN to that switch (e.g. a
+pre-allocated customer plan). A blank cell falls back to the derived value;
+an older workbook that still carries `Settings.bgp_asn` keeps working (that
+value is the derivation base). The parser recovers the fabric base from the
+tab when `Settings.bgp_asn` is absent.
+
+All BGP sessions are unnumbered (`remote-as external`/`internal`), so an
+override only changes that switch's *local* ASN; neighbors auto-adapt. The
+one constraint is numeric, and `validate_excel` enforces it:
+
+- **Equal-within** — switches the tool requires to *share* an ASN must all
+  get the same value (or all be left blank). These shared groups are:
+  - converged core/csl (single-tier `ns_tiers=1`) — one iBGP fabric;
+  - each collapsed GPU plane (≤2 leaves) — the leaf-mate pair peers iBGP;
+  - each `gs` spine pair.
+  Splitting a shared group (e.g. two collapsed-plane mates with different
+  ASNs) is a **hard error** — their iBGP sessions would go Idle.
+- **Distinct-across** — no two different groups may share an ASN (eBGP peers
+  must differ; duplicate leaf ASNs also cause EVPN AS-path loop drops). A
+  collision is a **hard error**.
+- **Range** — a positive 4-byte integer (`1 … 2³²−1`), not the reserved
+  `23456`.
+- Setting an ASN on *some* members of a shared group but not others is a
+  **warning** — set all or none.
+
+Value semantics per the table above: converged core/csl rows all carry the
+base ASN; collapsed-plane mates share one per-plane ASN; `oob-switch-*`,
+`cs`, spined GPU leaves, and dedicated `cl` leaves each take a unique value.
+
 ## What this does NOT change
 
 - `Settings.loopback_base` still works as a project-wide default. The
   Loopbacks sheet layers on top of it.
 - BGP / EVPN topology, VRF semantics, and GSL plane numbering are
-  unchanged — only the IPs assigned to loopback interfaces.
+  unchanged — only the loopback IPs and (optionally) each switch's BGP ASN.
 
 ## Known limitation — supernet prefix-list rules
 
@@ -113,8 +200,7 @@ the right tool.
 ## Deferred — anycast loopbacks
 
 The Loopbacks sheet covers per-switch, single-IP overrides only. Some
-customer deployments (notably prod-285200) layer an additional anycast
+customer deployments layer an additional anycast
 VRF loopback shared across the spine pair, used as a stable service IP
 inside an L3-routed OOB design. That whole feature — L3 OOB switch
-support plus anycast-aware schema — is **not in v1**. See the project
-TODO doc for the design notes.
+support plus anycast-aware schema — is **not in v1**.

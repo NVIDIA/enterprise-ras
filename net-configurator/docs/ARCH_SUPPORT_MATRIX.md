@@ -22,6 +22,7 @@ Each architecture is named `{CPUs}-{GPUs}-{NICs}-{B}` per compute node, where
 |------|--------|------------------|---------------------|
 | `2-4-3-200` | Converged core (E/W + N/S on one fabric) | 1 SU / 4 nodes / 16 GPU | 8 SU / 32 nodes / 128 GPU |
 | `2-8-5-200` | Converged core; dedicated CSL (N/S) + GSL (E/W) split at larger deployments | 1 SU / 4 nodes / 32 GPU | 8 SU / 32 nodes / 256 GPU |
+| `2-4-5-400` | **Depopulated `2-8-5-200`** (ERA-00004-001 v04) — same chassis, same five adapters, half the GPUs. Identical fabric; only the per-GPU external uplink capacity differs (ADR-0050) | 1 SU / 4 nodes / 16 GPU | 8 SU / 32 nodes / 128 GPU |
 | `2-8-9-400` | Converged core; dedicated-GPU CSL + GSL 2-tier at larger deployments | 1 SU / 4 nodes / 32 GPU | 16 SU / 64 nodes / 512 GPU |
 | `2-4-5-800` | Multi-tier dedicated-GPU dual-plane (GB300 NVL72 Mini-Cloud) | 1 SU / 18 nodes / 72 GPU | 8 SU / 144 nodes / 576 GPU |
 | `2-8-9-800` | Dedicated-GPU dual-plane (CSL + GSL plane1 + plane2) | 2 SU / 8 nodes / 64 GPU | 32 SU / 128 nodes / 1024 GPU |
@@ -33,7 +34,7 @@ architecture documents for the full supported scale of each design.
 
 ## Tested features
 
-| Feature | `2-4-3-200` | `2-8-5-200` | `2-8-9-400` | `2-4-5-800` | `2-8-9-800` | `2-8-9-400-SP` |
+| Feature | `2-4-3-200` | `2-8-5-200` / `2-4-5-400` | `2-8-9-400` | `2-4-5-800` | `2-8-9-800` | `2-8-9-400-SP` |
 |---------|:---:|:---:|:---:|:---:|:---:|:---:|
 | Collapsed core (single switch pair for E/W + N/S) | ✅ | ✅ | ✅ | — | — | — |
 | Dedicated GPU (CSL N/S split from GSL E/W) | — | ✅ at scale | ✅ at scale | ✅ | ✅ | ✅ |
@@ -42,7 +43,7 @@ architecture documents for the full supported scale of each design.
 | Dual-plane GPU fabric | — | — | — | ✅ | ✅ | — |
 | L3 OOB underlay + EVPN | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | L3 OOB outbound NAT + HA | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| STORAGE VRF as first-class | — | — | — | ✅ | ✅ | ✅ |
+| STORAGE VRF as first-class | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | EVPN multihoming + anycast gateway | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Inter-VRF DHCP relay (OOB + EXIT) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Air deploy — NOZTP (Node Instructions) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -58,20 +59,38 @@ the default) · **untested** = not exercised with this tool · **—** not appli
 
 ## Resource sizing (NVIDIA Air)
 
-The Air footprint measured for each architecture at the default and largescale
-sizes tested with this repo. Per-node allocation is the platform minimum
-(switches 4 vCPU / 4 GB; OOB/edge nodes 1–2 vCPU / 2 GB; server nodes
-1 vCPU / 1 GB). Size your Air budget above these sums to allow for per-sim
-overhead.
+The Air footprint of each architecture at the default and largescale sizes
+shipped with this repo. Figures are summed from the generated topology
+(`output/<arch>/<site>/topology/`), which is what Air is actually asked to
+allocate. `2-4-5-400` shares `2-8-5-200`'s figures **by construction**: it is
+the same topology with the same node and switch counts — depopulating GPUs
+changes no VM sizing.
+
+Per-node allocation: fabric switches 4 vCPU / 4 GB; **OOB switches 2 vCPU /
+4 GB**; server nodes 1 vCPU / 1 GB; storage 20 GB on every node.
+
+> **The OOB figure is a floor, not a preference.** Air enforces each image's
+> published `minimum_resources` on cpu, memory *and* storage, and
+> `cumulus-vx-5.18.0` declares 2 / 4096 / 20. A node below it on any single
+> axis causes Air to reject the **entire simulation** into state `INVALID`
+> with zero nodes — after returning HTTP 200 on import, with no reason
+> recorded. Do not trim these values. See ADR-0054.
+
+Size your Air budget above these sums to allow for per-sim overhead.
+Figures are summed from each arch's generated topology and re-measured
+on 2026-09-02; regenerate and re-measure after any change that adds or
+removes nodes, since the customer-edge count now scales with the
+fabric's EXIT uplink load rather than being fixed at two.
 
 | Arch | Default — nodes / vCPU / mem | Largescale — nodes / vCPU / mem |
 |------|-----------------------------:|--------------------------------:|
-| `2-4-3-200` | 20 / 32 / 34 GB | 46 / 58 / 62 GB |
-| `2-8-5-200` | 24 / 36 / 39 GB | 49 / 67 / 71 GB |
-| `2-8-9-400` | 24 / 36 / 39 GB | 109 / 169 / 185 GB |
-| `2-4-5-800` | 46 / 94 / 96 GB | 232 / 406 / 422 GB |
-| `2-8-9-800` | 30 / 54 / 56 GB | 220 / 409 / 425 GB |
-| `2-8-9-400-SP` | 28 / 46 / 48 GB | 196 / 313 / 329 GB |
+| `2-4-3-200` | 53 / 69 / 77 GB | 53 / 69 / 77 GB |
+| `2-8-5-200` | 40 / 55 / 61 GB | 55 / 77 / 85 GB |
+| `2-4-5-400` | 40 / 55 / 61 GB | 55 / 77 / 85 GB |  <!-- identical to 2-8-5-200 by construction -->
+| `2-8-9-400` | 32 / 47 / 53 GB | 113 / 189 / 221 GB |
+| `2-4-5-800` | 55 / 107 / 115 GB | 237 / 429 / 465 GB |
+| `2-8-9-800` | 31 / 57 / 61 GB | 221 / 429 / 461 GB |
+| `2-8-9-400-SP` | 29 / 49 / 53 GB | 197 / 333 / 365 GB |
 
 Switch VMs dominate at largescale, so a **switches-only** simulation (server VMs
 omitted — `make deploy-switches-only`) needs far less, which helps under tighter

@@ -3,8 +3,6 @@
 # Global Variables - Applied to All Switches
 # ============================================================================
 architecture: 2-8-9-400
-scalable_units: 8
-nodes_per_su: 4
 ns_tiers: 1
 ew_tiers: 2
 convergence: dedicated_gpu
@@ -15,9 +13,14 @@ ntp_servers:
 - 1.cumulusnetworks.pool.ntp.org
 - 2.cumulusnetworks.pool.ntp.org
 - 3.cumulusnetworks.pool.ntp.org
+ntp_association_types:
+  0.cumulusnetworks.pool.ntp.org: server
+  1.cumulusnetworks.pool.ntp.org: server
+  2.cumulusnetworks.pool.ntp.org: server
+  3.cumulusnetworks.pool.ntp.org: server
 common:
-  oob_network: 172.16.177.0/24
-  oob_gateway: 172.16.177.1
+  oob_network: 192.168.200.0/24
+  oob_gateway: 192.168.200.1
   oob_vlan: 200
   oob_vrf: OOB
   cpu_network: 172.16.178.0/24
@@ -28,15 +31,10 @@ common:
   support_gateway: 172.16.179.1
   support_vlan: 400
   support_vrf: INBAND
-  storage_network: 172.16.180.0/24
-  storage_gateway: 172.16.180.1
-  storage_vlan: 500
-  storage_vrf: INBAND
   gpu_plane1_network: 192.168.0.0/20
   gpu_plane1_gateway: 192.168.0.1
   gpu_plane1_vlan: 900
   gpu_plane1_vrf: GPU
-  storage_vlan_tagged: true
   pre_login_message: '##############################################################################
 
     #      You are accessing an Information System (IS) that is provided for authorized
@@ -75,60 +73,79 @@ devices:
   csl-01:
     eth0_ip: 192.168.200.10
     mac: 48:b0:2d:5b:32:38
+    role: csl
   csl-02:
     eth0_ip: 192.168.200.11
     mac: 48:b0:2d:fb:08:86
+    role: csl
   gl-plane1-01:
     eth0_ip: 192.168.200.12
     mac: 48:b0:2d:91:d8:fd
+    role: gsl
   gl-plane1-02:
     eth0_ip: 192.168.200.13
     mac: 48:b0:2d:f7:21:90
+    role: gsl
   gl-plane1-03:
     eth0_ip: 192.168.200.14
     mac: 48:b0:2d:4c:19:80
+    role: gsl
   gl-plane1-04:
     eth0_ip: 192.168.200.15
     mac: 48:b0:2d:67:a1:b0
+    role: gsl
   gl-plane1-05:
     eth0_ip: 192.168.200.16
     mac: 48:b0:2d:8a:be:68
+    role: gsl
   gl-plane1-06:
     eth0_ip: 192.168.200.17
     mac: 48:b0:2d:2b:77:8c
+    role: gsl
   gl-plane1-07:
     eth0_ip: 192.168.200.18
     mac: 48:b0:2d:81:6c:2d
+    role: gsl
   gl-plane1-08:
     eth0_ip: 192.168.200.19
     mac: 48:b0:2d:9e:5e:ef
+    role: gsl
   gs-plane1-01:
     eth0_ip: 192.168.200.20
     mac: 48:b0:2d:2a:6b:b9
+    role: gsl-spine
   gs-plane1-02:
     eth0_ip: 192.168.200.21
     mac: 48:b0:2d:a8:82:cd
+    role: gsl-spine
   gs-plane1-03:
     eth0_ip: 192.168.200.22
     mac: 48:b0:2d:26:0c:a7
+    role: gsl-spine
   gs-plane1-04:
     eth0_ip: 192.168.200.23
     mac: 48:b0:2d:b7:35:1a
+    role: gsl-spine
   gs-plane1-05:
     eth0_ip: 192.168.200.24
     mac: 48:b0:2d:7c:77:98
+    role: gsl-spine
   gs-plane1-06:
     eth0_ip: 192.168.200.25
     mac: 48:b0:2d:f8:f3:61
+    role: gsl-spine
   gs-plane1-07:
     eth0_ip: 192.168.200.26
     mac: 48:b0:2d:3e:69:19
+    role: gsl-spine
   gs-plane1-08:
     eth0_ip: 192.168.200.27
     mac: 48:b0:2d:65:a4:bf
+    role: gsl-spine
   su-01-node-01:
     eth0_ip: 192.168.200.44
     mac: 48:b0:2d:79:6c:d7
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -144,7 +161,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.201/24
+    bond_ip: 172.16.178.4/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -189,6 +206,7 @@ devices:
   su-01-node-02:
     eth0_ip: 192.168.200.45
     mac: 48:b0:2d:7a:db:6b
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -204,7 +222,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.202/24
+    bond_ip: 172.16.178.5/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -249,6 +267,7 @@ devices:
   su-01-node-03:
     eth0_ip: 192.168.200.46
     mac: 48:b0:2d:f5:bd:25
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -264,7 +283,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.203/24
+    bond_ip: 172.16.178.6/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -309,6 +328,7 @@ devices:
   su-01-node-04:
     eth0_ip: 192.168.200.47
     mac: 48:b0:2d:fc:01:bf
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -324,7 +344,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.204/24
+    bond_ip: 172.16.178.7/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -369,6 +389,7 @@ devices:
   su-02-node-01:
     eth0_ip: 192.168.200.48
     mac: 48:b0:2d:03:2b:62
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -384,7 +405,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.205/24
+    bond_ip: 172.16.178.8/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -429,6 +450,7 @@ devices:
   su-02-node-02:
     eth0_ip: 192.168.200.49
     mac: 48:b0:2d:97:d9:c1
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -444,7 +466,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.206/24
+    bond_ip: 172.16.178.9/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -489,6 +511,7 @@ devices:
   su-02-node-03:
     eth0_ip: 192.168.200.50
     mac: 48:b0:2d:cb:e1:18
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -504,7 +527,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.207/24
+    bond_ip: 172.16.178.10/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -549,6 +572,7 @@ devices:
   su-02-node-04:
     eth0_ip: 192.168.200.51
     mac: 48:b0:2d:9a:2e:74
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -564,7 +588,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.208/24
+    bond_ip: 172.16.178.11/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -609,6 +633,7 @@ devices:
   su-03-node-01:
     eth0_ip: 192.168.200.52
     mac: 48:b0:2d:24:1d:81
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -624,7 +649,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.209/24
+    bond_ip: 172.16.178.12/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -669,6 +694,7 @@ devices:
   su-03-node-02:
     eth0_ip: 192.168.200.53
     mac: 48:b0:2d:1b:96:d8
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -684,7 +710,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.210/24
+    bond_ip: 172.16.178.13/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -729,6 +755,7 @@ devices:
   su-03-node-03:
     eth0_ip: 192.168.200.54
     mac: 48:b0:2d:1d:93:e1
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -744,7 +771,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.211/24
+    bond_ip: 172.16.178.14/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -789,6 +816,7 @@ devices:
   su-03-node-04:
     eth0_ip: 192.168.200.55
     mac: 48:b0:2d:00:22:00
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -804,7 +832,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.212/24
+    bond_ip: 172.16.178.15/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -849,6 +877,7 @@ devices:
   su-04-node-01:
     eth0_ip: 192.168.200.56
     mac: 48:b0:2d:0c:a8:02
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -864,7 +893,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.213/24
+    bond_ip: 172.16.178.16/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -909,6 +938,7 @@ devices:
   su-04-node-02:
     eth0_ip: 192.168.200.57
     mac: 48:b0:2d:63:2f:42
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -924,7 +954,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.214/24
+    bond_ip: 172.16.178.17/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -969,6 +999,7 @@ devices:
   su-04-node-03:
     eth0_ip: 192.168.200.58
     mac: 48:b0:2d:ce:44:60
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -984,7 +1015,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.215/24
+    bond_ip: 172.16.178.18/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1029,6 +1060,7 @@ devices:
   su-04-node-04:
     eth0_ip: 192.168.200.59
     mac: 48:b0:2d:7a:36:c5
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1044,7 +1076,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.216/24
+    bond_ip: 172.16.178.19/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1089,6 +1121,7 @@ devices:
   su-05-node-01:
     eth0_ip: 192.168.200.60
     mac: 48:b0:2d:c9:1c:27
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1104,7 +1137,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.217/24
+    bond_ip: 172.16.178.20/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1149,6 +1182,7 @@ devices:
   su-05-node-02:
     eth0_ip: 192.168.200.61
     mac: 48:b0:2d:8f:8d:a9
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1164,7 +1198,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.218/24
+    bond_ip: 172.16.178.21/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1209,6 +1243,7 @@ devices:
   su-05-node-03:
     eth0_ip: 192.168.200.62
     mac: 48:b0:2d:5a:32:dd
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1224,7 +1259,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.219/24
+    bond_ip: 172.16.178.22/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1269,6 +1304,7 @@ devices:
   su-05-node-04:
     eth0_ip: 192.168.200.63
     mac: 48:b0:2d:d9:f3:a6
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1284,7 +1320,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.220/24
+    bond_ip: 172.16.178.23/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1329,6 +1365,7 @@ devices:
   su-06-node-01:
     eth0_ip: 192.168.200.64
     mac: 48:b0:2d:de:56:d8
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1344,7 +1381,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.221/24
+    bond_ip: 172.16.178.24/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1389,6 +1426,7 @@ devices:
   su-06-node-02:
     eth0_ip: 192.168.200.65
     mac: 48:b0:2d:a3:3e:f7
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1404,7 +1442,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.222/24
+    bond_ip: 172.16.178.25/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1449,6 +1487,7 @@ devices:
   su-06-node-03:
     eth0_ip: 192.168.200.66
     mac: 48:b0:2d:b6:58:06
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1464,7 +1503,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.223/24
+    bond_ip: 172.16.178.26/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1509,6 +1548,7 @@ devices:
   su-06-node-04:
     eth0_ip: 192.168.200.67
     mac: 48:b0:2d:ed:d0:b4
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1524,7 +1564,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.224/24
+    bond_ip: 172.16.178.27/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1569,6 +1609,7 @@ devices:
   su-07-node-01:
     eth0_ip: 192.168.200.68
     mac: 48:b0:2d:b4:c3:85
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1584,7 +1625,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.225/24
+    bond_ip: 172.16.178.28/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1629,6 +1670,7 @@ devices:
   su-07-node-02:
     eth0_ip: 192.168.200.69
     mac: 48:b0:2d:59:60:ce
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1644,7 +1686,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.226/24
+    bond_ip: 172.16.178.29/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1689,6 +1731,7 @@ devices:
   su-07-node-03:
     eth0_ip: 192.168.200.70
     mac: 48:b0:2d:63:75:df
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1704,7 +1747,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.227/24
+    bond_ip: 172.16.178.30/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1749,6 +1792,7 @@ devices:
   su-07-node-04:
     eth0_ip: 192.168.200.71
     mac: 48:b0:2d:af:11:1b
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1764,7 +1808,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.228/24
+    bond_ip: 172.16.178.31/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1809,6 +1853,7 @@ devices:
   su-08-node-01:
     eth0_ip: 192.168.200.72
     mac: 48:b0:2d:af:7b:6c
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1824,7 +1869,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.229/24
+    bond_ip: 172.16.178.32/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1869,6 +1914,7 @@ devices:
   su-08-node-02:
     eth0_ip: 192.168.200.73
     mac: 48:b0:2d:4d:fd:63
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1884,7 +1930,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.230/24
+    bond_ip: 172.16.178.33/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1929,6 +1975,7 @@ devices:
   su-08-node-03:
     eth0_ip: 192.168.200.74
     mac: 48:b0:2d:84:8a:05
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -1944,7 +1991,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.231/24
+    bond_ip: 172.16.178.34/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -1989,6 +2036,7 @@ devices:
   su-08-node-04:
     eth0_ip: 192.168.200.75
     mac: 48:b0:2d:06:3a:29
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2004,7 +2052,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.232/24
+    bond_ip: 172.16.178.35/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2049,6 +2097,7 @@ devices:
   su-09-node-01:
     eth0_ip: 192.168.200.76
     mac: 48:b0:2d:3e:b4:2b
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2064,7 +2113,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.233/24
+    bond_ip: 172.16.178.36/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2109,6 +2158,7 @@ devices:
   su-09-node-02:
     eth0_ip: 192.168.200.80
     mac: 48:b0:2d:cc:51:7b
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2124,7 +2174,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.234/24
+    bond_ip: 172.16.178.37/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2169,6 +2219,7 @@ devices:
   su-09-node-03:
     eth0_ip: 192.168.200.81
     mac: 48:b0:2d:f9:c9:a5
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2184,7 +2235,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.235/24
+    bond_ip: 172.16.178.38/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2229,6 +2280,7 @@ devices:
   su-09-node-04:
     eth0_ip: 192.168.200.82
     mac: 48:b0:2d:87:5e:c7
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2244,7 +2296,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.236/24
+    bond_ip: 172.16.178.39/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2289,6 +2341,7 @@ devices:
   su-10-node-01:
     eth0_ip: 192.168.200.83
     mac: 48:b0:2d:d0:7b:ea
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2304,7 +2357,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.237/24
+    bond_ip: 172.16.178.40/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2349,6 +2402,7 @@ devices:
   su-10-node-02:
     eth0_ip: 192.168.200.84
     mac: 48:b0:2d:e1:6b:c6
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2364,7 +2418,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.238/24
+    bond_ip: 172.16.178.41/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2409,6 +2463,7 @@ devices:
   su-10-node-03:
     eth0_ip: 192.168.200.85
     mac: 48:b0:2d:d9:04:7e
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2424,7 +2479,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.239/24
+    bond_ip: 172.16.178.42/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2469,6 +2524,7 @@ devices:
   su-10-node-04:
     eth0_ip: 192.168.200.86
     mac: 48:b0:2d:3a:2d:df
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2484,7 +2540,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.240/24
+    bond_ip: 172.16.178.43/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2529,6 +2585,7 @@ devices:
   su-11-node-01:
     eth0_ip: 192.168.200.87
     mac: 48:b0:2d:9b:f8:00
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2544,7 +2601,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.241/24
+    bond_ip: 172.16.178.44/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2589,6 +2646,7 @@ devices:
   su-11-node-02:
     eth0_ip: 192.168.200.88
     mac: 48:b0:2d:4b:9e:61
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2604,7 +2662,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.242/24
+    bond_ip: 172.16.178.45/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2649,6 +2707,7 @@ devices:
   su-11-node-03:
     eth0_ip: 192.168.200.89
     mac: 48:b0:2d:ce:15:74
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2664,7 +2723,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.243/24
+    bond_ip: 172.16.178.46/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2709,6 +2768,7 @@ devices:
   su-11-node-04:
     eth0_ip: 192.168.200.90
     mac: 48:b0:2d:8a:ed:a4
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2724,7 +2784,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.244/24
+    bond_ip: 172.16.178.47/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2769,6 +2829,7 @@ devices:
   su-12-node-01:
     eth0_ip: 192.168.200.91
     mac: 48:b0:2d:1f:e5:2e
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2784,7 +2845,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.245/24
+    bond_ip: 172.16.178.48/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2829,6 +2890,7 @@ devices:
   su-12-node-02:
     eth0_ip: 192.168.200.92
     mac: 48:b0:2d:69:f1:03
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2844,7 +2906,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.246/24
+    bond_ip: 172.16.178.49/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2889,6 +2951,7 @@ devices:
   su-12-node-03:
     eth0_ip: 192.168.200.93
     mac: 48:b0:2d:b1:a5:47
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2904,7 +2967,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.247/24
+    bond_ip: 172.16.178.50/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -2949,6 +3012,7 @@ devices:
   su-12-node-04:
     eth0_ip: 192.168.200.94
     mac: 48:b0:2d:82:ce:60
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -2964,7 +3028,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.248/24
+    bond_ip: 172.16.178.51/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3009,6 +3073,7 @@ devices:
   su-13-node-01:
     eth0_ip: 192.168.200.95
     mac: 48:b0:2d:80:eb:4e
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3024,7 +3089,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.249/24
+    bond_ip: 172.16.178.52/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3069,6 +3134,7 @@ devices:
   su-13-node-02:
     eth0_ip: 192.168.200.96
     mac: 48:b0:2d:2f:db:a4
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3084,7 +3150,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.250/24
+    bond_ip: 172.16.178.53/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3129,6 +3195,7 @@ devices:
   su-13-node-03:
     eth0_ip: 192.168.200.97
     mac: 48:b0:2d:4e:df:89
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3144,7 +3211,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.251/24
+    bond_ip: 172.16.178.54/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3189,6 +3256,7 @@ devices:
   su-13-node-04:
     eth0_ip: 192.168.200.98
     mac: 48:b0:2d:30:29:4f
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3204,7 +3272,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.252/24
+    bond_ip: 172.16.178.55/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3249,6 +3317,7 @@ devices:
   su-14-node-01:
     eth0_ip: 192.168.200.99
     mac: 48:b0:2d:4b:d9:50
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3264,7 +3333,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.253/24
+    bond_ip: 172.16.178.56/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3309,6 +3378,7 @@ devices:
   su-14-node-02:
     eth0_ip: 192.168.200.101
     mac: 48:b0:2d:50:b2:35
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3324,7 +3394,7 @@ devices:
       - eth10
       oob:
       - eth0
-    bond_ip: 172.16.178.254/24
+    bond_ip: 172.16.178.57/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3369,6 +3439,7 @@ devices:
   su-14-node-03:
     eth0_ip: 192.168.200.102
     mac: 48:b0:2d:22:47:08
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3384,6 +3455,7 @@ devices:
       - eth10
       oob:
       - eth0
+    bond_ip: 172.16.178.58/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3428,6 +3500,7 @@ devices:
   su-14-node-04:
     eth0_ip: 192.168.200.103
     mac: 48:b0:2d:dc:9d:78
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3443,6 +3516,7 @@ devices:
       - eth10
       oob:
       - eth0
+    bond_ip: 172.16.178.59/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3487,6 +3561,7 @@ devices:
   su-15-node-01:
     eth0_ip: 192.168.200.104
     mac: 48:b0:2d:a4:cf:db
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3502,6 +3577,7 @@ devices:
       - eth10
       oob:
       - eth0
+    bond_ip: 172.16.178.60/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3546,6 +3622,7 @@ devices:
   su-15-node-02:
     eth0_ip: 192.168.200.105
     mac: 48:b0:2d:cc:ca:81
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3561,6 +3638,7 @@ devices:
       - eth10
       oob:
       - eth0
+    bond_ip: 172.16.178.61/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3605,6 +3683,7 @@ devices:
   su-15-node-03:
     eth0_ip: 192.168.200.106
     mac: 48:b0:2d:d8:76:f0
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3620,6 +3699,7 @@ devices:
       - eth10
       oob:
       - eth0
+    bond_ip: 172.16.178.62/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3664,6 +3744,7 @@ devices:
   su-15-node-04:
     eth0_ip: 192.168.200.107
     mac: 48:b0:2d:84:dd:7f
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3679,6 +3760,7 @@ devices:
       - eth10
       oob:
       - eth0
+    bond_ip: 172.16.178.63/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3723,6 +3805,7 @@ devices:
   su-16-node-01:
     eth0_ip: 192.168.200.108
     mac: 48:b0:2d:67:87:66
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3738,6 +3821,7 @@ devices:
       - eth10
       oob:
       - eth0
+    bond_ip: 172.16.178.64/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3782,6 +3866,7 @@ devices:
   su-16-node-02:
     eth0_ip: 192.168.200.109
     mac: 48:b0:2d:e9:93:1f
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3797,6 +3882,7 @@ devices:
       - eth10
       oob:
       - eth0
+    bond_ip: 172.16.178.65/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3841,6 +3927,7 @@ devices:
   su-16-node-03:
     eth0_ip: 192.168.200.110
     mac: 48:b0:2d:30:5c:33
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3856,6 +3943,7 @@ devices:
       - eth10
       oob:
       - eth0
+    bond_ip: 172.16.178.66/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3900,6 +3988,7 @@ devices:
   su-16-node-04:
     eth0_ip: 192.168.200.111
     mac: 48:b0:2d:10:72:93
+    role: compute
     interfaces:
       cpu:
       - eth1
@@ -3915,6 +4004,7 @@ devices:
       - eth10
       oob:
       - eth0
+    bond_ip: 172.16.178.67/24
     gpu_interfaces:
     - iface: eth3
       plane: plane1
@@ -3959,77 +4049,99 @@ devices:
   support-01:
     eth0_ip: 192.168.200.112
     mac: 48:b0:2d:be:40:ad
+    role: support
     interfaces:
-      cpu:
-      - eth1
-      - eth2
       oob:
       - eth0
+      support:
+      - eth1
+      - eth2
     bond_ip1: 172.16.179.101/24
     bond_ip2: 172.16.179.102/24
   support-02:
     eth0_ip: 192.168.200.113
     mac: 48:b0:2d:92:d8:4d
+    role: support
     interfaces:
-      cpu:
-      - eth1
-      - eth2
       oob:
       - eth0
+      support:
+      - eth1
+      - eth2
     bond_ip1: 172.16.179.103/24
     bond_ip2: 172.16.179.104/24
-  storage-01:
+  support-03:
     eth0_ip: 192.168.200.114
-    mac: 48:b0:2d:92:b0:27
+    mac: 48:b0:2d:de:e6:5f
+    role: support
     interfaces:
-      storage:
-      - eth1
-      - eth2
-      - eth3
-      - eth4
       oob:
       - eth0
-    bond_ip1: 172.16.180.101/24
-    bond_ip2: 172.16.180.102/24
-  storage-02:
+      support:
+      - eth1
+      - eth2
+    bond_ip1: 172.16.179.105/24
+    bond_ip2: 172.16.179.106/24
+  support-04:
     eth0_ip: 192.168.200.115
-    mac: 48:b0:2d:4b:ff:85
+    mac: 48:b0:2d:5c:a9:e5
+    role: support
     interfaces:
-      storage:
-      - eth1
-      - eth2
-      - eth3
-      - eth4
       oob:
       - eth0
-    bond_ip1: 172.16.180.103/24
-    bond_ip2: 172.16.180.104/24
-  storage-03:
+      support:
+      - eth1
+      - eth2
+    bond_ip1: 172.16.179.107/24
+    bond_ip2: 172.16.179.108/24
+  support-05:
     eth0_ip: 192.168.200.116
-    mac: 48:b0:2d:95:00:3c
+    mac: 48:b0:2d:64:1c:99
+    role: support
     interfaces:
-      storage:
-      - eth1
-      - eth2
-      - eth3
-      - eth4
       oob:
       - eth0
-    bond_ip1: 172.16.180.105/24
-    bond_ip2: 172.16.180.106/24
-  storage-04:
+      support:
+      - eth1
+      - eth2
+    bond_ip1: 172.16.179.109/24
+    bond_ip2: 172.16.179.110/24
+  support-06:
     eth0_ip: 192.168.200.117
-    mac: 48:b0:2d:be:47:3c
+    mac: 48:b0:2d:36:2f:63
+    role: support
     interfaces:
-      storage:
-      - eth1
-      - eth2
-      - eth3
-      - eth4
       oob:
       - eth0
-    bond_ip1: 172.16.180.107/24
-    bond_ip2: 172.16.180.108/24
+      support:
+      - eth1
+      - eth2
+    bond_ip1: 172.16.179.111/24
+    bond_ip2: 172.16.179.112/24
+  support-07:
+    eth0_ip: 192.168.200.118
+    mac: 48:b0:2d:b4:db:9e
+    role: support
+    interfaces:
+      oob:
+      - eth0
+      support:
+      - eth1
+      - eth2
+    bond_ip1: 172.16.179.113/24
+    bond_ip2: 172.16.179.114/24
+  support-08:
+    eth0_ip: 192.168.200.119
+    mac: 48:b0:2d:aa:2e:b6
+    role: support
+    interfaces:
+      oob:
+      - eth0
+      support:
+      - eth1
+      - eth2
+    bond_ip1: 172.16.179.115/24
+    bond_ip2: 172.16.179.116/24
 switch_user: cumulus
 ztp_server_host: external-dhcp
 dhcp_server_host: external-dhcp
@@ -4053,15 +4165,6 @@ inter_vrf_dhcp_scopes:
   subnet: 172.16.179.0/24
   gateway: 172.16.179.1
   name: Support
-target_cumulus_version: 5.13.0
-nvue_syntax:
-  '5.13':
-    boolean_on: 'on'
-    boolean_off: 'off'
-    boolean_enabled: 'on'
-    boolean_disabled: 'off'
-    ip_address_key: ip
-    state_format: nested
 ztp_server_ip: 169.254.0.2
 configure_ztp_ips: true
 configure_dhcp: true
@@ -4071,8 +4174,6 @@ dhcp_range_end: 192.168.1.200
 dhcp_lease_time: 12h
 dhcp_gateway: 192.168.1.1
 dnsmasq_interface: ens3
-cumulus_target_release: ''
-cumulus_image_url: ''
 ztp_enable_topology: false
 ztp_enable_monitoring: false
 ztp_monitoring_config: '# Add your monitoring configuration here

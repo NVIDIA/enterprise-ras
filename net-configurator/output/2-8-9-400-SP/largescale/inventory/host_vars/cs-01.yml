@@ -4,6 +4,18 @@ ansible_host: 172.20.0.225
 hostname: cs-01
 mac_address: 48:b0:2d:70:8e:fd
 ip_assignment_mode: dhcp
+acls:
+- id: acl-default-dos
+  control_plane_inbound: true
+  type: null
+  rule: []
+- id: acl-default-whitelist
+  control_plane_inbound: true
+  type: ipv4
+  rule:
+  - id: '200'
+    protocol: tcp
+    dest_port: '8251'
 lo_ip: 172.16.176.61/32
 router_id: 172.16.176.61
 asn: 4260395289

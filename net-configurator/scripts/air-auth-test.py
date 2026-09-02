@@ -103,7 +103,7 @@ def main() -> int:
         console.print("Checking resource budget...")
         try:
             budget = get_resource_budget(client, base_url, token)
-            console.print(f"  [green]OK[/]")
+            console.print("  [green]OK[/]")
             console.print(format_budget_row("CPU", budget.cpu_used, budget.cpu, "vCPUs"))
             console.print(format_budget_row("Memory", budget.memory_used, budget.memory, "MB"))
             console.print(format_budget_row("Storage", budget.storage_used, budget.storage, "GB"))
@@ -121,7 +121,7 @@ def main() -> int:
             try:
                 fingerprint = get_key_fingerprint(ssh_key_path)
                 console.print(f"  [green]OK[/] - Local key: {fingerprint}")
-                console.print(f"  Ensure this key is registered in Air: Settings -> SSH Keys")
+                console.print("  Ensure this key is registered in Air: Settings -> SSH Keys")
             except AirError as exc:
                 console.print(f"  [yellow]Warning:[/] {exc}")
 

@@ -1,0 +1,2218 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+# Single home for invariant group_vars/host_vars content.
+#   all_shared : arch-independent infra defaults (ztp_server_host derived by loader).
+#   devices    : per-arch server node inventory (candidate to derive from Excel).
+#   oob, core  : per-arch group_vars.
+#   host_vars  : per-arch Air virtual-node host_vars (dhcp-oob/oob-server-01/... —
+#                nodes not in the Excel Nodes sheet). NOTE known drift to normalize:
+#                2-4-5-800 carries none; only 2-8-5-200's oob-server-01 has the OOB
+#                gateway oob_server_interfaces.
+# Loaded by scripts/inventory_defaults.py; guarded by tests/test_seedless_generation.py.
+---
+all_shared:
+  switch_user: cumulus
+  host_dhcp: true
+  ztp_server_ip: 169.254.0.2
+  ztp_server_host: dhcp-oob
+  configure_ztp_ips: true
+  ztp_interfaces:
+  - name: eth1
+    ip: 192.168.200.252
+    network: 192.168.200.0/24
+    gateway: 192.168.200.1
+    purpose: oob
+    dnsmasq_listen: true
+  configure_dhcp: true
+  dhcp_domain_name: era.local
+  dhcp_range_start: 192.168.1.100
+  dhcp_range_end: 192.168.1.200
+  dhcp_lease_time: 12h
+  dhcp_gateway: 192.168.1.1
+  dnsmasq_interface: ens3
+  ztp_enable_topology: false
+  ztp_enable_monitoring: false
+  ztp_monitoring_config: '# Add your monitoring configuration here
+
+    '
+  ztp_final_reboot: true
+  ssh_public_key_path: ~/.ssh/id_rsa.pub
+  generate_configs: true
+  prompt_before_setup: false
+devices:
+  2-4-3-200:
+    su-01-node-01:
+      eth0_ip: 192.168.200.11
+      mac: 44:38:39:22:aa:03
+      gpu_ip1: 192.168.110.201/24
+      gpu_ip2: 192.168.110.202/24
+      bond_ip: 172.16.178.201/24
+    su-01-node-02:
+      eth0_ip: 192.168.210.12
+      mac: 44:38:39:22:aa:04
+      gpu_ip1: 192.168.110.203/24
+      gpu_ip2: 192.168.110.204/24
+      bond_ip: 172.16.178.203/24
+    storage-01:
+      eth0_ip: 192.168.200.31
+      mac: 44:38:39:22:aa:07
+      bond_ip1: 172.16.180.101/24
+      bond_ip2: 172.16.180.102/24
+    storage-02:
+      eth0_ip: 192.168.210.32
+      mac: 44:38:39:22:aa:08
+      bond_ip1: 172.16.180.103/24
+      bond_ip2: 172.16.180.104/24
+    support-01:
+      eth0_ip: 192.168.200.21
+      mac: 44:38:39:22:aa:09
+      bond_ip1: 172.16.179.101/24
+      bond_ip2: 172.16.179.102/24
+    support-02:
+      eth0_ip: 192.168.210.22
+      mac: 44:38:39:22:aa:0a
+      bond_ip1: 172.16.179.103/24
+      bond_ip2: 172.16.179.104/24
+  2-8-5-200: &nc_2_8_5_200_0
+    su-01-node-01:
+      eth0_ip: 192.168.200.11
+      mac: 44:38:39:22:aa:03
+      gpu_ip1: 192.168.110.201/24
+      gpu_ip2: 192.168.110.202/24
+      bond_ip: 172.16.178.201/24
+    su-01-node-02:
+      eth0_ip: 192.168.210.12
+      mac: 44:38:39:22:aa:04
+      gpu_ip1: 192.168.110.203/24
+      gpu_ip2: 192.168.110.204/24
+      bond_ip: 172.16.178.203/24
+    su-01-node-03:
+      eth0_ip: 192.168.220.13
+      mac: 44:38:39:22:aa:05
+      gpu_ip1: 192.168.110.205/24
+      gpu_ip2: 192.168.110.206/24
+      bond_ip: 172.16.178.205/24
+    su-01-node-04:
+      eth0_ip: 192.168.200.14
+      mac: 44:38:39:22:aa:06
+      gpu_ip1: 192.168.110.207/24
+      gpu_ip2: 192.168.110.208/24
+      bond_ip: 172.16.178.207/24
+    storage-01:
+      eth0_ip: 192.168.200.31
+      mac: 44:38:39:22:aa:07
+      bond_ip1: 172.16.180.101/24
+      bond_ip2: 172.16.180.102/24
+    storage-02:
+      eth0_ip: 192.168.210.32
+      mac: 44:38:39:22:aa:08
+      bond_ip1: 172.16.180.103/24
+      bond_ip2: 172.16.180.104/24
+    support-01:
+      eth0_ip: 192.168.200.21
+      mac: 44:38:39:22:aa:09
+      bond_ip1: 172.16.179.101/24
+      bond_ip2: 172.16.179.102/24
+    support-02:
+      eth0_ip: 192.168.210.22
+      mac: 44:38:39:22:aa:0a
+      bond_ip1: 172.16.179.103/24
+      bond_ip2: 172.16.179.104/24
+    support-03:
+      eth0_ip: 192.168.220.23
+      mac: 44:38:39:22:aa:0b
+      bond_ip1: 172.16.179.105/24
+      bond_ip2: 172.16.179.106/24
+    support-04:
+      eth0_ip: 192.168.200.24
+      mac: 44:38:39:22:aa:0c
+      bond_ip1: 172.16.179.107/24
+      bond_ip2: 172.16.179.108/24
+    support-05:
+      eth0_ip: 192.168.210.25
+      mac: 44:38:39:22:aa:0d
+      bond_ip1: 172.16.179.109/24
+      bond_ip2: 172.16.179.110/24
+    support-06:
+      eth0_ip: 192.168.220.26
+      mac: 44:38:39:22:aa:0e
+      bond_ip1: 172.16.179.111/24
+      bond_ip2: 172.16.179.112/24
+    support-07:
+      eth0_ip: 192.168.200.27
+      mac: 44:38:39:22:aa:0f
+      bond_ip1: 172.16.179.113/24
+      bond_ip2: 172.16.179.114/24
+    support-08:
+      eth0_ip: 192.168.210.28
+      mac: 44:38:39:22:aa:10
+      bond_ip1: 172.16.179.115/24
+      bond_ip2: 172.16.179.116/24
+  # 2-4-5-400 is a DEPOPULATED 2-8-5-200 (ERA-00004-001 v04): identical
+  # fabric, half the GPUs. Aliased, not copied — the two must not drift.
+  2-4-5-400: *nc_2_8_5_200_0
+  2-8-9-400:
+    su-01-node-01:
+      eth0_ip: 192.168.200.11
+      mac: 44:38:39:22:aa:03
+      gpu_ip1: 192.168.110.201/24
+      gpu_ip2: 192.168.110.202/24
+      bond_ip: 172.16.178.201/24
+    su-01-node-02:
+      eth0_ip: 192.168.210.12
+      mac: 44:38:39:22:aa:04
+      gpu_ip1: 192.168.110.203/24
+      gpu_ip2: 192.168.110.204/24
+      bond_ip: 172.16.178.203/24
+    su-01-node-03:
+      eth0_ip: 192.168.220.13
+      mac: 44:38:39:22:aa:05
+      gpu_ip1: 192.168.110.205/24
+      gpu_ip2: 192.168.110.206/24
+      bond_ip: 172.16.178.205/24
+    su-01-node-04:
+      eth0_ip: 192.168.200.14
+      mac: 44:38:39:22:aa:06
+      gpu_ip1: 192.168.110.207/24
+      gpu_ip2: 192.168.110.208/24
+      bond_ip: 172.16.178.207/24
+    su-01-node-05:
+      eth0_ip: 192.168.210.15
+      mac: 44:38:39:22:aa:11
+      gpu_ip1: 192.168.110.209/24
+      gpu_ip2: 192.168.110.210/24
+      bond_ip: 172.16.178.209/24
+    su-01-node-06:
+      eth0_ip: 192.168.220.16
+      mac: 44:38:39:22:aa:12
+      gpu_ip1: 192.168.110.211/24
+      gpu_ip2: 192.168.110.212/24
+      bond_ip: 172.16.178.211/24
+    storage-01:
+      eth0_ip: 192.168.200.31
+      mac: 44:38:39:22:aa:07
+      bond_ip1: 172.16.180.101/24
+      bond_ip2: 172.16.180.102/24
+    storage-02:
+      eth0_ip: 192.168.210.32
+      mac: 44:38:39:22:aa:08
+      bond_ip1: 172.16.180.103/24
+      bond_ip2: 172.16.180.104/24
+    storage-03:
+      eth0_ip: 192.168.220.33
+      mac: 44:38:39:22:aa:13
+      bond_ip1: 172.16.180.105/24
+      bond_ip2: 172.16.180.106/24
+    storage-04:
+      eth0_ip: 192.168.200.34
+      mac: 44:38:39:22:aa:14
+      bond_ip1: 172.16.180.107/24
+      bond_ip2: 172.16.180.108/24
+    support-01:
+      eth0_ip: 192.168.200.21
+      mac: 44:38:39:22:aa:09
+      bond_ip1: 172.16.179.101/24
+      bond_ip2: 172.16.179.102/24
+    support-02:
+      eth0_ip: 192.168.210.22
+      mac: 44:38:39:22:aa:0a
+      bond_ip1: 172.16.179.103/24
+      bond_ip2: 172.16.179.104/24
+    support-03:
+      eth0_ip: 192.168.220.23
+      mac: 44:38:39:22:aa:0b
+      bond_ip1: 172.16.179.105/24
+      bond_ip2: 172.16.179.106/24
+    support-04:
+      eth0_ip: 192.168.200.24
+      mac: 44:38:39:22:aa:0c
+      bond_ip1: 172.16.179.107/24
+      bond_ip2: 172.16.179.108/24
+    support-05:
+      eth0_ip: 192.168.210.25
+      mac: 44:38:39:22:aa:0d
+      bond_ip1: 172.16.179.109/24
+      bond_ip2: 172.16.179.110/24
+    support-06:
+      eth0_ip: 192.168.220.26
+      mac: 44:38:39:22:aa:0e
+      bond_ip1: 172.16.179.111/24
+      bond_ip2: 172.16.179.112/24
+    support-07:
+      eth0_ip: 192.168.200.27
+      mac: 44:38:39:22:aa:0f
+      bond_ip1: 172.16.179.113/24
+      bond_ip2: 172.16.179.114/24
+    support-08:
+      eth0_ip: 192.168.210.28
+      mac: 44:38:39:22:aa:10
+      bond_ip1: 172.16.179.115/24
+      bond_ip2: 172.16.179.116/24
+  2-8-9-400-SP:
+    su-01-node-01:
+      eth0_ip: 192.168.200.11
+      mac: 44:38:39:22:aa:03
+      gpu_ip1: 192.168.110.201/24
+      gpu_ip2: 192.168.110.202/24
+      bond_ip: 172.16.178.201/24
+    su-01-node-02:
+      eth0_ip: 192.168.210.12
+      mac: 44:38:39:22:aa:04
+      gpu_ip1: 192.168.110.203/24
+      gpu_ip2: 192.168.110.204/24
+      bond_ip: 172.16.178.203/24
+    su-01-node-03:
+      eth0_ip: 192.168.220.13
+      mac: 44:38:39:22:aa:05
+      gpu_ip1: 192.168.110.205/24
+      gpu_ip2: 192.168.110.206/24
+      bond_ip: 172.16.178.205/24
+    su-01-node-04:
+      eth0_ip: 192.168.200.14
+      mac: 44:38:39:22:aa:06
+      gpu_ip1: 192.168.110.207/24
+      gpu_ip2: 192.168.110.208/24
+      bond_ip: 172.16.178.207/24
+    su-01-node-05:
+      eth0_ip: 192.168.210.15
+      mac: 44:38:39:22:aa:11
+      gpu_ip1: 192.168.110.209/24
+      gpu_ip2: 192.168.110.210/24
+      bond_ip: 172.16.178.209/24
+    su-01-node-06:
+      eth0_ip: 192.168.220.16
+      mac: 44:38:39:22:aa:12
+      gpu_ip1: 192.168.110.211/24
+      gpu_ip2: 192.168.110.212/24
+      bond_ip: 172.16.178.211/24
+    storage-01:
+      eth0_ip: 192.168.200.31
+      mac: 44:38:39:22:aa:07
+      bond_ip1: 172.16.180.101/24
+      bond_ip2: 172.16.180.102/24
+    storage-02:
+      eth0_ip: 192.168.210.32
+      mac: 44:38:39:22:aa:08
+      bond_ip1: 172.16.180.103/24
+      bond_ip2: 172.16.180.104/24
+    storage-03:
+      eth0_ip: 192.168.220.33
+      mac: 44:38:39:22:aa:13
+      bond_ip1: 172.16.180.105/24
+      bond_ip2: 172.16.180.106/24
+    storage-04:
+      eth0_ip: 192.168.200.34
+      mac: 44:38:39:22:aa:14
+      bond_ip1: 172.16.180.107/24
+      bond_ip2: 172.16.180.108/24
+    support-01:
+      eth0_ip: 192.168.200.21
+      mac: 44:38:39:22:aa:09
+      bond_ip1: 172.16.179.101/24
+      bond_ip2: 172.16.179.102/24
+    support-02:
+      eth0_ip: 192.168.210.22
+      mac: 44:38:39:22:aa:0a
+      bond_ip1: 172.16.179.103/24
+      bond_ip2: 172.16.179.104/24
+    support-03:
+      eth0_ip: 192.168.220.23
+      mac: 44:38:39:22:aa:0b
+      bond_ip1: 172.16.179.105/24
+      bond_ip2: 172.16.179.106/24
+    support-04:
+      eth0_ip: 192.168.200.24
+      mac: 44:38:39:22:aa:0c
+      bond_ip1: 172.16.179.107/24
+      bond_ip2: 172.16.179.108/24
+    support-05:
+      eth0_ip: 192.168.210.25
+      mac: 44:38:39:22:aa:0d
+      bond_ip1: 172.16.179.109/24
+      bond_ip2: 172.16.179.110/24
+    support-06:
+      eth0_ip: 192.168.220.26
+      mac: 44:38:39:22:aa:0e
+      bond_ip1: 172.16.179.111/24
+      bond_ip2: 172.16.179.112/24
+    support-07:
+      eth0_ip: 192.168.200.27
+      mac: 44:38:39:22:aa:0f
+      bond_ip1: 172.16.179.113/24
+      bond_ip2: 172.16.179.114/24
+    support-08:
+      eth0_ip: 192.168.210.28
+      mac: 44:38:39:22:aa:10
+      bond_ip1: 172.16.179.115/24
+      bond_ip2: 172.16.179.116/24
+  2-8-9-800:
+    su-01-node-01:
+      eth0_ip: 192.168.200.11
+      mac: 44:38:39:22:aa:03
+      gpu_ip1: 192.168.110.201/24
+      gpu_ip2: 192.168.110.202/24
+      bond_ip: 172.16.178.201/24
+    su-01-node-02:
+      eth0_ip: 192.168.210.12
+      mac: 44:38:39:22:aa:04
+      gpu_ip1: 192.168.110.203/24
+      gpu_ip2: 192.168.110.204/24
+      bond_ip: 172.16.178.203/24
+    su-01-node-03:
+      eth0_ip: 192.168.220.13
+      mac: 44:38:39:22:aa:05
+      gpu_ip1: 192.168.110.205/24
+      gpu_ip2: 192.168.110.206/24
+      bond_ip: 172.16.178.205/24
+    su-01-node-04:
+      eth0_ip: 192.168.200.14
+      mac: 44:38:39:22:aa:06
+      gpu_ip1: 192.168.110.207/24
+      gpu_ip2: 192.168.110.208/24
+      bond_ip: 172.16.178.207/24
+    su-01-node-05:
+      eth0_ip: 192.168.210.15
+      mac: 44:38:39:22:aa:11
+      gpu_ip1: 192.168.110.209/24
+      gpu_ip2: 192.168.110.210/24
+      bond_ip: 172.16.178.209/24
+    su-01-node-06:
+      eth0_ip: 192.168.220.16
+      mac: 44:38:39:22:aa:12
+      gpu_ip1: 192.168.110.211/24
+      gpu_ip2: 192.168.110.212/24
+      bond_ip: 172.16.178.211/24
+    storage-01:
+      eth0_ip: 192.168.200.31
+      mac: 44:38:39:22:aa:07
+      bond_ip1: 172.16.180.101/24
+      bond_ip2: 172.16.180.102/24
+    storage-02:
+      eth0_ip: 192.168.210.32
+      mac: 44:38:39:22:aa:08
+      bond_ip1: 172.16.180.103/24
+      bond_ip2: 172.16.180.104/24
+    storage-03:
+      eth0_ip: 192.168.220.33
+      mac: 44:38:39:22:aa:13
+      bond_ip1: 172.16.180.105/24
+      bond_ip2: 172.16.180.106/24
+    storage-04:
+      eth0_ip: 192.168.200.34
+      mac: 44:38:39:22:aa:14
+      bond_ip1: 172.16.180.107/24
+      bond_ip2: 172.16.180.108/24
+    support-01:
+      eth0_ip: 192.168.200.21
+      mac: 44:38:39:22:aa:09
+      bond_ip1: 172.16.179.101/24
+      bond_ip2: 172.16.179.102/24
+    support-02:
+      eth0_ip: 192.168.210.22
+      mac: 44:38:39:22:aa:0a
+      bond_ip1: 172.16.179.103/24
+      bond_ip2: 172.16.179.104/24
+    support-03:
+      eth0_ip: 192.168.220.23
+      mac: 44:38:39:22:aa:0b
+      bond_ip1: 172.16.179.105/24
+      bond_ip2: 172.16.179.106/24
+    support-04:
+      eth0_ip: 192.168.200.24
+      mac: 44:38:39:22:aa:0c
+      bond_ip1: 172.16.179.107/24
+      bond_ip2: 172.16.179.108/24
+    support-05:
+      eth0_ip: 192.168.210.25
+      mac: 44:38:39:22:aa:0d
+      bond_ip1: 172.16.179.109/24
+      bond_ip2: 172.16.179.110/24
+    support-06:
+      eth0_ip: 192.168.220.26
+      mac: 44:38:39:22:aa:0e
+      bond_ip1: 172.16.179.111/24
+      bond_ip2: 172.16.179.112/24
+    support-07:
+      eth0_ip: 192.168.200.27
+      mac: 44:38:39:22:aa:0f
+      bond_ip1: 172.16.179.113/24
+      bond_ip2: 172.16.179.114/24
+    support-08:
+      eth0_ip: 192.168.210.28
+      mac: 44:38:39:22:aa:10
+      bond_ip1: 172.16.179.115/24
+      bond_ip2: 172.16.179.116/24
+oob:
+  2-4-3-200:
+    timezone: Etc/Zulu
+    oob_vlan: '200'
+  2-4-5-800:
+    timezone: Etc/UTC
+    oob_vlan: 200
+    oob_uplink_mode: l3
+  2-8-5-200: &nc_2_8_5_200_1
+    timezone: Etc/Zulu
+    oob_vlan: '200'
+  # 2-4-5-400 is a DEPOPULATED 2-8-5-200 (ERA-00004-001 v04): identical
+  # fabric, half the GPUs. Aliased, not copied — the two must not drift.
+  2-4-5-400: *nc_2_8_5_200_1
+  2-8-9-400:
+    timezone: Etc/Zulu
+    oob_vlan: '200'
+  2-8-9-400-SP:
+    timezone: Etc/Zulu
+    oob_vlan: '200'
+  2-8-9-800:
+    timezone: Etc/Zulu
+    oob_vlan: '200'
+core:
+  2-4-3-200:
+    timezone: Etc/Zulu
+    telemetry:
+      enabled: true
+      histogram:
+        counter:
+          bin_min_boundary: 3552
+          histogram_size: 55008
+          sample_interval: 1024
+        egress_buffer:
+          bin_min_boundary: 960
+          histogram_size: 9830400
+          sample_interval: 1024
+        ingress_buffer:
+          bin_min_boundary: 960
+          histogram_size: 2457600
+          sample_interval: 1024
+      snapshot_file:
+        count: 120
+        name: /var/run/cumulus/histogram_stats
+      snapshot_interval: 10
+    default_vrf_bgp:
+      address_family:
+        ipv4_unicast:
+          enable: true
+          redistribute_connected: true
+        l2vpn_evpn:
+          enable: true
+      neighbors:
+      - interfaces: isl
+        peer_group: underlay
+        type: unnumbered
+        ttl_security_hops: 1
+      peer_groups:
+      - id: underlay
+        remote_as: internal
+        bfd_enable: true
+        description: underlay_switch_interconnect
+        address_family:
+          l2vpn_evpn:
+            enable: true
+      - id: exit
+        remote_as: external
+        bfd_enable: true
+        description: exit_interconnect
+        address_family:
+          ipv4_unicast:
+            enable: true
+            policy_outbound_route_map: OUTBOUND_ERA_PREFIXES
+    nve_vxlan:
+      her: evpn
+      flooding_enable: true
+      decap_dscp: preserve
+      encap_dscp: copy
+    community_list:
+    - id: '11'
+      rule:
+      - id: '100'
+        description: match_exit_learned_route_tag
+        action: permit
+        community: '11:11'
+    route_map:
+    - id: BLOCK_VTEPS
+      rule:
+      - id: '10'
+        description: deny_vtep_loopback_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: VTEP_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: EVPN_OOB_OUT
+      rule:
+      - id: '10'
+        description: permit_macip_of_real_oob_hosts
+        action: permit
+        match:
+        - type: type
+          value: ipv4
+        - type: evpn-route-type
+          value: macip
+        - type: ip-prefix-list
+          value: OOB_HOSTS
+      - id: '20'
+        description: deny_macip_outside_oob_hosts
+        action: deny
+        match:
+        - type: type
+          value: ipv4
+        - type: evpn-route-type
+          value: macip
+      - id: '100'
+        description: permit_all_other_evpn_routes
+        action: permit
+    - id: EXIT_FILTER
+      rule:
+      - id: '10'
+        description: deny_exit_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: EXIT_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: tag_exit_learned_routes
+        action: permit
+        set:
+        - type: community
+          value: '11:11'
+    - id: INBAND_FILTER
+      rule:
+      - id: '5'
+        description: deny_exit_tagged_routes
+        action: deny
+        match:
+        - type: community-list
+          value: '11'
+      - id: '10'
+        description: deny_oob_vrf_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: OOB_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '15'
+        description: deny_inband_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: INBAND_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: OOB_FILTER
+      rule:
+      - id: '5'
+        description: deny_exit_tagged_routes
+        action: deny
+        match:
+        - type: community-list
+          value: '11'
+      - id: '10'
+        description: deny_inband_vrf_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: INBAND_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '15'
+        description: deny_oob_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: OOB_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: OUTBOUND_ERA_PREFIXES
+      rule:
+      - id: '10'
+        description: permit_era_owned_prefixes_outbound
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ERA_PREFIXES
+        - type: type
+          value: ipv4
+    - id: WEIGHTED_ECMP
+      rule:
+      - id: '10'
+        description: enable_w_ecmp_adjustment
+        action: permit
+        set:
+        - type: ext-community-bw
+          value: multipaths
+    vrf_config:
+    - id: EXIT
+      vlan: 3004
+      vni: '5004'
+      route_export: true
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - INBAND
+              - OOB
+              route_map: EXIT_FILTER
+          l2vpn_evpn:
+            enable: true
+        neighbors:
+        - interfaces:
+          - swp61s0
+          - swp61s1
+          - swp63s0
+          - swp63s1
+          peer_group: exit
+          type: unnumbered
+        peer_groups:
+        - id: exit
+          remote_as: external
+          address_family:
+            ipv4_unicast:
+              enable: true
+              policy:
+                outbound_route_map: OUTBOUND_ERA_PREFIXES
+    - id: INBAND
+      vlan: 3002
+      vni: '5002'
+      route_export: true
+      route_import: true
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - EXIT
+              route_map: INBAND_FILTER
+          l2vpn_evpn:
+            enable: true
+    - id: GPU
+      vlan: 3003
+      vni: '5003'
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+          l2vpn_evpn:
+            enable: true
+    - id: OOB
+      vlan: 3001
+      vni: '5001'
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - EXIT
+              route_map: OOB_FILTER
+          l2vpn_evpn:
+            enable: true
+  2-4-5-800:
+    vrfs:
+      INBAND:
+        evpn_vlan: 3002
+        vni: 245002
+      STORAGE:
+        evpn_vlan: 3005
+        vni: 245005
+    overlay_peers:
+    - 172.16.1.2
+    - 172.16.1.3
+    underlay_route_map: WEIGHTED_ECMP
+    community_list:
+    - id: '11'
+      rule:
+      - id: '100'
+        description: match_exit_learned_route_tag
+        action: permit
+        community: '11:11'
+    route_map:
+    - id: BLOCK_VTEPS
+      rule:
+      - id: '10'
+        description: deny_vtep_loopback_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: VTEP_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: EVPN_OOB_OUT
+      rule:
+      - id: '10'
+        description: permit_macip_of_real_oob_hosts
+        action: permit
+        match:
+        - type: type
+          value: ipv4
+        - type: evpn-route-type
+          value: macip
+        - type: ip-prefix-list
+          value: OOB_HOSTS
+      - id: '20'
+        description: deny_macip_outside_oob_hosts
+        action: deny
+        match:
+        - type: type
+          value: ipv4
+        - type: evpn-route-type
+          value: macip
+      - id: '100'
+        description: permit_all_other_evpn_routes
+        action: permit
+    - id: EXIT_FILTER
+      rule:
+      - id: '10'
+        description: deny_exit_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: EXIT_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: tag_exit_learned_routes
+        action: permit
+        set:
+        - type: community
+          value: '11:11'
+    - id: INBAND_FILTER
+      rule:
+      - id: '5'
+        description: deny_exit_tagged_routes
+        action: deny
+        match:
+        - type: community-list
+          value: '11'
+      - id: '10'
+        description: deny_oob_vrf_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: OOB_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '15'
+        description: deny_inband_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: INBAND_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: OOB_FILTER
+      rule:
+      - id: '5'
+        description: deny_exit_tagged_routes
+        action: deny
+        match:
+        - type: community-list
+          value: '11'
+      - id: '10'
+        description: deny_inband_vrf_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: INBAND_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '15'
+        description: deny_oob_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: OOB_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: OUTBOUND_ERA_PREFIXES
+      rule:
+      - id: '10'
+        description: permit_era_owned_prefixes_outbound
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ERA_PREFIXES
+        - type: type
+          value: ipv4
+    - id: WEIGHTED_ECMP
+      rule:
+      - id: '10'
+        description: enable_w_ecmp_adjustment
+        action: permit
+        set:
+        - type: ext-community-bw
+          value: multipaths
+    vrf_config:
+    - id: INBAND
+      vlan: 3002
+      vni: '245002'
+      route_export: true
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+          l2vpn_evpn:
+            enable: true
+    default_vrf_bgp:
+      address_family:
+        ipv4_unicast:
+          enable: true
+          redistribute_connected: true
+        l2vpn_evpn:
+          enable: true
+      neighbors:
+      - interfaces:
+        - swp63s0
+        - swp63s1
+        - swp64s0
+        - swp64s1
+        peer_group: underlay
+        type: unnumbered
+      - interfaces:
+        - 172.16.1.2
+        - 172.16.1.3
+        peer_group: overlay
+        type: numbered
+      peer_groups:
+      - id: underlay
+        remote_as: external
+        address_family:
+          ipv4_unicast:
+            enable: true
+      - id: overlay
+        remote_as: external
+        update_source: lo
+        multihop_ttl: 2
+        address_family:
+          ipv4_unicast:
+            enable: false
+          l2vpn_evpn:
+            enable: true
+  2-8-5-200: &nc_2_8_5_200_2
+    timezone: Etc/Zulu
+    telemetry:
+      enabled: true
+      histogram:
+        counter:
+          bin_min_boundary: 3552
+          histogram_size: 55008
+          sample_interval: 1024
+        egress_buffer:
+          bin_min_boundary: 960
+          histogram_size: 9830400
+          sample_interval: 1024
+        ingress_buffer:
+          bin_min_boundary: 960
+          histogram_size: 2457600
+          sample_interval: 1024
+      snapshot_file:
+        count: 120
+        name: /var/run/cumulus/histogram_stats
+      snapshot_interval: 10
+    default_vrf_bgp:
+      address_family:
+        ipv4_unicast:
+          enable: true
+          redistribute_connected: true
+        l2vpn_evpn:
+          enable: true
+      neighbors:
+      - interfaces: isl
+        peer_group: underlay
+        type: unnumbered
+        ttl_security_hops: 1
+      peer_groups:
+      - id: underlay
+        remote_as: internal
+        bfd_enable: true
+        description: underlay_switch_interconnect
+        address_family:
+          l2vpn_evpn:
+            enable: true
+      - id: exit
+        remote_as: external
+        bfd_enable: true
+        description: exit_interconnect
+        address_family:
+          ipv4_unicast:
+            enable: true
+            policy_outbound_route_map: OUTBOUND_ERA_PREFIXES
+    nve_vxlan:
+      her: evpn
+      flooding_enable: true
+      decap_dscp: preserve
+      encap_dscp: copy
+    community_list:
+    - id: '11'
+      rule:
+      - id: '100'
+        description: match_exit_learned_route_tag
+        action: permit
+        community: '11:11'
+    route_map:
+    - id: BLOCK_VTEPS
+      rule:
+      - id: '10'
+        description: deny_vtep_loopback_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: VTEP_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: EVPN_OOB_OUT
+      rule:
+      - id: '10'
+        description: permit_macip_of_real_oob_hosts
+        action: permit
+        match:
+        - type: type
+          value: ipv4
+        - type: evpn-route-type
+          value: macip
+        - type: ip-prefix-list
+          value: OOB_HOSTS
+      - id: '20'
+        description: deny_macip_outside_oob_hosts
+        action: deny
+        match:
+        - type: type
+          value: ipv4
+        - type: evpn-route-type
+          value: macip
+      - id: '100'
+        description: permit_all_other_evpn_routes
+        action: permit
+    - id: EXIT_FILTER
+      rule:
+      - id: '10'
+        description: deny_exit_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: EXIT_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: tag_exit_learned_routes
+        action: permit
+        set:
+        - type: community
+          value: '11:11'
+    - id: INBAND_FILTER
+      rule:
+      - id: '5'
+        description: deny_exit_tagged_routes
+        action: deny
+        match:
+        - type: community-list
+          value: '11'
+      - id: '10'
+        description: deny_oob_vrf_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: OOB_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '15'
+        description: deny_inband_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: INBAND_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: OOB_FILTER
+      rule:
+      - id: '5'
+        description: deny_exit_tagged_routes
+        action: deny
+        match:
+        - type: community-list
+          value: '11'
+      - id: '10'
+        description: deny_inband_vrf_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: INBAND_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '15'
+        description: deny_oob_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: OOB_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: OUTBOUND_ERA_PREFIXES
+      rule:
+      - id: '10'
+        description: permit_era_owned_prefixes_outbound
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ERA_PREFIXES
+        - type: type
+          value: ipv4
+    - id: WEIGHTED_ECMP
+      rule:
+      - id: '10'
+        description: enable_w_ecmp_adjustment
+        action: permit
+        set:
+        - type: ext-community-bw
+          value: multipaths
+    vrf_config:
+    - id: EXIT
+      vlan: 3004
+      vni: '5004'
+      route_export: true
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - INBAND
+              - OOB
+              route_map: EXIT_FILTER
+          l2vpn_evpn:
+            enable: true
+        neighbors:
+        - interfaces:
+          - swp59s0
+          - swp59s1
+          - swp59s2
+          - swp59s3
+          - swp59s4
+          - swp59s5
+          - swp61s0
+          - swp61s1
+          - swp61s2
+          - swp61s3
+          - swp61s4
+          - swp61s5
+          - swp63s0
+          - swp63s1
+          - swp63s2
+          - swp63s3
+          - swp63s4
+          - swp63s5
+          peer_group: exit
+          type: unnumbered
+        peer_groups:
+        - id: exit
+          remote_as: external
+          address_family:
+            ipv4_unicast:
+              enable: true
+              policy:
+                outbound_route_map: OUTBOUND_ERA_PREFIXES
+    - id: INBAND
+      vlan: 3002
+      vni: '5002'
+      route_export: true
+      route_import: true
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - EXIT
+              route_map: INBAND_FILTER
+          l2vpn_evpn:
+            enable: true
+    - id: GPU
+      vlan: 3003
+      vni: '5003'
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+          l2vpn_evpn:
+            enable: true
+    - id: OOB
+      vlan: 3001
+      vni: '5001'
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - EXIT
+              route_map: OOB_FILTER
+          l2vpn_evpn:
+            enable: true
+  # 2-4-5-400 is a DEPOPULATED 2-8-5-200 (ERA-00004-001 v04): identical
+  # fabric, half the GPUs. Aliased, not copied — the two must not drift.
+  2-4-5-400: *nc_2_8_5_200_2
+  2-8-9-400:
+    timezone: Etc/Zulu
+    telemetry:
+      enabled: true
+      histogram:
+        counter:
+          bin_min_boundary: 3552
+          histogram_size: 55008
+          sample_interval: 1024
+        egress_buffer:
+          bin_min_boundary: 960
+          histogram_size: 9830400
+          sample_interval: 1024
+        ingress_buffer:
+          bin_min_boundary: 960
+          histogram_size: 2457600
+          sample_interval: 1024
+      snapshot_file:
+        count: 120
+        name: /var/run/cumulus/histogram_stats
+      snapshot_interval: 10
+    default_vrf_bgp:
+      address_family:
+        ipv4_unicast:
+          enable: true
+          redistribute_connected: true
+        l2vpn_evpn:
+          enable: true
+      neighbors:
+      - interfaces: isl
+        peer_group: underlay
+        type: unnumbered
+        ttl_security_hops: 1
+      peer_groups:
+      - id: underlay
+        remote_as: internal
+        bfd_enable: true
+        description: underlay_switch_interconnect
+        address_family:
+          l2vpn_evpn:
+            enable: true
+      - id: exit
+        remote_as: external
+        bfd_enable: true
+        description: exit_interconnect
+        address_family:
+          ipv4_unicast:
+            enable: true
+            policy_outbound_route_map: OUTBOUND_ERA_PREFIXES
+    nve_vxlan:
+      her: evpn
+      flooding_enable: true
+      decap_dscp: preserve
+      encap_dscp: copy
+    community_list:
+    - id: '11'
+      rule:
+      - id: '100'
+        description: match_exit_learned_route_tag
+        action: permit
+        community: '11:11'
+    route_map:
+    - id: BLOCK_VTEPS
+      rule:
+      - id: '10'
+        description: deny_vtep_loopback_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: VTEP_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: EVPN_OOB_OUT
+      rule:
+      - id: '10'
+        description: permit_macip_of_real_oob_hosts
+        action: permit
+        match:
+        - type: type
+          value: ipv4
+        - type: evpn-route-type
+          value: macip
+        - type: ip-prefix-list
+          value: OOB_HOSTS
+      - id: '20'
+        description: deny_macip_outside_oob_hosts
+        action: deny
+        match:
+        - type: type
+          value: ipv4
+        - type: evpn-route-type
+          value: macip
+      - id: '100'
+        description: permit_all_other_evpn_routes
+        action: permit
+    - id: EXIT_FILTER
+      rule:
+      - id: '10'
+        description: deny_exit_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: EXIT_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: tag_exit_learned_routes
+        action: permit
+        set:
+        - type: community
+          value: '11:11'
+    - id: INBAND_FILTER
+      rule:
+      - id: '5'
+        description: deny_exit_tagged_routes
+        action: deny
+        match:
+        - type: community-list
+          value: '11'
+      - id: '10'
+        description: deny_oob_vrf_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: OOB_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '15'
+        description: deny_inband_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: INBAND_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: OOB_FILTER
+      rule:
+      - id: '5'
+        description: deny_exit_tagged_routes
+        action: deny
+        match:
+        - type: community-list
+          value: '11'
+      - id: '10'
+        description: deny_inband_vrf_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: INBAND_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '15'
+        description: deny_oob_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: OOB_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: OUTBOUND_ERA_PREFIXES
+      rule:
+      - id: '10'
+        description: permit_era_owned_prefixes_outbound
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ERA_PREFIXES
+        - type: type
+          value: ipv4
+    - id: WEIGHTED_ECMP
+      rule:
+      - id: '10'
+        description: enable_w_ecmp_adjustment
+        action: permit
+        set:
+        - type: ext-community-bw
+          value: multipaths
+    vrf_config:
+    - id: EXIT
+      vlan: 3004
+      vni: '5004'
+      route_export: true
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - INBAND
+              - OOB
+              route_map: EXIT_FILTER
+          l2vpn_evpn:
+            enable: true
+        neighbors:
+        - interfaces:
+          - swp61s0
+          - swp61s1
+          - swp61s2
+          - swp61s3
+          - swp61s4
+          - swp61s5
+          - swp63s0
+          - swp63s1
+          - swp63s2
+          - swp63s3
+          - swp63s4
+          - swp63s5
+          peer_group: exit
+          type: unnumbered
+        peer_groups:
+        - id: exit
+          remote_as: external
+          address_family:
+            ipv4_unicast:
+              enable: true
+              policy:
+                outbound_route_map: OUTBOUND_ERA_PREFIXES
+    - id: INBAND
+      vlan: 3002
+      vni: '5002'
+      route_export: true
+      route_import: true
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - EXIT
+              route_map: INBAND_FILTER
+          l2vpn_evpn:
+            enable: true
+    - id: GPU
+      vlan: 3003
+      vni: '5003'
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+          l2vpn_evpn:
+            enable: true
+    - id: OOB
+      vlan: 3001
+      vni: '5001'
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - EXIT
+              route_map: OOB_FILTER
+          l2vpn_evpn:
+            enable: true
+  2-8-9-400-SP:
+    timezone: Etc/Zulu
+    telemetry:
+      enabled: true
+      histogram:
+        counter:
+          bin_min_boundary: 3552
+          histogram_size: 55008
+          sample_interval: 1024
+        egress_buffer:
+          bin_min_boundary: 960
+          histogram_size: 9830400
+          sample_interval: 1024
+        ingress_buffer:
+          bin_min_boundary: 960
+          histogram_size: 2457600
+          sample_interval: 1024
+      snapshot_file:
+        count: 120
+        name: /var/run/cumulus/histogram_stats
+      snapshot_interval: 10
+    default_vrf_bgp:
+      address_family:
+        ipv4_unicast:
+          enable: true
+          redistribute_connected: true
+        l2vpn_evpn:
+          enable: true
+      neighbors:
+      - interfaces: isl
+        peer_group: underlay
+        type: unnumbered
+      peer_groups:
+      - id: underlay
+        remote_as: internal
+        bfd_enable: true
+        description: underlay_switch_interconnect
+        address_family:
+          l2vpn_evpn:
+            enable: true
+      - id: exit
+        remote_as: external
+        bfd_enable: true
+        description: exit_interconnect
+        address_family:
+          ipv4_unicast:
+            enable: true
+            policy_outbound_route_map: OUTBOUND_ERA_PREFIXES
+    nve_vxlan:
+      her: evpn
+      flooding_enable: true
+      decap_dscp: preserve
+      encap_dscp: copy
+    community_list:
+    - id: '11'
+      rule:
+      - id: '100'
+        description: match_exit_learned_route_tag
+        action: permit
+        community: '11:11'
+    route_map:
+    - id: BLOCK_VTEPS
+      rule:
+      - id: '10'
+        description: deny_vtep_loopback_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: VTEP_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: EVPN_OOB_OUT
+      rule:
+      - id: '10'
+        description: permit_macip_of_real_oob_hosts
+        action: permit
+        match:
+        - type: type
+          value: ipv4
+        - type: evpn-route-type
+          value: macip
+        - type: ip-prefix-list
+          value: OOB_HOSTS
+      - id: '20'
+        description: deny_macip_outside_oob_hosts
+        action: deny
+        match:
+        - type: type
+          value: ipv4
+        - type: evpn-route-type
+          value: macip
+      - id: '100'
+        description: permit_all_other_evpn_routes
+        action: permit
+    - id: EXIT_FILTER
+      rule:
+      - id: '10'
+        description: deny_exit_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: EXIT_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: tag_exit_learned_routes
+        action: permit
+        set:
+        - type: community
+          value: '11:11'
+    - id: INBAND_FILTER
+      rule:
+      - id: '5'
+        description: deny_exit_tagged_routes
+        action: deny
+        match:
+        - type: community-list
+          value: '11'
+      - id: '10'
+        description: deny_oob_vrf_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: OOB_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '15'
+        description: deny_inband_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: INBAND_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: OOB_FILTER
+      rule:
+      - id: '5'
+        description: deny_exit_tagged_routes
+        action: deny
+        match:
+        - type: community-list
+          value: '11'
+      - id: '10'
+        description: deny_inband_vrf_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: INBAND_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '15'
+        description: deny_oob_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: OOB_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: OUTBOUND_ERA_PREFIXES
+      rule:
+      - id: '10'
+        description: permit_era_owned_prefixes_outbound
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ERA_PREFIXES
+        - type: type
+          value: ipv4
+    - id: WEIGHTED_ECMP
+      rule:
+      - id: '10'
+        description: enable_w_ecmp_adjustment
+        action: permit
+        set:
+        - type: ext-community-bw
+          value: multipaths
+    vrf_config:
+    - id: EXIT
+      vlan: 3004
+      vni: '5004'
+      route_export: true
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - INBAND
+              - OOB
+              route_map: EXIT_FILTER
+          l2vpn_evpn:
+            enable: true
+        neighbors:
+        - interfaces:
+          - swp64s0
+          - swp64s1
+          peer_group: exit
+          type: unnumbered
+        peer_groups:
+        - id: exit
+          remote_as: external
+          address_family:
+            ipv4_unicast:
+              enable: true
+              policy:
+                outbound_route_map: OUTBOUND_ERA_PREFIXES
+    - id: INBAND
+      vlan: 3002
+      vni: '5002'
+      route_export: true
+      route_import: true
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - EXIT
+              route_map: INBAND_FILTER
+          l2vpn_evpn:
+            enable: true
+    - id: OOB
+      vlan: 3001
+      vni: '5001'
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - EXIT
+              route_map: OOB_FILTER
+          l2vpn_evpn:
+            enable: true
+  2-8-9-800:
+    timezone: Etc/Zulu
+    telemetry:
+      enabled: true
+      histogram:
+        counter:
+          bin_min_boundary: 3552
+          histogram_size: 55008
+          sample_interval: 1024
+        egress_buffer:
+          bin_min_boundary: 960
+          histogram_size: 9830400
+          sample_interval: 1024
+        ingress_buffer:
+          bin_min_boundary: 960
+          histogram_size: 2457600
+          sample_interval: 1024
+      snapshot_file:
+        count: 120
+        name: /var/run/cumulus/histogram_stats
+      snapshot_interval: 10
+    default_vrf_bgp:
+      address_family:
+        ipv4_unicast:
+          enable: true
+          redistribute_connected: true
+        l2vpn_evpn:
+          enable: true
+      neighbors:
+      - interfaces: isl
+        peer_group: underlay
+        type: unnumbered
+      peer_groups:
+      - id: underlay
+        remote_as: internal
+        bfd_enable: true
+        description: underlay_switch_interconnect
+        address_family:
+          l2vpn_evpn:
+            enable: true
+      - id: exit
+        remote_as: external
+        bfd_enable: true
+        description: exit_interconnect
+        address_family:
+          ipv4_unicast:
+            enable: true
+            policy_outbound_route_map: OUTBOUND_ERA_PREFIXES
+    nve_vxlan:
+      her: evpn
+      flooding_enable: true
+      decap_dscp: preserve
+      encap_dscp: copy
+    community_list:
+    - id: '11'
+      rule:
+      - id: '100'
+        description: match_exit_learned_route_tag
+        action: permit
+        community: '11:11'
+    route_map:
+    - id: BLOCK_VTEPS
+      rule:
+      - id: '10'
+        description: deny_vtep_loopback_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: VTEP_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: EVPN_OOB_OUT
+      rule:
+      - id: '10'
+        description: permit_macip_of_real_oob_hosts
+        action: permit
+        match:
+        - type: type
+          value: ipv4
+        - type: evpn-route-type
+          value: macip
+        - type: ip-prefix-list
+          value: OOB_HOSTS
+      - id: '20'
+        description: deny_macip_outside_oob_hosts
+        action: deny
+        match:
+        - type: type
+          value: ipv4
+        - type: evpn-route-type
+          value: macip
+      - id: '100'
+        description: permit_all_other_evpn_routes
+        action: permit
+    - id: EXIT_FILTER
+      rule:
+      - id: '10'
+        description: deny_exit_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: EXIT_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: tag_exit_learned_routes
+        action: permit
+        set:
+        - type: community
+          value: '11:11'
+    - id: INBAND_FILTER
+      rule:
+      - id: '5'
+        description: deny_exit_tagged_routes
+        action: deny
+        match:
+        - type: community-list
+          value: '11'
+      - id: '10'
+        description: deny_oob_vrf_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: OOB_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '15'
+        description: deny_inband_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: INBAND_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: OOB_FILTER
+      rule:
+      - id: '5'
+        description: deny_exit_tagged_routes
+        action: deny
+        match:
+        - type: community-list
+          value: '11'
+      - id: '10'
+        description: deny_inband_vrf_prefixes
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: INBAND_PREFIXES
+        - type: type
+          value: ipv4
+      - id: '15'
+        description: deny_oob_vrf_local_interfaces
+        action: deny
+        match:
+        - type: ip-prefix-list
+          value: OOB_LOCAL_IF
+        - type: type
+          value: ipv4
+      - id: '20'
+        description: permit_all_other_ipv4
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ALL_PREFIXES
+        - type: type
+          value: ipv4
+    - id: OUTBOUND_ERA_PREFIXES
+      rule:
+      - id: '10'
+        description: permit_era_owned_prefixes_outbound
+        action: permit
+        match:
+        - type: ip-prefix-list
+          value: ERA_PREFIXES
+        - type: type
+          value: ipv4
+    - id: WEIGHTED_ECMP
+      rule:
+      - id: '10'
+        description: enable_w_ecmp_adjustment
+        action: permit
+        set:
+        - type: ext-community-bw
+          value: multipaths
+    vrf_config:
+    - id: EXIT
+      vlan: 3004
+      vni: '5004'
+      route_export: true
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - INBAND
+              - OOB
+              route_map: EXIT_FILTER
+          l2vpn_evpn:
+            enable: true
+        neighbors:
+        - interfaces:
+          - swp64s0
+          - swp64s1
+          peer_group: exit
+          type: unnumbered
+        peer_groups:
+        - id: exit
+          remote_as: external
+          address_family:
+            ipv4_unicast:
+              enable: true
+              policy:
+                outbound_route_map: OUTBOUND_ERA_PREFIXES
+    - id: INBAND
+      vlan: 3002
+      vni: '5002'
+      route_export: true
+      route_import: true
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - EXIT
+              route_map: INBAND_FILTER
+          l2vpn_evpn:
+            enable: true
+    - id: OOB
+      vlan: 3001
+      vni: '5001'
+      bgp:
+        address_family:
+          ipv4_unicast:
+            enable: true
+            redistribute_connected: true
+            route_export_to_evpn: true
+            route_import_from_vrf:
+              enable: true
+              list:
+              - EXIT
+              route_map: OOB_FILTER
+          l2vpn_evpn:
+            enable: true
+host_vars:
+  2-4-3-200:
+    dhcp-oob:
+      ansible_host: CHANGE_ME
+      hostname: dhcp-oob
+      ansible_port: 22
+      ansible_user: ubuntu
+    external-conn:
+      ansible_host: CHANGE_ME
+      hostname: external-conn
+      ansible_port: 22
+      ansible_user: ubuntu
+    external-dhcp:
+      ansible_host: CHANGE_ME
+      hostname: external-dhcp
+      ansible_port: 22
+      ansible_user: ubuntu
+    oob-server-01:
+      ansible_host: CHANGE_ME
+      hostname: oob-server-01
+      ansible_port: 22
+      ansible_user: ubuntu
+    utility:
+      ansible_host: CHANGE_ME
+      hostname: utility
+      ansible_port: 22
+      ansible_user: ubuntu
+  2-8-5-200: &nc_2_8_5_200_3
+    dhcp-oob:
+      ansible_host: CHANGE_ME
+      hostname: dhcp-oob
+      ansible_port: 22
+      ansible_user: ubuntu
+    external-conn:
+      ansible_host: CHANGE_ME
+      hostname: external-conn
+      ansible_port: 22
+      ansible_user: ubuntu
+    external-dhcp:
+      ansible_host: CHANGE_ME
+      hostname: external-dhcp
+      ansible_port: 22
+      ansible_user: ubuntu
+    oob-server-01:
+      ansible_host: CHANGE_ME
+      ansible_port: 22
+      ansible_user: ubuntu
+      ansible_password: '{{ server_ansible_password }}'
+      oob_server_interfaces:
+      - name: eth1
+        ip: 192.168.200.1
+        netmask: 24
+        network: 192.168.200.0/24
+        purpose: OOB Network Gateway
+      hostname: oob-server-01
+    utility:
+      ansible_host: CHANGE_ME
+      hostname: utility
+      ansible_port: 22
+      ansible_user: ubuntu
+  # 2-4-5-400 is a DEPOPULATED 2-8-5-200 (ERA-00004-001 v04): identical
+  # fabric, half the GPUs. Aliased, not copied — the two must not drift.
+  2-4-5-400: *nc_2_8_5_200_3
+  2-8-9-400:
+    dhcp-oob:
+      ansible_host: CHANGE_ME
+      ansible_port: 22
+      ansible_user: ubuntu
+      hostname: dhcp-oob
+    external-conn:
+      ansible_host: CHANGE_ME
+      hostname: external-conn
+      ansible_port: 22
+      ansible_user: ubuntu
+    external-dhcp:
+      ansible_host: CHANGE_ME
+      hostname: external-dhcp
+      ansible_port: 22
+      ansible_user: ubuntu
+    oob-server-01:
+      ansible_host: CHANGE_ME
+      ansible_port: 22
+      ansible_user: ubuntu
+      hostname: oob-server-01
+    utility:
+      ansible_host: CHANGE_ME
+      hostname: utility
+      ansible_port: 22
+      ansible_user: ubuntu
+  2-8-9-400-SP:
+    dhcp-oob:
+      ansible_host: CHANGE_ME
+      ansible_port: 22
+      ansible_user: ubuntu
+      hostname: dhcp-oob
+    external-conn:
+      ansible_host: CHANGE_ME
+      hostname: external-conn
+      ansible_port: 22
+      ansible_user: ubuntu
+    external-dhcp:
+      ansible_host: CHANGE_ME
+      hostname: external-dhcp
+      ansible_port: 22
+      ansible_user: ubuntu
+    oob-server-01:
+      ansible_host: CHANGE_ME
+      ansible_port: 22
+      ansible_user: ubuntu
+      hostname: oob-server-01
+    utility:
+      ansible_host: CHANGE_ME
+      hostname: utility
+      ansible_port: 22
+      ansible_user: ubuntu
+  2-8-9-800:
+    dhcp-oob:
+      ansible_host: CHANGE_ME
+      ansible_port: 22
+      ansible_user: ubuntu
+      hostname: dhcp-oob
+    external-conn:
+      ansible_host: CHANGE_ME
+      hostname: external-conn
+      ansible_port: 22
+      ansible_user: ubuntu
+    external-dhcp:
+      ansible_host: CHANGE_ME
+      hostname: external-dhcp
+      ansible_port: 22
+      ansible_user: ubuntu
+    oob-server-01:
+      ansible_host: CHANGE_ME
+      ansible_port: 22
+      ansible_user: ubuntu
+      hostname: oob-server-01
+    utility:
+      ansible_host: CHANGE_ME
+      hostname: utility
+      ansible_port: 22
+      ansible_user: ubuntu

@@ -1,103 +1,58 @@
-# Windows Zone Identifier files (created when downloading files)
-*:Zone.Identifier
+# net-configurator — runtime & local state (this is the public repo root;
+# also honored inside the monorepo via nested .gitignore).
 
-# ERA deployment context (user-specific, not committed)
+# ERA deployment context (user-specific)
 .era-context
-
-# Air API credentials (vault-encrypted + optional password file)
+# Air API credentials vault (per-checkout, vault-encrypted)
 .era-secrets/
-
-# Local env override for testing Air API creds (legacy, user-specific)
+# Legacy Air creds test override
 .envtest
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-.venv/
-.venv-*/
-venv/
-ENV/
-env/
-*.egg-info/
-.eggs/
-dist/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
 
 # Ansible
 *.retry
-
-# Logs
-*.log
-
 # Local testing
 .pytest_cache/
 .coverage
 htmlcov/
-
-# Timestamped file backups
-archive/
-
-# Release artifacts built by `make release-tarball` (public artifact is nc-v<version>)
-/nc-v*.tar.gz
-/nc-v*.zip
-
+# Python bytecode and virtualenvs. In the monorepo these are covered by the
+# root .gitignore, but that file does not ship — in the public tree this
+# directory IS the repo root, so they must be listed here too. `make setup`
+# creates .venv-test/.
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.venv-*/
+venv/
 # Regeneration scratch dirs — never commit (use output/<arch>/<site>/ instead)
 /test_output/
 /NEW_TESTS/
 /playbooks/test_configs/
 
-# Reference architecture PDFs (large binaries, not for version control)
-architectural_docs/
-
-# Excel files dropped directly into input/ as a staging area (not committed)
-# Run: make import EXCEL=input/<filename>.xlsx
+# Excel files dropped into input/ as a staging area (not committed).
+# Sample + largescale shipped example workbooks ARE committed.
 input/*.xlsx
 input/*.xlsm
-# Exception: sample + shipped example workbooks are committed for testers/public.
-# largescale-* = largest verified scale per arch (see docs/ARCH_SUPPORT_MATRIX.md)
-# (flat default-*.xlsx stay LOCAL — never synced; the public default template is
-#  input/<arch>/default/<arch>.xlsx)
 !input/sample-*.xlsx
 !input/largescale-*.xlsx
-# Local scratch staging (old samples/defs parked here while building new ones)
 input/legacy/
-
-# Non-default input sites (user-specific, not committed)
-# input/<arch>/default/ is committed; all other site names are ignored
+# Non-default input sites (input/<arch>/default/ committed; others ignored).
+# input/<arch>/largescale/ is committed too — the shipped reference-scale input
+# alongside its reference output/<arch>/largescale/.
 input/*/*/
 !input/*/default/
+!input/*/largescale/
 
-# Non-default output sites (user-specific, not committed)
-# output/<arch>/default/ + output/<arch>/largescale/ are committed as public
-# reference output; all other site names are ignored.
+# Non-default output sites. default/ + largescale/ ship as reference output.
 output/*/*/
 !output/*/default/
 !output/*/largescale/
-
-# Volatile output subdirs — regenerated every validation/Air run, no value in
-# tracking. Only the generated inventory/, configs/, and topology/ (minus
-# node-instructions) belong in version control.
+# Volatile output subdirs (regenerated every run)
 output/*/default/reports/
 output/*/default/topology/node-instructions/
+# Validation bundles (ERA-37) — a build artifact, timestamped per run, and it
+# lands inside the tracked default/ tree. Never commit one: it is a snapshot of
+# a specific deployment, not reference output.
+validation-bundle-*.zip
 output/*/largescale/reports/
 output/*/largescale/topology/node-instructions/
-
-# Local IDE/agent state
-.claude/
-.cursorrules
-.codex
-
-/images/

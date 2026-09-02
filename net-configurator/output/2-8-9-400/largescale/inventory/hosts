@@ -1,7 +1,7 @@
 # ============================================================================
 # 2-8-9-400 Deployment Inventory (Generated from Excel)
 # ============================================================================
-# 2 Core switches, 16 OOB switches
+# 34 switches: 2 CSL, 8 GL, 8 GS, 16 OOB
 # ============================================================================
 
 [csl]
@@ -115,15 +115,15 @@ su-16-node-02
 su-16-node-03
 su-16-node-04
 
-[storage]
-storage-01
-storage-02
-storage-03
-storage-04
-
 [support]
 support-01
 support-02
+support-03
+support-04
+support-05
+support-06
+support-07
+support-08
 
 [dhcp]
 external-dhcp
@@ -145,7 +145,6 @@ ansible_user=cumulus
 
 [servers:children]
 nodes
-storage
 support
 dhcp
 oob_server

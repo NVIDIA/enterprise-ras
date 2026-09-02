@@ -40,8 +40,22 @@ nv set interface lo type loopback
 #============================================================================
 # Access Ports (1G, VLAN 200)
 #============================================================================
-nv set interface {{ access_ports }} bridge domain br_default access 200
+nv set interface {{ access_ports }} bridge domain br_default access {{ oob_access_vlan | default(200) }}
 nv set interface {{ access_ports }} link speed 1G
+{# ERA-56: bring the access ports up. `interfaces_up` appears twice in the core
+   template and zero times here, so the OOB switch never emitted `link state up`
+   — ~48 stanzas per OOB switch, the single largest residual measured anywhere
+   in the production-capture exercise, on every deployment that has one.
+
+   Driven by `access_ports`, which is derived from that switch's Wire Map rows
+   (with a loud ADR-0035 fallback), NOT by the core template's `interfaces_up`.
+   That variable is deliberately never inherited from the source inventory
+   because it pins reference-topology ports and is destructive on a
+   site-specific wire map — the core reference sets `bond3s0,swp3s1 link state
+   up`, a site-specific pair, whereas the OOB reference sets the whole access
+   range (`oob-switch-01.sh:10 nv set interface swp1-48 link state up`).
+   Emitted here in the same position the reference uses. #}
+nv set interface {{ access_ports }} link state up
 {# Append spine bond members to the type-swp list only when non-empty;
    otherwise we emit "<access_ports>," with a trailing comma which NVUE rejects. #}
 {% if spine_bond_members %}
@@ -56,7 +70,7 @@ nv set interface {{ access_ports }} type swp
 #============================================================================
 nv set interface spine_bond bond member {{ spine_bond_members | join(',') }}
 nv set interface spine_bond type bond
-nv set interface spine_bond bridge domain br_default access 200
+nv set interface spine_bond bridge domain br_default access {{ oob_access_vlan | default(200) }}
 nv set interface spine_bond link state down
 nv set interface {{ spine_bond_members | join(',') }} link state down
 {% endif %}
@@ -90,9 +104,9 @@ nv set nve vxlan source address {{ lo_ip.split('/')[0] }}
 # Router / BGP global
 #============================================================================
 nv set router bfd state enabled
-nv set router bfd profile default detect-multiplier 3
-nv set router bfd profile default min-rx-interval 300
-nv set router bfd profile default min-tx-interval 300
+nv set router bfd profile underlay detect-multiplier 3
+nv set router bfd profile underlay min-rx-interval 300
+nv set router bfd profile underlay min-tx-interval 300
 nv set router bfd profile overlay detect-multiplier 3
 nv set router bfd profile overlay min-rx-interval 1000
 nv set router bfd profile overlay min-tx-interval 1000
@@ -100,9 +114,11 @@ nv set router bgp autonomous-system {{ bgp_asn }}
 nv set router bgp state enabled
 nv set router bgp router-id {{ router_id }}
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 description permit_loopback_interface_routes
 nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
 nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
 nv set router policy route-map WEIGHTED_ECMP rule 10 action permit
+nv set router policy route-map WEIGHTED_ECMP rule 10 description enable_w_ecmp_adjustment
 nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths
 nv set router vrr state enabled
 {% endif %}
@@ -111,7 +127,7 @@ nv set router vrr state enabled
 # NTP (servers from Settings ntp_servers comma-separated, or default)
 #============================================================================
 {% for server in ntp_servers | default(['0.cumulusnetworks.pool.ntp.org', '1.cumulusnetworks.pool.ntp.org', '2.cumulusnetworks.pool.ntp.org', '3.cumulusnetworks.pool.ntp.org']) %}
-nv set system ntp server {{ server | quote }}
+nv set system ntp server {{ server | quote }} association-type {{ (ntp_association_types | default({})).get(server, 'server') }}
 {% endfor %}
 
 #============================================================================
@@ -135,8 +151,21 @@ nv set system aaa user cumulus role system-admin
 #============================================================================
 nv set system api state enabled
 nv set system config auto-save state enabled
-nv set system control-plane acl acl-default-dos inbound
-nv set system control-plane acl acl-default-whitelist inbound
+{# Control-plane ACLs (ADR-0030): tool-owned defaults + optional 'ACLs' sheet
+   override. Bindings render before rule/type lines to preserve output order. #}
+{% if acls is defined %}
+{% for acl in acls if acl.control_plane_inbound %}
+nv set system control-plane acl {{ acl.id | quote }} inbound
+{% endfor %}
+{% for acl in acls %}
+{% for rule in acl.rule %}
+nv set acl {{ acl.id | quote }} rule {{ rule.id | quote }} match ip {{ rule.protocol | quote }} dest-port {{ rule.dest_port | quote }}
+{% endfor %}
+{% if acl.type %}
+nv set acl {{ acl.id | quote }} type {{ acl.type | quote }}
+{% endif %}
+{% endfor %}
+{% endif %}
 nv set system hostname {{ hostname }}
 {# Operator-configurable SSH login banners sourced from the Excel
    `Settings.pre_login_message` / `post_login_message` fields. See
@@ -216,14 +245,25 @@ nv set vrf default router bgp peer-group overlay update-source lo
 # Peer-group: underlay
 nv set vrf default router bgp peer-group underlay address-family ipv4-unicast state enabled
 nv set vrf default router bgp peer-group underlay address-family ipv4-unicast policy outbound route-map WEIGHTED_ECMP
-nv set vrf default router bgp peer-group underlay bfd profile default
-nv set vrf default router bgp peer-group underlay remote-as external
-{% endif %}
+nv set vrf default router bgp peer-group underlay bfd profile underlay
+nv set vrf default router bgp peer-group underlay remote-as external{% endif %}
 
 {% if not is_l3 %}
 #============================================================================
 # Default Route
 #============================================================================
 nv set vrf default router static 0.0.0.0/0 address-family ipv4-unicast
-nv set vrf default router static 0.0.0.0/0 via {{ default_gateway }} type ipv4-address
-{% endif %}
+nv set vrf default router static 0.0.0.0/0 via {{ default_gateway }} type ipv4-address{% endif %}
+{% if custom_config is defined and custom_config %}
+
+#============================================================================
+# Custom Config  (Custom_Config sheet — ADR-0055)
+#
+# Operator-supplied, emitted LAST so it wins on any key set above. `nv config
+# apply` is issued by the consumer (push-switch-configs.yml / ztp.sh), so these
+# are the final lines staged before that apply.
+#============================================================================
+{% for line in custom_config %}
+{{ line }}
+{% endfor %}{% endif %}
+{{- '' -}}

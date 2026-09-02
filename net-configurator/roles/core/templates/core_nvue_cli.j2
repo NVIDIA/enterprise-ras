@@ -109,25 +109,73 @@ nv set evpn multihoming state enabled
 {# Output grouped breakout configurations #}
 {% if breakout_4x_2lanes | length > 0 %}
 {% set ports_list = [] %}
-{% for port in breakout_4x_2lanes | unique %}
+{% for port in breakout_4x_2lanes | unique | sort %}
 {% set _ = ports_list.append('swp' ~ port) %}
 {% endfor %}
 nv set interface {{ ports_list | join(',') }} link breakout 4x lanes-per-port 2
 {% endif %}
 {% if breakout_2x_4lanes | length > 0 %}
 {% set ports_list = [] %}
-{% for port in breakout_2x_4lanes | unique %}
+{% for port in breakout_2x_4lanes | unique | sort %}
 {% set _ = ports_list.append('swp' ~ port) %}
 {% endfor %}
 nv set interface {{ ports_list | join(',') }} link breakout 2x lanes-per-port 4
 {% endif %}
 {% if breakout_8x_1lane | length > 0 %}
 {% set ports_list = [] %}
-{% for port in breakout_8x_1lane | unique %}
+{% for port in breakout_8x_1lane | unique | sort %}
 {% set _ = ports_list.append('swp' ~ port) %}
 {% endfor %}
 nv set interface {{ ports_list | join(',') }} link breakout 8x lanes-per-port 1
 {% endif %}
+{# ERA-55: explicit per-lane link speed on broken-out sub-ports.
+   The Port Profiles `Speed` column has always been populated and documented,
+   and until now nothing emitted it — the only `link speed` we produced was
+   hardcoded (1G in the OOB template, 100G in spine). Measured against four
+   reproductions of production fabrics this was ~90-142 missing stanzas per
+   deployment, the largest Excel-addressable gap.
+
+   The value is PER LANE: `lanes x speed` equals the NIC's port speed, so a
+   4x/2-lane parent is 200G per child and a 2x/4-lane parent is 400G. The
+   July-2026 captures emit exactly that shape — `swp5s0-1 ... link speed 400G`
+   on 2x parents, `swp6s0-2,swp7s0-3 ... link speed 200G` on 4x, and
+   `swp59s0-1 ... link speed 100G` on an 8x parent where only two children are
+   wired.
+
+   Grouped by speed rather than by role, matching the captures: one statement
+   per distinct speed covering every sub-port that runs at it. Only WIRED
+   sub-ports are named (expand_subports honours port_overrides.subports), so an
+   8x parent with two live children emits two, not eight. #}
+{% set speed_groups = {} %}
+{% for iface_def in all_iface_defs %}
+{% if iface_def.speed is defined and iface_def.speed %}
+{% set ifs = expand_subports(iface_def) | trim %}
+{% if ifs %}
+{% set _ = speed_groups.setdefault(iface_def.speed, []).extend(ifs.split(',')) %}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% for speed, ifs in speed_groups | dictsort %}
+nv set interface {{ ifs | unique | list | join(',') }} link speed {{ speed }}
+{% endfor %}
+{# ERA-58: link auto-negotiate, same plumbing as Speed and grouped the same way.
+   Emitted ONLY when a profile sets it. Production disables auto-negotiation on
+   data sub-ports, but the OEM reference configs carry no `link auto-negotiate`
+   at all, so defaulting it would diverge from the endorsed design. The shipped
+   models leave it unset; this exists so an operator reproducing a production
+   fabric can express it. #}
+{% set autoneg_groups = {} %}
+{% for iface_def in all_iface_defs %}
+{% if iface_def.auto_negotiate is defined and iface_def.auto_negotiate %}
+{% set ifs = expand_subports(iface_def) | trim %}
+{% if ifs %}
+{% set _ = autoneg_groups.setdefault(iface_def.auto_negotiate, []).extend(ifs.split(',')) %}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% for value, ifs in autoneg_groups | dictsort %}
+nv set interface {{ ifs | unique | list | join(',') }} link auto-negotiate {{ value }}
+{% endfor %}
 
 {# Validation: Check interfaces_disabled covers all ports adjacent to 8x breakout ports #}
 {# Ports broken out 8x (all 8 lanes) disable the adjacent port on SN5610 hardware #}
@@ -166,7 +214,7 @@ nv set interface {{ ports_list | join(',') }} link breakout 8x lanes-per-port 1
 {# Disabled interfaces #}
 {% if interfaces_disabled is defined and interfaces_disabled | length > 0 %}
 {% set ports_list = [] %}
-{% for port in interfaces_disabled | unique %}
+{% for port in interfaces_disabled | unique | sort %}
 {% if port is string and port.startswith('swp') %}
 {% set _ = ports_list.append(port) %}
 {% else %}
@@ -312,7 +360,7 @@ nv set interface {{ gpu_ifs }} qos pfc-watchdog state enable
 {% set isl_ifs = expand_subports(isl_interfaces) | trim %}
 {% if isl_ifs | length > 0 %}
 # ISL role - direct interfaces
-nv set interface {{ isl_ifs }} description 'ISL to other core switch'
+nv set interface {{ isl_ifs }} description isl_to_peer_core_switch
 nv set interface {{ isl_ifs }} evpn multihoming uplink enabled
 {% endif %}
 {% endif %}
@@ -322,7 +370,7 @@ nv set interface {{ isl_ifs }} evpn multihoming uplink enabled
 {% set edge_ifs = expand_subports(edge_interfaces) | trim %}
 {% if edge_ifs | length > 0 %}
 # EDGE role - direct interfaces
-nv set interface {{ edge_ifs }} description 'Edge uplinks'
+nv set interface {{ edge_ifs }} description edge_uplink
 nv set interface {{ edge_ifs }} vrf {{ edge_interfaces.vrf }}
 {% endif %}
 {% endif %}
@@ -332,7 +380,7 @@ nv set interface {{ edge_ifs }} vrf {{ edge_interfaces.vrf }}
 {% set oob_uplink_ifs = expand_subports(oob_uplink_interfaces) | trim %}
 {% if oob_uplink_ifs | length > 0 %}
 # OOB role - direct L3 uplinks
-nv set interface {{ oob_uplink_ifs }} description 'OOB uplinks'
+nv set interface {{ oob_uplink_ifs }} description oob_uplink
 {% endif %}
 {% endif %}
 
@@ -344,7 +392,7 @@ nv set interface {{ oob_uplink_ifs }} description 'OOB uplinks'
 {% if storage_interfaces is defined and storage_interfaces.subports is defined and storage_interfaces.subports | length > 0 %}
 {% set storage_ifs = storage_interfaces.subports | join(',') %}
 # STORAGE role - L3 external uplinks
-nv set interface {{ storage_ifs }} description 'External Uplink - {{ storage_interfaces.vrf }} VRF'
+nv set interface {{ storage_ifs }} description external_uplink_{{ storage_interfaces.vrf | lower }}_vrf
 nv set interface {{ storage_ifs }} vrf {{ storage_interfaces.vrf }}
 {% endif %}
 
@@ -462,6 +510,7 @@ nv set nve vxlan source address {{ nve_vxlan.source | default(router_id) }}
 {% else %}
 nv set nve vxlan arp-nd-suppress enabled
 nv set nve vxlan state enabled
+nv set nve vxlan source address {{ router_id }}
 {% endif %}
 
 #============================================================================
@@ -473,12 +522,30 @@ nv set router bgp router-id {{ router_id }}
 
 {# BFD profiles: default (300ms) for direct links, overlay (1000ms) for multihop #}
 nv set router bfd state enabled
-nv set router bfd profile default detect-multiplier 3
-nv set router bfd profile default min-rx-interval 300
-nv set router bfd profile default min-tx-interval 300
+{# ADR-0043: BFD profiles are named for the ROLE they serve, never `default`.
+   `default` is a position in a fallback order, not a role, and it collided
+   with this template's own `| default(...)` fallback so that "the default
+   profile" was ambiguous between "the fallback" and "the underlay timers".
+   `storage` gets its own profile rather than borrowing `underlay`, so its
+   timers can diverge later without a fabric-wide change; it starts as a copy
+   of underlay's 300/300/3, which makes this landing rendered-config-only.
+
+   ADR-0043 also specifies an `exit` profile. It is NOT defined here: the EXIT
+   peer-group has no BFD enabled at all, so the profile would be dead config.
+   The OEM reference DOES enable BFD there (csl-01.sh: `peer-group
+   underlay-esl-external bfd enable on` with 300/300/3 inline), so we have a
+   real golden-parity gap — but closing it adds BFD sessions to customer-edge
+   peers, which is a behaviour change and belongs with the BGP-parity batch
+   (ERA-66), not with a rename. Define `exit` when BFD is turned on there. #}
+nv set router bfd profile underlay detect-multiplier 3
+nv set router bfd profile underlay min-rx-interval 300
+nv set router bfd profile underlay min-tx-interval 300
 nv set router bfd profile overlay detect-multiplier 3
 nv set router bfd profile overlay min-rx-interval 1000
 nv set router bfd profile overlay min-tx-interval 1000
+nv set router bfd profile storage detect-multiplier 3
+nv set router bfd profile storage min-rx-interval 300
+nv set router bfd profile storage min-tx-interval 300
 nv set router bfd offload enabled
 
 {# BGP Path Selection: multipath aspath-ignore + 128 ECMP paths for quad-plane #}
@@ -491,7 +558,26 @@ nv set vrf default router bgp address-family ipv4-unicast multipaths ebgp 128
 {% if pl.rule is defined %}
 {% for rule in pl.rule %}
 nv set router policy prefix-list {{ pl.id | quote }} rule {{ rule.id | quote }} action permit
-nv set router policy prefix-list {{ pl.id | quote }} rule {{ rule.id | quote }} match {{ rule.match | quote }}{% if rule.max_len is defined %} max-prefix-len {{ rule.max_len }}{% endif %}
+{# ERA-64 follow-up: descriptions are NOT emitted on prefix-list or
+   community-list rules.
+
+   Bisected to this: 2-8-9-800 NOZTP passes at 50aade04 and fails at fb92186b
+   (the ERA-64 descriptions merge) — every switch stayed unreachable, a flat
+   0/8 for the full wait. An invalid `nv set` fails `nv config apply`, so the
+   switch never receives its management config and never comes up.
+
+   The precedent only ever covered ROUTE-MAP rules. The Spectrum-X RCP's
+   descriptions (`permit_lo_ip`, `enable_w_ecmp_adjustment`, `set_ipv6_gua`)
+   are all route-map rule actions, and NO OEM reference config carries a
+   description on a prefix-list or community-list rule — zero occurrences
+   across every reference in release/REFERENCES/.
+
+   So ADR-0043's "every route-map rule and prefix-list entry gets a
+   description" was written from a precedent that did not extend that far.
+   Route-map descriptions stay; the other two are removed until the syntax is
+   confirmed on a live switch (ERA-71's original question, which ERA-64
+   sidestepped rather than answered). #}
+nv set router policy prefix-list {{ pl.id | quote }} rule {{ rule.id | quote }} match {{ rule.match | quote }}{% if rule.max_len is defined %} max-prefix-len {{ rule.max_len | string | quote }}{% endif %}
 
 {% endfor %}
 {% endif %}
@@ -503,8 +589,9 @@ nv set router policy prefix-list {{ pl.id | quote }} rule {{ rule.id | quote }} 
 {% for cl in community_list %}
 {% if cl.rule is defined %}
 {% for rule in cl.rule %}
-nv set router policy community-list {{ cl.id }} rule {{ rule.id }} action {{ rule.action }}
-nv set router policy community-list {{ cl.id }} rule {{ rule.id }} community {{ rule.community }}
+nv set router policy community-list {{ cl.id | quote }} rule {{ rule.id | string | quote }} action {{ rule.action | quote }}
+{# See the ERA-64 note above: community-list descriptions have no precedent either. #}
+nv set router policy community-list {{ cl.id | quote }} rule {{ rule.id | string | quote }} community {{ rule.community | quote }}
 {% endfor %}
 {% endif %}
 {% endfor %}
@@ -515,15 +602,18 @@ nv set router policy community-list {{ cl.id }} rule {{ rule.id }} community {{ 
 {% for rm in route_map %}
 {% if rm.rule is defined %}
 {% for rule in rm.rule %}
-nv set router policy route-map {{ rm.id }} rule {{ rule.id }} action {{ rule.action }}
+nv set router policy route-map {{ rm.id | quote }} rule {{ rule.id | string | quote }} action {{ rule.action | quote }}
+{% if rule.description is defined and rule.description %}
+nv set router policy route-map {{ rm.id | quote }} rule {{ rule.id | string | quote }} description {{ rule.description | quote }}
+{% endif %}
 {% if rule.match is defined %}
 {% for match in rule.match %}
-nv set router policy route-map {{ rm.id }} rule {{ rule.id }} match {{ match.type }} {{ match.value }}
+nv set router policy route-map {{ rm.id | quote }} rule {{ rule.id | string | quote }} match {{ match.type | quote }} {{ match.value | quote }}
 {% endfor %}
 {% endif %}
 {% if rule.set is defined %}
 {% for set_item in rule.set %}
-nv set router policy route-map {{ rm.id }} rule {{ rule.id }} set {{ set_item.type }} {{ set_item.value }}
+nv set router policy route-map {{ rm.id | quote }} rule {{ rule.id | string | quote }} set {{ set_item.type | quote }} {{ set_item.value | quote }}
 {% endfor %}
 {% endif %}
 {% endfor %}
@@ -604,11 +694,19 @@ nv set vrf {{ vrf.id }} router bgp state enabled
 {% if vrf.bgp is defined and vrf.bgp.neighbors is defined %}
 {% for neighbor in vrf.bgp.neighbors %}
 {% if neighbor.interfaces is defined %}
+{% set neighbor_interfaces = neighbor.interfaces %}
+{# The parser's group VRF config contains the Wire Map union.  Dedicated
+   N/S leaves override edge_interfaces per host, so EXIT neighbors must follow
+   that host-local block rather than configuring uncabled union members. #}
+{% if vrf.id == 'EXIT' and neighbor.peer_group == 'exit' and edge_interfaces is defined %}
+{% set expanded_edge_interfaces = expand_subports(edge_interfaces) | trim %}
+{% set neighbor_interfaces = expanded_edge_interfaces.split(',') if expanded_edge_interfaces else [] %}
+{% endif %}
 {% set numbered_ip_neighbors = (neighbor.type is defined and neighbor.type == 'numbered'
-                                 and neighbor.interfaces | length > 0
-                                 and (neighbor.interfaces[0] | string).startswith('swp') == false) %}
+                                 and neighbor_interfaces | length > 0
+                                 and (neighbor_interfaces[0] | string).startswith('swp') == false) %}
 {% if numbered_ip_neighbors %}
-{% for ip in neighbor.interfaces %}
+{% for ip in neighbor_interfaces %}
 nv set vrf {{ vrf.id }} router bgp neighbor {{ ip }} peer-group {{ neighbor.peer_group }}
 nv set vrf {{ vrf.id }} router bgp neighbor {{ ip }} type {{ neighbor.type }}
 {# Keep update-source on numbered peers. Use explicit per-neighbor override
@@ -620,7 +718,7 @@ nv set vrf {{ vrf.id }} router bgp neighbor {{ ip }} update-source {{ router_id 
 {% endif %}
 {% endfor %}
 {% else %}
-{% for iface in neighbor.interfaces %}
+{% for iface in neighbor_interfaces %}
 nv set vrf {{ vrf.id }} router bgp neighbor {{ iface }} peer-group {{ neighbor.peer_group }}
 nv set vrf {{ vrf.id }} router bgp neighbor {{ iface }} type {{ neighbor.type }}
 {# PR1: update-source is meaningless on unnumbered neighbors — they peer
@@ -651,7 +749,7 @@ nv set vrf {{ vrf.id }} router bgp peer-group {{ pg.id }} address-family ipv4-un
 nv set vrf {{ vrf.id }} router bgp peer-group {{ pg.id }} address-family l2vpn-evpn state {{ 'enabled' if pg.address_family.l2vpn_evpn.enable else 'disabled' }}
 {% endif %}
 {% if pg.bfd_enable is defined and pg.bfd_enable %}
-nv set vrf {{ vrf.id }} router bgp peer-group {{ pg.id }} bfd profile {{ pg.bfd_profile | default('default') }}
+nv set vrf {{ vrf.id }} router bgp peer-group {{ pg.id }} bfd profile {{ pg.bfd_profile | default('underlay') }}
 {% endif %}
 {% if pg.remote_as is defined %}
 nv set vrf {{ vrf.id }} router bgp peer-group {{ pg.id }} remote-as {{ pg.remote_as }}
@@ -829,10 +927,17 @@ nv set vrf default router bgp peer-group {{ pg.id }} address-family ipv4-unicast
 {% if pg.address_family.l2vpn_evpn is defined %}
 {% set af = pg.address_family.l2vpn_evpn %}
 nv set vrf default router bgp peer-group {{ pg.id }} address-family l2vpn-evpn state {{ 'enabled' if af.enable else 'disabled' }}
+{# ERA-52: the ipv4-unicast branch above has carried an outbound route-map for
+   a while; the EVPN branch had no equivalent, so an EVPN-level export policy
+   could not be expressed at all. Needed to filter type-2 macip origination
+   into the OOB VNI. #}
+{% if af.policy_outbound_route_map is defined %}
+nv set vrf default router bgp peer-group {{ pg.id }} address-family l2vpn-evpn policy outbound route-map {{ af.policy_outbound_route_map }}
+{% endif %}
 {% endif %}
 {% endif %}
 {% if pg.bfd_enable is defined and pg.bfd_enable %}
-nv set vrf default router bgp peer-group {{ pg.id }} bfd profile {{ pg.bfd_profile | default('default') }}
+nv set vrf default router bgp peer-group {{ pg.id }} bfd profile {{ pg.bfd_profile | default('underlay') }}
 {% endif %}
 {% if pg.update_source is defined %}
 nv set vrf default router bgp peer-group {{ pg.id }} update-source {{ pg.update_source }}
@@ -881,7 +986,7 @@ nv set qos traffic-pool roce-lossless memory-percent 90
 # NTP (servers from Settings ntp_servers comma-separated, or default)
 #============================================================================
 {% for server in ntp_servers | default(['0.cumulusnetworks.pool.ntp.org', '1.cumulusnetworks.pool.ntp.org', '2.cumulusnetworks.pool.ntp.org', '3.cumulusnetworks.pool.ntp.org']) %}
-nv set system ntp server {{ server | quote }}
+nv set system ntp server {{ server | quote }} association-type {{ (ntp_association_types | default({})).get(server, 'server') }}
 {% endfor %}
 
 #============================================================================
@@ -934,8 +1039,21 @@ nv set system aaa user cumulus role system-admin
 #============================================================================
 nv set system api state enabled
 nv set system config auto-save state enabled
-nv set system control-plane acl acl-default-dos inbound
-nv set system control-plane acl acl-default-whitelist inbound
+{# Control-plane ACLs (ADR-0030): tool-owned defaults + optional 'ACLs' sheet
+   override. Bindings render before rule/type lines to preserve output order. #}
+{% if acls is defined %}
+{% for acl in acls if acl.control_plane_inbound %}
+nv set system control-plane acl {{ acl.id | quote }} inbound
+{% endfor %}
+{% for acl in acls %}
+{% for rule in acl.rule %}
+nv set acl {{ acl.id | quote }} rule {{ rule.id | quote }} match ip {{ rule.protocol | quote }} dest-port {{ rule.dest_port | quote }}
+{% endfor %}
+{% if acl.type %}
+nv set acl {{ acl.id | quote }} type {{ acl.type | quote }}
+{% endif %}
+{% endfor %}
+{% endif %}
 {% if anycast_mac is defined %}
 nv set system global anycast-mac {{ anycast_mac }}
 {% endif %}
@@ -988,3 +1106,16 @@ nv set system wjh channel forwarding trigger l2
 nv set system wjh channel forwarding trigger l3
 nv set system wjh channel forwarding trigger tunnel
 nv set system wjh state enabled
+{% if custom_config is defined and custom_config %}
+
+#============================================================================
+# Custom Config  (Custom_Config sheet — ADR-0055)
+#
+# Operator-supplied, emitted LAST so it wins on any key set above. `nv config
+# apply` is issued by the consumer (push-switch-configs.yml / ztp.sh), so these
+# are the final lines staged before that apply.
+#============================================================================
+{% for line in custom_config %}
+{{ line }}
+{% endfor %}
+{% endif %}

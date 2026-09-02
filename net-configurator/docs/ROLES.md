@@ -170,7 +170,7 @@ represent any physical hardware. Always exactly one per sim.
 
 **`SPARE ISL`** — Wire Map rows that document reserved or unused
 inter-switch-link ports. The topology generator explicitly skips these
-(`topology_generator.py:827`); they generate no Air node, no inventory
+(`topology_generator.py`, `_build_connected_links` — rows whose system name is not a valid hostname are skipped); they generate no Air node, no inventory
 entry, and no config. They exist purely as OEM-facing port-plan
 documentation. Today only `2-4-3-200` uses them.
 
@@ -188,7 +188,7 @@ was tested at.
 
 ### Compute / server roles — every architecture
 
-| Role | 2-4-3-200 | 2-8-5-200 | 2-8-9-400 | 2-4-5-800 | 2-8-9-800 | 2-8-9-400-SP |
+| Role | 2-4-3-200 | 2-8-5-200 / 2-4-5-400 | 2-8-9-400 | 2-4-5-800 | 2-8-9-800 | 2-8-9-400-SP |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|
 | `gpu` (compute worker) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `support` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -196,7 +196,7 @@ was tested at.
 
 ### Switch fabric roles — per arch
 
-| Role | 2-4-3-200 | 2-8-5-200 | 2-8-9-400 | 2-4-5-800 | 2-8-9-800 | 2-8-9-400-SP |
+| Role | 2-4-3-200 | 2-8-5-200 / 2-4-5-400 | 2-8-9-400 | 2-4-5-800 | 2-8-9-800 | 2-8-9-400-SP |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|
 | `core` (collapsed fabric) | ✓ | ✓ | ✓ | — | — | — |
 | `csl` (converged CPU/storage leaf) | — | ✓ | ✓ | — | ✓ | ✓ |

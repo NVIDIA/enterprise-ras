@@ -655,7 +655,13 @@ class TestL3OobInjection:
         assert found, "external-dhcp:eth1 should link to cust-net-edge-01"
 
     def test_l3_mode_switch_eth0s_on_edge_no_port_collision(self, tmp_path):
-        """Cluster-switch eth0s land on cust-net-edge-01 with no duplicate ports."""
+        """Every cluster-switch eth0 lands on SOME edge, with no duplicate ports.
+
+        Deliberately not pinned to cust-net-edge-01: the hub is charged its
+        infra reserve during balancing, so eth0s prefer the spokes and a small
+        fabric may put none on the hub at all. What must hold is that every
+        switch is on the spanned air-mgmt L2 and no edge port is double-booked.
+        """
         wb = _build_wiremap_workbook(
             rows=self._l3_wiremap(),
             settings=[("oob_uplink_mode", "l3")],
@@ -664,26 +670,26 @@ class TestL3OobInjection:
         topo = TopologyGenerator(path, "2-8-5-200").generate()
 
         links = topo["content"]["links"]
-        edge_ports = []
-        sw_eth0_to_edge = []
+        ports_by_edge = {}
+        sw_names_any_edge = set()
         for link in links:
             if not (isinstance(link[0], dict) and isinstance(link[1], dict)):
                 continue
             for sw_ep, edge_ep in ((link[0], link[1]), (link[1], link[0])):
-                if edge_ep.get("node") == "cust-net-edge-01":
-                    edge_ports.append(edge_ep["interface"])
-                if (sw_ep.get("interface") == "eth0"
-                        and edge_ep.get("node") == "cust-net-edge-01"):
-                    sw_eth0_to_edge.append(
-                        (sw_ep["node"], edge_ep["interface"])
-                    )
-        # At least core-01 and oob-switch-01 should be there.
-        sw_names = {n for n, _ in sw_eth0_to_edge}
-        assert "core-01" in sw_names
-        assert "oob-switch-01" in sw_names
-        # No duplicate ports on the edge switch.
-        assert len(edge_ports) == len(set(edge_ports)), \
-            f"duplicate ports on cust-net-edge-01: {edge_ports}"
+                if not str(edge_ep.get("node", "")).startswith("cust-net-edge"):
+                    continue
+                ports_by_edge.setdefault(edge_ep["node"], []).append(
+                    edge_ep["interface"]
+                )
+                if sw_ep.get("interface") == "eth0":
+                    sw_names_any_edge.add(sw_ep["node"])
+        assert {"core-01", "oob-switch-01"} <= sw_names_any_edge, (
+            f"cluster switch eth0s missing from every edge: {sw_names_any_edge}"
+        )
+        # No duplicate ports on ANY edge -- Air rejects the whole topology.
+        for edge, ports in sorted(ports_by_edge.items()):
+            assert len(ports) == len(set(ports)), \
+                f"duplicate ports on {edge}: {ports}"
 
     def test_l3_mode_utility_eth1_on_oob_switch_01(self, tmp_path):
         """utility:eth1 lands on oob-switch-01 (eth0 is reserved for outbound)."""
@@ -1229,7 +1235,19 @@ class TestSwitchNIPasswordNotLeaked:
         (stub_dir / "chpasswd").write_text(
             f'#!/bin/bash\ncat > {marker}\n'
         )
-        for name in ("nv", "systemctl", "ip"):
+        # `nv` must behave like a switch on which the apply SUCCEEDED: a bare
+        # `exit 0` stub reproduces the cust-net-edge-02 bug (apply reports
+        # success, nothing applied) and is now correctly rejected by the
+        # applied-config read-back. See TestSwitchNIApplyVerifiesAppliedState,
+        # which pins that rejection deliberately.
+        (stub_dir / "nv").write_text(
+            "#!/bin/bash\n"
+            'if [ "$1" = "config" ] && [ "$2" = "show" ]; then\n'
+            '  echo "nv set system hostname oob-switch-01"\n'
+            "fi\n"
+            "exit 0\n"
+        )
+        for name in ("systemctl", "ip"):
             (stub_dir / name).write_text("#!/bin/bash\nexit 0\n")
         for f in stub_dir.iterdir():
             f.chmod(0o755)
@@ -1249,4 +1267,272 @@ class TestSwitchNIPasswordNotLeaked:
         assert self.PASSWORD not in proc.stderr, (
             "plaintext password leaked into xtrace stderr — the set +x/-x "
             "wrap around chpasswd has regressed"
+        )
+
+
+class TestOobSubnetsDerivedFromVlans:
+    """`_air_oob.oob_subnets` comes from the OOB VLAN rows + the
+    Nodes `OOB VLAN` mapping — not from a `Settings.mgmt_subnets` CSV (which
+    is no longer supported). Exercises the new `TopologyGenerator._oob_subnets()`
+    directly, matching the shipped multi-OOB-VLAN golden.
+
+    `_oob_subnets()` only touches `self.excel_path`, so we build the
+    instance via __new__ instead of __init__ — a full __init__ requires a
+    Wire Map sheet that is irrelevant to this derivation.
+    """
+
+    def _make_generator(self, excel_path):
+        gen = TopologyGenerator.__new__(TopologyGenerator)
+        gen.excel_path = excel_path
+        return gen
+
+    def test_two_oob_vlans_yield_two_distinct_subnets(self, tmp_path):
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        ws_vlans = wb.create_sheet("VLANs & Profiles")
+        ws_vlans.append(["VLANs"])  # row 1: section label
+        ws_vlans.append(["VLAN ID", "Name", "Purpose", "Subnet", "Gateway", "VRF"])  # row 2
+        ws_vlans.append([10, "oob-10", "OOB Management", "10.10.10.0/24", "10.10.10.1", "OOB"])
+        ws_vlans.append([11, "oob-11", "OOB Management", "10.10.11.0/24", "10.10.11.1", "OOB"])
+
+        ws_nodes = wb.create_sheet("Nodes")
+        ws_nodes.append([
+            "Function", "Name", "MAC Address for ZTP", "Mgmt IP Address",
+            "Prefix", "Gateway", "Enabled", "OOB VLAN",
+        ])
+        ws_nodes.append(["oob-switch", "oob-switch-01", "", "192.168.200.11", 24, "192.168.200.1", "Yes", 10])
+        ws_nodes.append(["oob-switch", "oob-switch-02", "", "192.168.200.12", 24, "192.168.200.1", "Yes", 11])
+
+        excel_path = tmp_path / "oob_two_subnet.xlsx"
+        wb.save(excel_path)
+
+        gen = self._make_generator(excel_path)
+        assert sorted(gen._oob_subnets()) == ["10.10.10.0/24", "10.10.11.0/24"]
+
+    def test_no_oob_vlans_yields_empty_list(self, tmp_path):
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        ws_vlans = wb.create_sheet("VLANs & Profiles")
+        ws_vlans.append(["VLANs"])
+        ws_vlans.append(["VLAN ID", "Name", "Purpose", "Subnet", "Gateway", "VRF"])
+        ws_vlans.append([100, "compute", "Compute", "10.100.0.0/24", "10.100.0.1", "default"])
+
+        ws_nodes = wb.create_sheet("Nodes")
+        ws_nodes.append([
+            "Function", "Name", "MAC Address for ZTP", "Mgmt IP Address",
+            "Prefix", "Gateway", "Enabled", "OOB VLAN",
+        ])
+
+        excel_path = tmp_path / "oob_no_subnet.xlsx"
+        wb.save(excel_path)
+
+        gen = self._make_generator(excel_path)
+        assert gen._oob_subnets() == []
+
+
+class TestSwitchNIApplyVerifiesAppliedState:
+    """`nv config apply` can FAIL and still exit 0 — the retry loop must not
+    key on exit status alone.
+
+    Observed 2026-08-10 on `cust-net-edge-02`, 2-4-5-800 e2e cell. Two logs,
+    one timeline:
+
+        20:28:48.584  nv config apply --assume-yes            (nv-cli.log)
+        20:28:48.650  apply.sh: Error: The server encountered
+                      an internal error ...                   (syslog)
+        20:28:48.742  nv config save                          (nv-cli.log)
+
+    `nv config save` ran 92ms AFTER the error, inside a `set -e` subshell.
+    That is only possible if `nv config apply --assume-yes` printed the error
+    and exited 0. Consequences, all silent:
+
+      * the retry loop broke on attempt 1 with ok=1 — there is exactly ONE
+        apply in the whole log, so it never retried;
+      * `systemctl disable era-apply.service` retired the unit;
+      * era-apply.service reported status=0/SUCCESS;
+      * the switch was left with no config and hostname `cumulus`.
+
+    The retry loop was written for precisely this nvued error — its comment
+    names `cust-net-edge-01` and the same message — and was defeated because
+    it detects failure by exit code and this failure sets none.
+
+    Same class of bug as ERA-84/ADR-0052: a success signal that had already
+    discarded the evidence. The fix applies that ADR's rule here — verify the
+    APPLIED STATE, not the exit status.
+    """
+
+    HOSTNAME = "cust-net-edge-02"
+    CONFIG = (
+        "#!/bin/bash\n"
+        "nv set system hostname cust-net-edge-02\n"
+        "nv set interface lo ipv4 address 10.255.255.2/32\n"
+    )
+
+    def _builder(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "air_deploy_mod_verify",
+            Path(__file__).parent.parent / "scripts" / "air-deploy.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(mod)
+        except ImportError as exc:
+            pytest.skip(f"air-deploy.py cannot be imported in this test env: {exc}")
+        return mod.build_switch_ni_commands
+
+    def _apply_script(self):
+        import base64
+        cmds = self._builder()(self.HOSTNAME, self.CONFIG, None, "pw")
+        line = next(c for c in cmds
+                    if "> /opt/era/apply.sh" in c and "base64 -d" in c)
+        b64 = re.search(r"echo '([^']+)'", line).group(1)
+        return base64.b64decode(b64).decode()
+
+    def test_apply_is_verified_against_the_applied_config(self):
+        script = self._apply_script()
+        assert "nv config show -o commands" in script, (
+            "apply.sh must read back the applied config — an exit code of 0 "
+            "from `nv config apply` does not mean the config applied"
+        )
+
+    def test_verification_looks_for_this_switchs_hostname(self):
+        script = self._apply_script()
+        assert f"nv set system hostname {self.HOSTNAME}" in script, (
+            "the read-back must assert THIS switch's identity; a generic "
+            "non-empty check would pass on a rolled-back default config"
+        )
+
+    def test_verification_runs_before_save_so_a_failure_retries(self):
+        """Order is the whole fix: verify inside the errexit subshell, before
+        `nv config save` and before the loop can set ok=1."""
+        script = self._apply_script()
+        apply_at = script.index("nv config apply --assume-yes")
+        verify_at = script.index("nv config show -o commands")
+        save_at = script.index("nv config save")
+
+        assert apply_at < verify_at < save_at, (
+            "verification must sit between apply and save: after save the "
+            "bad config is persisted, and after ok=1 the unit self-disables"
+        )
+
+    def test_verification_failure_is_fatal_to_the_attempt(self):
+        """The read-back must be a bare command under `set -e`, not softened
+        with `|| true` — the retry loop only re-runs on a non-zero attempt."""
+        script = self._apply_script()
+        verify_line = next(
+            ln for ln in script.splitlines()
+            if "nv config show -o commands" in ln
+        )
+        assert "|| true" not in verify_line, (
+            "a softened read-back cannot fail the attempt, which restores the "
+            "exact bug: a failed apply that reports success"
+        )
+
+    def test_the_retry_loop_is_still_in_place(self):
+        """Guard against a future edit removing the loop the fix depends on."""
+        script = self._apply_script()
+        assert "for attempt in" in script
+        assert "ok=1" in script
+        assert "nv config detach" in script
+
+
+class TestSwitchNIApplySilentFailureIsCaught:
+    """End-to-end reproduction of the cust-net-edge-02 silent failure.
+
+    Runs the real generated apply.sh under bash with an `nv` stub that behaves
+    exactly as nvued did on 2026-08-10: every command exits 0, but nothing is
+    ever applied (`nv config show` returns an empty config).
+
+    Before the applied-config read-back this script exited 0, ran chpasswd,
+    and disabled era-apply.service — leaving a configless switch reporting
+    SUCCESS. It must now fail the attempt, exhaust the retries, and leave the
+    unit enabled so the next boot re-attempts.
+    """
+
+    HOSTNAME = "cust-net-edge-02"
+
+    def _builder(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "air_deploy_mod_silent",
+            Path(__file__).parent.parent / "scripts" / "air-deploy.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(mod)
+        except ImportError as exc:
+            pytest.skip(f"air-deploy.py cannot be imported in this test env: {exc}")
+        return mod.build_switch_ni_commands
+
+    def _run(self, tmp_path, nv_stub_body):
+        import base64, os, shutil, subprocess
+        if shutil.which("bash") is None:
+            pytest.skip("bash unavailable")
+
+        cmds = self._builder()(self.HOSTNAME, "# nvue config\n", None, "pw")
+        line = next(c for c in cmds
+                    if "> /opt/era/apply.sh" in c and "base64 -d" in c)
+        script = base64.b64decode(
+            re.search(r"echo '([^']+)'", line).group(1)).decode()
+
+        era_dir = tmp_path / "opt-era"
+        era_dir.mkdir()
+        (era_dir / f"{self.HOSTNAME}-config.sh").write_text("# stub\n")
+        script = script.replace("/opt/era", str(era_dir))
+
+        stub_dir = tmp_path / "bin"
+        stub_dir.mkdir()
+        (stub_dir / "nv").write_text(nv_stub_body)
+        for name in ("systemctl", "ip", "chpasswd"):
+            (stub_dir / name).write_text("#!/bin/bash\nexit 0\n")
+        # Keep the 6x20s retry backoff from making this test take 2 minutes.
+        (stub_dir / "sleep").write_text("#!/bin/bash\nexit 0\n")
+        for f in stub_dir.iterdir():
+            f.chmod(0o755)
+
+        env = dict(os.environ, PATH=f"{stub_dir}:{os.environ['PATH']}")
+        return subprocess.run(["bash"], input=script, capture_output=True,
+                              text=True, env=env)
+
+    # nvued as observed: exits 0 for everything, applies nothing.
+    SILENT_FAILURE_STUB = "#!/bin/bash\nexit 0\n"
+
+    HEALTHY_STUB = (
+        "#!/bin/bash\n"
+        'if [ "$1" = "config" ] && [ "$2" = "show" ]; then\n'
+        '  echo "nv set system hostname cust-net-edge-02"\n'
+        "fi\n"
+        "exit 0\n"
+    )
+
+    def test_apply_exiting_zero_without_applying_is_a_failure(self, tmp_path):
+        proc = self._run(tmp_path, self.SILENT_FAILURE_STUB)
+        assert proc.returncode != 0, (
+            "apply.sh reported SUCCESS when nv applied nothing — this is the "
+            "exact cust-net-edge-02 regression"
+        )
+
+    def test_silent_failure_leaves_the_unit_enabled_for_next_boot(self, tmp_path):
+        proc = self._run(tmp_path, self.SILENT_FAILURE_STUB)
+        assert "all attempts failed" in proc.stderr
+        # The disable must be unreachable: a self-disabled unit strands the
+        # switch permanently, which is what happened on cust-net-edge-02.
+        assert "systemctl disable era-apply.service" not in proc.stdout
+
+    def test_silent_failure_actually_retries(self, tmp_path):
+        """The whole point: the retry loop must now fire, not break on #1."""
+        proc = self._run(tmp_path, self.SILENT_FAILURE_STUB)
+        assert proc.stderr.count("attempt") >= 6, (
+            "expected all 6 attempts to run; the real incident logged exactly "
+            "ONE apply because the loop broke immediately"
+        )
+
+    def test_a_genuinely_applied_config_still_succeeds(self, tmp_path):
+        """Guard the other direction — the check must not fail a good switch."""
+        proc = self._run(tmp_path, self.HEALTHY_STUB)
+        assert proc.returncode == 0, (
+            f"healthy apply rejected\nSTDERR:\n{proc.stderr}"
         )

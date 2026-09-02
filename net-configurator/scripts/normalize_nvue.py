@@ -37,6 +37,50 @@ def _expand_iface_token(token):
     expanded = []
     last_alpha_prefix = None
     for part in parts:
+        # PORT range carrying a fixed SUBPORT suffix: 'swp1-33s0' means
+        # swp1s0..swp33s0 (NOT swp1s0..swp1s33). Cumulus 5.18.0's
+        # `nv config show -o commands` collapses to this form where 5.16.1
+        # listed every subport individually.
+        #
+        # Must be tried BEFORE the generic pattern below, which requires the
+        # token to END in digits and so reads 'swp1-33s0' as a single
+        # interface literally named that — leaving the range unexpanded and
+        # making every member count as both missing and extra in
+        # validate-config. Distinct from 'bond1s0-3' (a subport range on ONE
+        # port), which has no trailing sN and falls through unchanged.
+        # TWO-DIMENSIONAL: 'swp1-33s0-1' = ports 1..33 X subports 0..1,
+        # 'swp61-64s0-3' = ports 61..64 X subports 0..3. This is the form
+        # 5.18.0 actually emits, and it must be tried FIRST: the generic
+        # pattern below reads 'swp1-33s0-1' as prefix 'swp1-33s' with range
+        # 0..1 and yields ['swp1-33s0', 'swp1-33s1'] — expanding the SUBPORT
+        # dimension while silently leaving the PORT range intact. That partial
+        # expansion is what surfaced as unexplained 'swp1-33s0' entries in
+        # validate-config extras.
+        m_2d = re.match(r'^([^\d,]+?)(\d+)-(\d+)s(\d+)-(\d+)$', part)
+        if m_2d:
+            prefix = m_2d.group(1)
+            p_start, p_end = int(m_2d.group(2)), int(m_2d.group(3))
+            s_start, s_end = int(m_2d.group(4)), int(m_2d.group(5))
+            if p_start <= p_end and s_start <= s_end:
+                for p in range(p_start, p_end + 1):
+                    for s in range(s_start, s_end + 1):
+                        expanded.append(f'{prefix}{p}s{s}')
+                last_alpha_prefix = None
+                continue
+
+        # PORT range carrying a single fixed SUBPORT: 'swp59-60s2'.
+        m_sub = re.match(r'^([^\d,]+?)(\d+)-(\d+)(s\d+)$', part)
+        if m_sub:
+            prefix, start, end, subport = (
+                m_sub.group(1), int(m_sub.group(2)),
+                int(m_sub.group(3)), m_sub.group(4),
+            )
+            if start <= end:
+                for i in range(start, end + 1):
+                    expanded.append(f'{prefix}{i}{subport}')
+                last_alpha_prefix = None
+                continue
+
         m = re.match(r'^(.*[a-zA-Z])(\d+)(?:-(\d+))?$', part)
         if m:
             raw_prefix = m.group(1)

@@ -124,9 +124,25 @@ nv set interface lo type loopback
 {%- set _breakout_parts = [] %}
 {%- if _gpu_breakout_parents %}{%- set _ = _breakout_parts.append(_gpu_breakout_parents) %}{%- endif %}
 {%- if _isl_breakout_parents %}{%- set _ = _breakout_parts.append(_isl_breakout_parents) %}{%- endif %}
-{# Breakout level is per-arch via group_vars `gpu_breakout` (default '2x'). #}
+{# Breakout level is per-arch via group_vars `gpu_breakout` (default '2x').
+   ERA-73: `isl_breakout` comes from the workbook's ISL Port Profile row, the
+   same row that already governs core/csl. Before this it was never set here,
+   so an operator editing the ISL profile changed the N/S fabric and silently
+   did not change the GPU fabric.
+
+   It defaults to _gpu_breakout rather than to '2x' so that a workbook which
+   declares only a GPU breakout keeps the ports on one line, exactly as
+   before. Every shipped arch declares 2 for both, so this renders identically
+   today — the point is that editing the sheet now works. #}
 {% set _gpu_breakout = gpu_breakout | default('2x') %}
-{% if _breakout_parts -%}
+{% set _isl_breakout = isl_breakout | default(_gpu_breakout) %}
+{% if _isl_breakout != _gpu_breakout and _gpu_breakout_parents and _isl_breakout_parents -%}
+{# The two profiles disagree, so the parents cannot share one command. #}
+# {{ _gpu_breakout }} breakout on GPU access ports
+nv set interface {{ _gpu_breakout_parents }} link breakout {{ _gpu_breakout }}
+# {{ _isl_breakout }} breakout on ISL ports
+nv set interface {{ _isl_breakout_parents }} link breakout {{ _isl_breakout }}
+{% elif _breakout_parts -%}
 {% if _isl_breakout_parents -%}
 # {{ _gpu_breakout }} breakout on GPU access ports + ISL ports
 {% else -%}
@@ -278,6 +294,7 @@ nv set router bgp autonomous-system {{ asn }}
 nv set router bgp state enabled
 nv set router bgp router-id {{ lo_ip.split('/')[0] }}
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 description permit_loopback_interface_routes
 nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
 nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
 {% set _ew_tiers = (ew_tiers | default(tiers | default(1))) | int %}
@@ -286,10 +303,11 @@ nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
    supported in EBGP fabrics"). At ew_tiers > 1 this leaf's internal_isl
    uplink to the gs spine is eBGP (see remote-as below), not the
    converged-plane horizontal iBGP peer-link, so it qualifies -- mirrors
-   the identical fix on core/cl's internal-isl (excel_parser.py
+   the identical fix on core/cl's internal_isl (excel_parser.py
    _apply_oob_l3_uplink_mode). Verified via a generated SU16 (ew_tiers=2)
    workbook; no live 2-tier GPU deployment exists to verify byte-for-byte. #}
 nv set router policy route-map WEIGHTED_ECMP rule 10 action permit
+nv set router policy route-map WEIGHTED_ECMP rule 10 description enable_w_ecmp_adjustment
 nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths
 {% endif %}
 nv set router vrr state enabled
@@ -298,7 +316,7 @@ nv set router vrr state enabled
 # NTP
 #============================================================================
 {% for server in ntp_servers %}
-nv set system ntp server {{ server | quote }}
+nv set system ntp server {{ server | quote }} association-type {{ (ntp_association_types | default({})).get(server, 'server') }}
 {% endfor %}
 
 #============================================================================
@@ -323,8 +341,21 @@ nv set system aaa user cumulus state enabled
 #============================================================================
 nv set system api state enabled
 nv set system config auto-save state enabled
-nv set system control-plane acl acl-default-dos inbound
-nv set system control-plane acl acl-default-whitelist inbound
+{# Control-plane ACLs (ADR-0030): tool-owned defaults + optional 'ACLs' sheet
+   override. Bindings render before rule/type lines to preserve output order. #}
+{% if acls is defined %}
+{% for acl in acls if acl.control_plane_inbound %}
+nv set system control-plane acl {{ acl.id | quote }} inbound
+{% endfor %}
+{% for acl in acls %}
+{% for rule in acl.rule %}
+nv set acl {{ acl.id | quote }} rule {{ rule.id | quote }} match ip {{ rule.protocol | quote }} dest-port {{ rule.dest_port | quote }}
+{% endfor %}
+{% if acl.type %}
+nv set acl {{ acl.id | quote }} type {{ acl.type | quote }}
+{% endif %}
+{% endfor %}
+{% endif %}
 nv set system hostname {{ hostname }}
 {# Operator-configurable SSH login banners sourced from the Excel
    `Settings.pre_login_message` / `post_login_message` fields. See
@@ -415,3 +446,16 @@ nv set vrf default router bgp peer-group overlay multihop-ttl 2
 nv set vrf default router bgp peer-group overlay remote-as {{ 'external' if (ew_tiers | default(tiers | default(1))) | int > 1 else 'internal' }}
 nv set vrf default router bgp peer-group overlay update-source lo
 nv set vrf default router bgp router-id {{ lo_ip.split('/')[0] }}
+{% if custom_config is defined and custom_config %}
+
+#============================================================================
+# Custom Config  (Custom_Config sheet — ADR-0055)
+#
+# Operator-supplied, emitted LAST so it wins on any key set above. `nv config
+# apply` is issued by the consumer (push-switch-configs.yml / ztp.sh), so these
+# are the final lines staged before that apply.
+#============================================================================
+{% for line in custom_config %}
+{{ line }}
+{% endfor %}
+{% endif %}

@@ -112,6 +112,51 @@
       set_fact:
         running_configs: "{{ {'results': _rc | default([])} }}"
 
+    - name: Build per-switch Custom_Config key paths
+      # ADR-0055. Computed here rather than inline in the shell task below: a Jinja
+      # filter chain containing quoted strings with spaces breaks Ansible's argument
+      # splitter inside a free-form shell module, and the failure is "Error loading
+      # tasks" for the whole play — it does not degrade, it stops.
+      set_fact:
+        custom_unset_map: >-
+          {{ custom_unset_map | default({}) | combine({item: paths}) }}
+      vars:
+        paths: "{{ hostvars[item].custom_config_keypaths | default([]) }}"
+      loop: "{{ switch_list }}"
+      delegate_to: localhost
+      run_once: true
+
+    # Staged with `copy:` rather than interpolated into a heredoc inside the
+    # shell block below. Ansible dedents a free-form `shell:` block to column 0,
+    # so ANY line of the config reading exactly `GENERATED_EOF`/`RUNNING_EOF`
+    # terminated the heredoc early and the rest of the config executed as shell
+    # on the jump host. Both sides are attacker-influenced: the generated config
+    # carries the operator's Excel `pre_login_message`/`post_login_message`
+    # banner (multi-line by design, and explicitly newline-whitelisted by
+    # validate_excel.py), and the running config is whatever the switch chose to
+    # return. `copy: content:` never routes the payload through a shell parser.
+    - name: Stage generated config for comparison
+      copy:
+        content: "{{ generated_configs[item.item] }}"
+        dest: "/tmp/gen_{{ item.item }}.txt"
+        mode: '0600'
+      loop: "{{ running_configs.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      changed_when: false
+      no_log: true
+
+    - name: Stage running config for comparison
+      copy:
+        content: "{{ item.stdout }}"
+        dest: "/tmp/run_{{ item.item }}.txt"
+        mode: '0600'
+      loop: "{{ running_configs.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      changed_when: false
+      no_log: true
+
     - name: Compare and format results for each switch
       shell: |
         SWITCH="{{ item.item }}"
@@ -134,15 +179,8 @@
           exit 0
         fi
 
-        # Write generated config
-        cat <<'GENERATED_EOF' > /tmp/gen_${SWITCH}.txt
-        {{ generated_configs[item.item] }}
-        GENERATED_EOF
-
-        # Write running config
-        cat <<'RUNNING_EOF' > /tmp/run_${SWITCH}.txt
-        {{ item.stdout }}
-        RUNNING_EOF
+        # /tmp/gen_${SWITCH}.txt and /tmp/run_${SWITCH}.txt are written by the
+        # two `copy:` tasks above. Do not reintroduce a heredoc here.
 
         # Normalize both through the Python normalizer
         # This expands interface ranges/groups into individual lines
@@ -159,6 +197,40 @@
           /tmp/missing_raw_${SWITCH}.txt > /tmp/missing_${SWITCH}.txt || true
         missing_count=$(wc -l < /tmp/missing_${SWITCH}.txt)
 
+        # Custom_Config `nv unset <key>` deliberately removes something the tool sets
+        # (ADR-0055), so the tool own `nv set <key> ...` line is legitimately absent from
+        # the running config and would be reported MISSING on every run, forever.
+        # v1 policy: WARN, do not fail the switch, do not stop the rest of validate-all.
+        # A permanent expected failure trains operators to ignore real ones (ADR-0052).
+        # NOTE: hostvars[item.item] — this play runs on `jump`, so a bare `custom_config`
+        # would read the jump host vars, not the switch vars.
+        # Comma-joined then split with tr: a Jinja "\n" inside this block renders as a
+        # literal backslash-n, which put every key path on ONE line. A single-path
+        # switch worked by accident (no separator needed) while a two-path switch
+        # silently matched nothing -- seen on the cores in the 2026-08-17 Air run.
+        # NVUE key paths contain no commas.
+        printf '%s\n' "{{ custom_unset_map[item.item] | join(',') }}" | tr ',' '\n' > /tmp/custom_unset_${SWITCH}.txt
+        custom_override_count=0
+        if [ -s /tmp/custom_unset_${SWITCH}.txt ]; then
+          mv /tmp/missing_${SWITCH}.txt /tmp/missing_all_${SWITCH}.txt
+          : > /tmp/missing_${SWITCH}.txt
+          while IFS= read -r _line; do
+            _keep=1
+            while IFS= read -r _path; do
+              [ -z "$_path" ] && continue
+              # Match the tool own `nv set <path>` line AND the operator `nv unset
+              # <path>` directive: an unset is an instruction, not state, so it can
+              # never appear in a running config and would report MISSING forever.
+              case "$_line" in
+                "nv set $_path"*|"nv unset $_path"*) _keep=0; break;;
+              esac
+            done < /tmp/custom_unset_${SWITCH}.txt
+            [ "$_keep" -eq 1 ] && printf '%s\n' "$_line" >> /tmp/missing_${SWITCH}.txt
+          done < /tmp/missing_all_${SWITCH}.txt
+          custom_override_count=$(( $(wc -l < /tmp/missing_all_${SWITCH}.txt) - $(wc -l < /tmp/missing_${SWITCH}.txt) ))
+          missing_count=$(wc -l < /tmp/missing_${SWITCH}.txt)
+        fi
+
         # Lines in running but not in generated (EXTRA on switch)
         comm -13 /tmp/gen_norm_${SWITCH}.txt /tmp/run_norm_${SWITCH}.txt > /tmp/extra_raw_${SWITCH}.txt
 
@@ -171,14 +243,58 @@
         # `nve vxlan enable on` is implicitly enabled by NVUE when EVPN
         # address-family is configured in BGP; we never emit it in the
         # generated config, so filter it out of the extras here.
-        grep -v -E '(dhcp-client|interface eth0 ipv4 address|hashed-password|system docker|association-type server|system ntp vrf|ldap secret|ldap bind-password|nv set interface swp[0-9]+(s[0-9]+)? type swp$|nv set nve vxlan enable on$|nv set nve vxlan state enabled$)' \
+        #
+        # Cumulus 5.18.0 adds four more system-managed defaults that 5.16.1 did
+        # not report. They appear on EVERY switch and we never emit them, so
+        # without these each switch MISMATCHes on defaults alone -- on 5.18.0
+        # the 36 switches with zero missing lines still failed purely on
+        # `system config backup enable off`:
+        #   nv set system config backup enable off
+        #   nv set system lldp tlv egress-policy dcbx-ets-config enable on
+        #   nv set system lldp tlv egress-policy dcbx-ets-recomm enable on
+        #   nv set system lldp tlv egress-policy dcbx-pfc enable on
+        # Verified against real 5.18.0 captures in internal-docs/
+        # validation-evidence/2026-08-11-cumulus-518-running-configs/.
+        # Built up in chunks so no single line exceeds the 360-char lint limit.
+        # Each chunk is single-quoted (regex metacharacters stay literal) and
+        # appended via "${var}"'...' so the embedded spaces are not word-split.
+        extra_filter='(dhcp-client|interface eth0 ipv4 address|hashed-password'
+        extra_filter="${extra_filter}"'|system docker|association-type server|system ntp vrf'
+        extra_filter="${extra_filter}"'|ldap secret|ldap bind-password'
+        extra_filter="${extra_filter}"'|nv set interface swp[0-9]+(s[0-9]+)? type swp$'
+        extra_filter="${extra_filter}"'|nv set nve vxlan enable on$|nv set nve vxlan state enabled$'
+        extra_filter="${extra_filter}"'|nv set system config backup enable off$'
+        extra_filter="${extra_filter}"'|nv set system lldp tlv egress-policy dcbx-(ets-config|ets-recomm|pfc) enable on$)'
+        grep -v -E "${extra_filter}" \
           /tmp/extra_raw_${SWITCH}.txt > /tmp/extra_${SWITCH}.txt || true
         extra_count=$(wc -l < /tmp/extra_${SWITCH}.txt)
+
+        # Same key paths, other side of the comparison. NVUE re-quotes values, so a
+        # custom line written with double quotes comes back single-quoted and reads as
+        # EXTRA. Suppressing only the missing side left every quoted custom value
+        # failing forever, which a live Air run showed on 2026-08-17.
+        if [ -s /tmp/custom_unset_${SWITCH}.txt ]; then
+          mv /tmp/extra_${SWITCH}.txt /tmp/extra_all_${SWITCH}.txt
+          : > /tmp/extra_${SWITCH}.txt
+          while IFS= read -r _eline; do
+            _ekeep=1
+            while IFS= read -r _epath; do
+              [ -z "$_epath" ] && continue
+              case "$_eline" in "nv set $_epath"*) _ekeep=0; break;; esac
+            done < /tmp/custom_unset_${SWITCH}.txt
+            [ "$_ekeep" -eq 1 ] && printf '%s\n' "$_eline" >> /tmp/extra_${SWITCH}.txt
+          done < /tmp/extra_all_${SWITCH}.txt
+          custom_override_count=$(( custom_override_count + $(wc -l < /tmp/extra_all_${SWITCH}.txt) - $(wc -l < /tmp/extra_${SWITCH}.txt) ))
+          extra_count=$(wc -l < /tmp/extra_${SWITCH}.txt)
+        fi
         ignored_count=$(( $(wc -l < /tmp/extra_raw_${SWITCH}.txt) + $(wc -l < /tmp/missing_raw_${SWITCH}.txt) - extra_count - missing_count ))
 
         echo "Generated commands:  ${gen_count}"
         echo "Running commands:    ${run_count}"
         echo "Missing on switch:   ${missing_count}"
+        if [ "${custom_override_count:-0}" -gt 0 ]; then
+          echo "Custom_Config override: ${custom_override_count} generated line(s) removed by nv-unset (warning, not a mismatch)"
+        fi
         echo "Extra on switch:     ${extra_count}"
         if [ "$ignored_count" -gt 0 ]; then
           echo "Ignored (defaults): ${ignored_count}"

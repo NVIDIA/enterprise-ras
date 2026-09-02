@@ -30,8 +30,18 @@ def test_path_site_under_arch_site_dir():
 
 def test_path_site_sanitized():
     p = INPUT_DIR / "2-4-3-200" / "Customer X!" / "2-4-3-200.xlsx"
-    # _safe_site_name lowercases + replaces invalid chars with hyphens
-    assert ie._path_derived_site(p, "2-4-3-200") == "customer-x"
+    # _safe_site_name replaces invalid chars with hyphens and PRESERVES CASE.
+    # It used to lowercase, which meant a site inferred from a directory could
+    # not be used to find that directory again — the same mismatch that broke
+    # the 2-8-9-400-SP e2e cell. See tests/test_site_name_case_preserved.py.
+    assert ie._path_derived_site(p, "2-4-3-200") == "Customer-X"
+
+
+def test_path_site_round_trips_for_an_already_safe_directory():
+    """The point of the function: a site derived from a directory must name
+    that directory. Lowercasing broke this for any mixed-case folder."""
+    p = INPUT_DIR / "2-4-3-200" / "Customer-X" / "2-4-3-200.xlsx"
+    assert ie._path_derived_site(p, "2-4-3-200") == "Customer-X"
 
 
 def test_no_site_when_directly_under_arch():

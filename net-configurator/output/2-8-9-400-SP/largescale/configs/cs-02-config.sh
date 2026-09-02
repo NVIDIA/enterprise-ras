@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for cs-02
-# Generated: 2026-07-03T00:13:16Z
+# Generated: 2026-09-02T02:44:37Z
 # Format: NVUE CLI commands (Spine, EVPN Relay)
 #============================================================================
 # EVPN (relay — no local VTEPs)
@@ -31,12 +31,12 @@ nv set qos roce mode lossless
 # BFD Profiles
 #============================================================================
 nv set router bfd state enabled
-nv set router bfd profile pf1 detect-multiplier 3
-nv set router bfd profile pf1 min-rx-interval 1000
-nv set router bfd profile pf1 min-tx-interval 1000
-nv set router bfd profile pf2 detect-multiplier 3
-nv set router bfd profile pf2 min-rx-interval 300
-nv set router bfd profile pf2 min-tx-interval 300
+nv set router bfd profile overlay detect-multiplier 3
+nv set router bfd profile overlay min-rx-interval 1000
+nv set router bfd profile overlay min-tx-interval 1000
+nv set router bfd profile underlay detect-multiplier 3
+nv set router bfd profile underlay min-rx-interval 300
+nv set router bfd profile underlay min-tx-interval 300
 
 #============================================================================
 # BGP Global
@@ -49,9 +49,11 @@ nv set router bgp router-id 172.16.176.62
 # Route Maps
 #============================================================================
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 description permit_loopback_interface_routes
 nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
 nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
 nv set router policy route-map WEIGHTED_ECMP rule 10 action permit
+nv set router policy route-map WEIGHTED_ECMP rule 10 description enable_w_ecmp_adjustment
 nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths
 
 #============================================================================
@@ -437,12 +439,12 @@ nv set vrf default router bgp path-selection multipath aspath-ignore enabled
 #============================================================================
 nv set vrf default router bgp peer-group overlay address-family ipv4-unicast state disabled
 nv set vrf default router bgp peer-group overlay address-family l2vpn-evpn state enabled
-nv set vrf default router bgp peer-group overlay bfd profile pf1
+nv set vrf default router bgp peer-group overlay bfd profile overlay
 nv set vrf default router bgp peer-group overlay multihop-ttl 2
 nv set vrf default router bgp peer-group overlay remote-as external
 nv set vrf default router bgp peer-group overlay update-source lo
 nv set vrf default router bgp peer-group underlay address-family ipv4-unicast state enabled
 nv set vrf default router bgp peer-group underlay address-family ipv4-unicast policy outbound route-map WEIGHTED_ECMP
-nv set vrf default router bgp peer-group underlay bfd profile pf2
+nv set vrf default router bgp peer-group underlay bfd profile underlay
 nv set vrf default router bgp peer-group underlay remote-as external
 nv set vrf default router bgp router-id 172.16.176.62

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for oob-switch-02
-# Generated: 2026-07-03T00:12:44Z
+# Generated: 2026-09-02T02:43:33Z
 # Format: NVUE CLI commands
 
 #============================================================================
@@ -33,7 +33,8 @@ nv set interface lo type loopback
 #============================================================================
 nv set interface swp1-48 bridge domain br_default access 200
 nv set interface swp1-48 link speed 1G
-nv set interface swp1-48,swp49 type swp
+nv set interface swp1-48 link state up
+nv set interface swp1-48,swp49,swp51 type swp
 
 #============================================================================
 # VLAN SVI
@@ -59,9 +60,9 @@ nv set nve vxlan source address 172.16.176.102
 # Router / BGP global
 #============================================================================
 nv set router bfd state enabled
-nv set router bfd profile default detect-multiplier 3
-nv set router bfd profile default min-rx-interval 300
-nv set router bfd profile default min-tx-interval 300
+nv set router bfd profile underlay detect-multiplier 3
+nv set router bfd profile underlay min-rx-interval 300
+nv set router bfd profile underlay min-tx-interval 300
 nv set router bfd profile overlay detect-multiplier 3
 nv set router bfd profile overlay min-rx-interval 1000
 nv set router bfd profile overlay min-tx-interval 1000
@@ -69,19 +70,21 @@ nv set router bgp autonomous-system 4260394790
 nv set router bgp state enabled
 nv set router bgp router-id 172.16.176.102
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 description permit_loopback_interface_routes
 nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
 nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
 nv set router policy route-map WEIGHTED_ECMP rule 10 action permit
+nv set router policy route-map WEIGHTED_ECMP rule 10 description enable_w_ecmp_adjustment
 nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths
 nv set router vrr state enabled
 
 #============================================================================
 # NTP (servers from Settings ntp_servers comma-separated, or default)
 #============================================================================
-nv set system ntp server 0.cumulusnetworks.pool.ntp.org
-nv set system ntp server 1.cumulusnetworks.pool.ntp.org
-nv set system ntp server 2.cumulusnetworks.pool.ntp.org
-nv set system ntp server 3.cumulusnetworks.pool.ntp.org
+nv set system ntp server 0.cumulusnetworks.pool.ntp.org association-type server
+nv set system ntp server 1.cumulusnetworks.pool.ntp.org association-type server
+nv set system ntp server 2.cumulusnetworks.pool.ntp.org association-type server
+nv set system ntp server 3.cumulusnetworks.pool.ntp.org association-type server
 
 #============================================================================
 # AAA
@@ -153,6 +156,8 @@ nv set vrf default router bgp neighbor 172.16.176.12 type numbered
 # Underlay peers — unnumbered eBGP to CSLs
 nv set vrf default router bgp neighbor swp49 peer-group underlay
 nv set vrf default router bgp neighbor swp49 type unnumbered
+nv set vrf default router bgp neighbor swp51 peer-group underlay
+nv set vrf default router bgp neighbor swp51 type unnumbered
 
 nv set vrf default router bgp path-selection multipath aspath-ignore enabled
 
@@ -167,6 +172,5 @@ nv set vrf default router bgp peer-group overlay update-source lo
 # Peer-group: underlay
 nv set vrf default router bgp peer-group underlay address-family ipv4-unicast state enabled
 nv set vrf default router bgp peer-group underlay address-family ipv4-unicast policy outbound route-map WEIGHTED_ECMP
-nv set vrf default router bgp peer-group underlay bfd profile default
+nv set vrf default router bgp peer-group underlay bfd profile underlay
 nv set vrf default router bgp peer-group underlay remote-as external
-

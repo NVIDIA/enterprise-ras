@@ -93,6 +93,7 @@ Source template: `inventories/secrets.yml.example`. Source per-arch defaults: `i
 | Variable | Purpose |
 |----------|---------|
 | `switch_ansible_password` | SSH password for switches (cumulus user) |
+| `switch_bootstrap_password` | Factory / expired first-login password. Used only by `push-switch-configs` when `switch_ansible_password` cannot log in yet. Default `cumulus` if omitted. |
 | `server_ansible_password` | SSH password for servers (ubuntu user) |
 | `ansible_become_password` | Sudo password (eliminates `--ask-become-pass`) |
 | `switch_password` | Password configured on switches during ZTP |

@@ -31,6 +31,7 @@ if _SCRIPT_DIR not in sys.path:
 import yaml  # noqa: E402
 
 from airlib.ext_storage_config import (  # noqa: E402
+    DEFAULT_AIR_MGMT_SUBNET,
     build_daemons,
     build_frr_conf,
     discover_ext_storage_targets,
@@ -136,7 +137,15 @@ def main() -> int:
         return 2
     topology = json.loads(topo_path.read_text())
 
-    targets = [t for t in discover_ext_storage_targets(topology) if t["peer_ifaces"]]
+    # ERA-93: read the air-mgmt plane from the same generated inventory
+    # air-deploy pinned it from, so a re-install lands on the addresses the sim
+    # actually has instead of the 172.20.0.x literal the builder defaults to.
+    _main_yml = base / "inventory" / "group_vars" / "all" / "main.yml"
+    air_mgmt_subnet = (_load_yaml(_main_yml) or {}).get("air_mgmt_subnet")
+
+    targets = [t for t in discover_ext_storage_targets(
+        topology, air_mgmt_subnet=air_mgmt_subnet or DEFAULT_AIR_MGMT_SUBNET)
+        if t["peer_ifaces"]]
     if not targets:
         print("✓ No ext-storage nodes with CSL uplinks in this topology — nothing to fix.")
         return 0

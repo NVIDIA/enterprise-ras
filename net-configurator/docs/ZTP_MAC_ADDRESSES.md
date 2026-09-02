@@ -30,7 +30,7 @@ Without MAC addresses, DHCP can't distinguish between switches and might give th
 └──────┬──────┘         └──────┬───────┘         └──────┬──────┘
        │                       │                        │
        │ DHCP Discover         │                        │
-       │ (MAC: AA:BB:CC:DD)    │                        │
+       │ (MAC: 50:6B:4B:12:34:xx)    │                        │
        ├──────────────────────>│                        │
        │                       │                        │
        │                  ┌────┴─────┐                  │
@@ -73,15 +73,15 @@ The ZTP server uses `dnsmasq` to assign IPs based on MAC addresses:
 # /etc/dnsmasq.d/ztp.conf (auto-generated)
 
 # core-01 (192.168.200.201)
-dhcp-host=AA:BB:CC:DD:EE:01,192.168.200.201,core-01,12h,set:core_01
+dhcp-host=50:6B:4B:12:34:01,192.168.200.201,core-01,12h,set:core_01
 dhcp-option=tag:core_01,239,http://192.168.200.1/scripts/core-01.sh
 
 # core-02 (192.168.210.202)
-dhcp-host=AA:BB:CC:DD:EE:02,192.168.210.202,core-02,12h,set:core_02
+dhcp-host=50:6B:4B:12:34:02,192.168.210.202,core-02,12h,set:core_02
 dhcp-option=tag:core_02,239,http://192.168.200.1/scripts/core-02.sh
 
 # oob-switch-01 (192.168.200.2)
-dhcp-host=AA:BB:CC:DD:EE:11,192.168.200.2,oob-switch-01,12h,set:oob_switch_01
+dhcp-host=50:6B:4B:12:34:11,192.168.200.2,oob-switch-01,12h,set:oob_switch_01
 dhcp-option=tag:oob_switch_01,239,http://192.168.200.1/scripts/oob-switch-01.sh
 ```
 

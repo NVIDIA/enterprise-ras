@@ -86,7 +86,7 @@ The validation playbook checks the following for each switch:
 
 Two playbooks back this system:
 
-- **`playbooks/validate-ztp.yml`** — `hosts: dhcp-oob`. Pulls running state from each switch via sshpass and reports from the bastion. Invoked by `make validate-ztp`.
+- **`playbooks/validate-ztp.yml`** — `hosts: jump`. Pulls running state from each switch via sshpass and reports from the bastion. Invoked by `make validate-ztp`.
 - **`playbooks/validate-ztp-direct.yml`** — `hosts: core oob`. Connects Ansible directly to each switch's `ansible_host`. Invoked by `make validate-ztp-direct`.
 
 Both:
@@ -121,7 +121,7 @@ Switch: oob-switch-01 (192.168.1.11)
 ==========================================
 ✓ SSH Reachable:           True
 ✓ Hostname Matches:        True (oob-switch-01)
-✓ Cumulus Version:         5.15.0
+✓ Cumulus Version:         5.18.0
 ✓ NVUE Config Exists:      True
 ✓ NVUE Config Applied:     True
 ✓ Bridge Domains:          1
@@ -132,7 +132,7 @@ Switch: core-01 (192.168.200.201)
 ==========================================
 ✓ SSH Reachable:           True
 ✓ Hostname Matches:        True (core-01)
-✓ Cumulus Version:         5.15.0
+✓ Cumulus Version:         5.18.0
 ✓ NVUE Config Exists:      True
 ✓ NVUE Config Applied:     True
 ✓ BGP Enabled:             True

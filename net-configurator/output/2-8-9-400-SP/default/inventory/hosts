@@ -1,7 +1,7 @@
 # ============================================================================
 # 2-8-9-400-SP Deployment Inventory (Generated from Excel)
 # ============================================================================
-# 2 Core switches, 2 OOB switches
+# 6 switches: 2 CSL, 2 GSL, 2 OOB
 # ============================================================================
 
 [csl]
@@ -37,6 +37,7 @@ support-04
 support-05
 support-06
 support-07
+support-08
 
 [dhcp]
 external-dhcp

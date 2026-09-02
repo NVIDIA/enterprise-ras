@@ -1,7 +1,7 @@
 # ============================================================================
 # 2-4-3-200 Deployment Inventory (Generated from Excel)
 # ============================================================================
-# 2 Core switches, 2 OOB switches
+# 6 switches: 2 Core, 4 OOB
 # ============================================================================
 
 [core]
@@ -11,16 +11,42 @@ core-02
 [oob]
 oob-switch-01
 oob-switch-02
+oob-switch-03
+oob-switch-04
 
 [nodes]
 su-01-node-01
 su-01-node-02
 su-01-node-03
 su-01-node-04
-
-[storage]
-storage-01
-storage-02
+su-02-node-01
+su-02-node-02
+su-02-node-03
+su-02-node-04
+su-03-node-01
+su-03-node-02
+su-03-node-03
+su-03-node-04
+su-04-node-01
+su-04-node-02
+su-04-node-03
+su-04-node-04
+su-05-node-01
+su-05-node-02
+su-05-node-03
+su-05-node-04
+su-06-node-01
+su-06-node-02
+su-06-node-03
+su-06-node-04
+su-07-node-01
+su-07-node-02
+su-07-node-03
+su-07-node-04
+su-08-node-01
+su-08-node-02
+su-08-node-03
+su-08-node-04
 
 [support]
 support-01
@@ -28,6 +54,9 @@ support-02
 support-03
 support-04
 support-05
+support-06
+support-07
+support-08
 
 [dhcp]
 external-dhcp
@@ -47,7 +76,6 @@ ansible_user=cumulus
 
 [servers:children]
 nodes
-storage
 support
 dhcp
 oob_server

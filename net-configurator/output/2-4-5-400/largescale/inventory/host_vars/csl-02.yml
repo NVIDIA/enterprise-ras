@@ -1,0 +1,227 @@
+---
+# Host variables for csl-02 (Generated from Excel)
+ansible_host: 172.20.0.202
+hostname: csl-02
+mac_address: 48:b0:2d:fb:08:86
+ip_assignment_mode: dhcp
+acls:
+- id: acl-default-dos
+  control_plane_inbound: true
+  type: null
+  rule: []
+- id: acl-default-whitelist
+  control_plane_inbound: true
+  type: null
+  rule: []
+lo_ip: 172.16.176.12/32
+router_id: 172.16.176.12
+vlan_interfaces:
+- id: vlan300
+  ip: 172.16.178.3/24
+  vrr: 172.16.178.1/24
+  vlan: '300'
+  vrf: INBAND
+- id: vlan400
+  ip: 172.16.179.3/24
+  vrr: 172.16.179.1/24
+  vlan: '400'
+  vrf: INBAND
+vrf_loopbacks:
+  EXIT: 172.16.176.184/32
+  INBAND: 172.16.176.168/32
+  OOB: 172.16.176.152/32
+  STORAGE: 172.16.176.200/32
+prefix_list:
+- id: ALL_PREFIXES
+  rule:
+  - id: '10'
+    match: 0.0.0.0/0
+    max_len: '32'
+- id: EXIT_LOCAL_IF
+  rule:
+  - id: '10'
+    match: 172.16.176.184/32
+    max_len: '32'
+- id: INBAND_LOCAL_IF
+  rule:
+  - id: '10'
+    match: 172.16.176.168/32
+    max_len: '32'
+  - id: '20'
+    match: 172.16.178.3/32
+    max_len: '32'
+  - id: '30'
+    match: 172.16.179.3/32
+    max_len: '32'
+- id: INBAND_PREFIXES
+  rule:
+  - id: '10'
+    match: 172.16.178.0/24
+    max_len: '32'
+  - id: '20'
+    match: 172.16.179.0/24
+    max_len: '32'
+  - id: '30'
+    match: 172.16.176.168/32
+    max_len: '32'
+- id: ERA_PREFIXES
+  rule:
+  - id: '10'
+    match: 172.16.176.0/21
+    max_len: '24'
+  - id: '20'
+    match: 172.16.176.0/24
+    max_len: '32'
+  - id: '30'
+    match: 192.168.200.0/24
+    max_len: '32'
+- id: OOB_HOSTS
+  rule:
+  - id: '10'
+    match: 192.168.200.0/24
+    max_len: '32'
+- id: LOCAL_OOB_LOOPBACK
+  rule:
+  - id: '10'
+    match: 172.16.176.152/32
+    max_len: '32'
+- id: OOB_LOCAL_IF
+  rule:
+  - id: '10'
+    match: 172.16.176.152/32
+    max_len: '32'
+- id: OOB_PREFIXES
+  rule:
+  - id: '10'
+    match: 192.168.200.0/24
+    max_len: '32'
+  - id: '20'
+    match: 172.16.176.152/32
+    max_len: '32'
+- id: VTEP_PREFIXES
+  rule:
+  - id: '5'
+    match: 172.16.176.8/29
+    max_len: '32'
+isl_interfaces:
+  ports:
+  - 11
+  - 12
+  - 13
+  - 14
+  - 15
+  - 16
+  - 17
+  - 18
+  - 19
+  breakout: 2
+  lanes: 4
+  port_overrides: {}
+  vrf: default
+  speed: 400G
+edge_interfaces:
+  ports:
+  - 63
+  - 64
+  breakout: 4
+  lanes: 2
+  port_overrides: {}
+  vrf: EXIT
+  speed: 200G
+oob_uplink_interfaces:
+  ports:
+  - 59
+  breakout: 8
+  lanes: 1
+  port_overrides:
+    59:
+      subports:
+      - 0
+      - 1
+      - 2
+      - 3
+  speed: 100G
+interfaces_disabled:
+- 60
+bond_descriptions:
+  bond1s0: su-01-node-01
+  bond1s1: su-01-node-02
+  bond1s2: su-01-node-03
+  bond1s3: su-01-node-04
+  bond2s0: su-02-node-01
+  bond2s1: su-02-node-02
+  bond2s2: su-02-node-03
+  bond2s3: su-02-node-04
+  bond3s0: su-03-node-01
+  bond3s1: su-03-node-02
+  bond3s2: su-03-node-03
+  bond3s3: su-03-node-04
+  bond4s0: su-04-node-01
+  bond4s1: su-04-node-02
+  bond4s2: su-04-node-03
+  bond4s3: su-04-node-04
+  bond5s0: su-05-node-01
+  bond5s1: su-05-node-02
+  bond5s2: su-05-node-03
+  bond5s3: su-05-node-04
+  bond6s0: su-06-node-01
+  bond6s1: su-06-node-02
+  bond6s2: su-06-node-03
+  bond6s3: su-06-node-04
+  bond7s0: su-07-node-01
+  bond7s1: su-07-node-02
+  bond7s2: su-07-node-03
+  bond7s3: su-07-node-04
+  bond8s0: su-08-node-01
+  bond8s1: su-08-node-02
+  bond8s2: su-08-node-03
+  bond8s3: su-08-node-04
+  bond9s0: support-01
+  bond9s1: support-02
+  bond9s2: support-03
+  bond9s3: support-04
+  bond10s0: support-05
+  bond10s1: support-06
+  bond10s2: support-07
+  bond10s3: support-08
+storage_interfaces:
+  ports:
+  - 62
+  breakout: 4
+  lanes: 2
+  vrf: STORAGE
+  subports: &id001
+  - swp62s0
+  - swp62s1
+  - swp62s2
+  - swp62s3
+  speed: 200G
+vrf_config_extra:
+- id: STORAGE
+  vni: '5005'
+  route_export: true
+  table_auto: true
+  bgp:
+    address_family:
+      ipv4_unicast:
+        enable: true
+        redistribute_connected: true
+        route_export_to_evpn: true
+      l2vpn_evpn:
+        enable: true
+    neighbors:
+    - interfaces: *id001
+      peer_group: storage
+      type: unnumbered
+    peer_groups:
+    - id: storage
+      remote_as: external
+      bfd_enable: true
+      bfd_profile: storage
+      description: underlay_era_storage_interconnect
+      address_family:
+        ipv4_unicast:
+          enable: true
+        l2vpn_evpn:
+          enable: true
+  vlan: 3005

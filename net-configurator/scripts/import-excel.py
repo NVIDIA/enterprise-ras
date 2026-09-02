@@ -31,15 +31,29 @@ from excel_parser import load_workbook_safe
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INPUT_DIR = BASE_DIR / "input"
-VALID_ARCHS = ("2-4-3-200", "2-4-5-800", "2-8-5-200", "2-8-9-400", "2-8-9-800", "2-8-9-400-SP")
+VALID_ARCHS = ("2-4-3-200", "2-4-5-400", "2-4-5-800", "2-8-5-200", "2-8-9-400", "2-8-9-800", "2-8-9-400-SP")
 
 # Characters not allowed in site directory names
 _INVALID_SITE_CHARS = re.compile(r'[^\w\-]')
 
 
 def _safe_site_name(raw: str) -> str:
-    """Sanitize a site name for use as a directory name."""
-    sanitized = _INVALID_SITE_CHARS.sub('-', raw.strip()).lower()
+    """Sanitize a site name for use as a directory name.
+
+    Case is PRESERVED. This used to `.lower()`, and nothing downstream did: the
+    Makefile uses `$(SITE)` verbatim and `make generate` reads
+    `input/<arch>/$(SITE)/<arch>.xlsx`, so import wrote one directory and
+    generate read another whenever the site name contained an uppercase letter.
+
+    Surfaced by the first e2e run of `2-8-9-400-SP` — the only arch whose NAME
+    carries uppercase, so `SITE=ci-<id>-2-8-9-400-SP-noztp` landed on disk as
+    `...-2-8-9-400-sp-noztp` and generate failed with a bare `[File] Not found`.
+    Not CI-only: any operator using a mixed-case site name hit it.
+
+    Sanitisation of genuinely unsafe characters is unchanged — the output still
+    matches the Makefile's SITE guard charset, `[A-Za-z0-9._-]`.
+    """
+    sanitized = _INVALID_SITE_CHARS.sub('-', raw.strip())
     sanitized = re.sub(r'-+', '-', sanitized).strip('-')
     return sanitized or "default"
 

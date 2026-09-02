@@ -44,10 +44,14 @@
       run_once: true
 
     - name: Restart LDAP service on each switch
+      # The password is passed via `environment:` rather than interpolated into
+      # the shell body, so it never lands in the rendered `cmd` string that is
+      # stored in `restart_results`. `no_log` is deliberately NOT set here: the
+      # two tasks below parse `restart_results[].stdout`, and no_log would
+      # censor it and report every switch as failed.
+      environment:
+        SSHPASS: "{{ switch_password }}"
       shell: |
-        # Set SSH password for sshpass
-        export SSHPASS='{{ switch_password }}'
-
         echo "=== Processing {{ item }} ({{ hostvars[item].ansible_host }}) ==="
 
         # Check if nslcd@mgmt service exists (check loaded units, not just unit files)

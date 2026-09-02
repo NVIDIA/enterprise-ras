@@ -2,13 +2,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for gl-plane1-13
-# Generated: 2026-07-03T00:12:17Z
+# Generated: 2026-09-02T02:45:19Z
 # Format: NVUE CLI commands (GSL - GPU Spine/Leaf, plane 1)
 #============================================================================
 # Bridge and VLAN
 #============================================================================
 nv set bridge domain br_default type vlan-aware
-nv set bridge domain br_default vlan 900 vni 289900
+nv set bridge domain br_default vlan 900 vni 4900
 
 #============================================================================
 # EVPN
@@ -70,19 +70,21 @@ nv set router bgp autonomous-system 4260395900
 nv set router bgp state enabled
 nv set router bgp router-id 10.1.1.13
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 description permit_loopback_interface_routes
 nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
 nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
 nv set router policy route-map WEIGHTED_ECMP rule 10 action permit
+nv set router policy route-map WEIGHTED_ECMP rule 10 description enable_w_ecmp_adjustment
 nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths
 nv set router vrr state enabled
 
 #============================================================================
 # NTP
 #============================================================================
-nv set system ntp server 0.cumulusnetworks.pool.ntp.org
-nv set system ntp server 1.cumulusnetworks.pool.ntp.org
-nv set system ntp server 2.cumulusnetworks.pool.ntp.org
-nv set system ntp server 3.cumulusnetworks.pool.ntp.org
+nv set system ntp server 0.cumulusnetworks.pool.ntp.org association-type server
+nv set system ntp server 1.cumulusnetworks.pool.ntp.org association-type server
+nv set system ntp server 2.cumulusnetworks.pool.ntp.org association-type server
+nv set system ntp server 3.cumulusnetworks.pool.ntp.org association-type server
 
 #============================================================================
 # AAA - local user 'cumulus' (password set via ZTP)
@@ -130,8 +132,8 @@ nv set system wjh state enabled
 #============================================================================
 nv set vrf GPU evpn state enabled
 nv set vrf GPU evpn vlan 3003
-nv set vrf GPU evpn vni 289003
-nv set vrf GPU loopback ip address 10.1.1.23/32
+nv set vrf GPU evpn vni 5003
+nv set vrf GPU loopback ip address 10.1.1.33/32
 nv set vrf GPU router bgp address-family ipv4-unicast state enabled
 nv set vrf GPU router bgp address-family ipv4-unicast redistribute connected state enabled
 nv set vrf GPU router bgp address-family ipv4-unicast route-export to-evpn state enabled

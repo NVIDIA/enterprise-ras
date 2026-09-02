@@ -28,7 +28,6 @@ import argparse
 import getpass
 import os
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -387,30 +386,60 @@ def prompt_api_key() -> str:
         return key
 
 
+def _resolve_optional(val: str, current: str | None, label: str) -> str:
+    """Resolve an OPTIONAL field's prompt result, allowing a set value to be cleared.
+
+    The old behaviour (`if not val and current is not None: return current`) made
+    an optional field permanently sticky: once set, blank input re-applied the
+    previous value, so a stale NGC org kept riding on every Air API call as the
+    `nv-ngc-org` header and returned 403 (public issue NVIDIA/enterprise-ras#14).
+
+    Blank now means blank — but clearing an existing value asks first, so
+    Enter-ing through the wizard on a re-run cannot silently discard a working
+    setting. Declining the confirmation keeps the current value.
+    """
+    if val:
+        return val
+    if not current:            # nothing set (None or "") — blank is simply "none"
+        return ""
+    warn(f'Clear the existing {label} "{current}"?  [y/N]')
+    try:
+        answer = input("  > ").strip().lower()
+    except EOFError:
+        # Non-interactive/piped input: preserve rather than destroy.
+        answer = ""
+    if answer == "y":
+        return ""
+    print(f"  Keeping {label} \"{current}\".")
+    return current
+
+
 def prompt_username(current: str | None = None) -> str:
     print("  NGC Air 2.0 authenticates with the API key alone — leave this")
     print("  blank and press Enter. (Legacy Air has been retired.)")
     default = f" [{current}]" if current else ""
-    val = input(f"  Air username (blank for NGC){default}: ").strip()
-    if not val and current is not None:
-        return current
-    return val
+    hint = "blank = clear" if current else "blank for NGC"
+    val = input(f"  Air username ({hint}){default}: ").strip()
+    return _resolve_optional(val, current, "Air username")
 
 
 def prompt_ngc_org(current: str | None = None) -> str:
     print("  NGC organization id, sent as the Air API `nv-ngc-org` header.")
     print("  OPTIONAL — leave blank unless your Air gateway requires it (the")
-    print("  current air-inside gateway accepts bearer-only requests).")
+    print("  current internal gateway accepts bearer-only requests).")
     default = f" [{current}]" if current else ""
-    val = input(f"  NGC org (blank = none){default}: ").strip()
-    if not val and current is not None:
-        return current
-    return val
+    hint = "blank = clear" if current else "blank = none"
+    val = input(f"  NGC org ({hint}){default}: ").strip()
+    return _resolve_optional(val, current, "NGC org")
 
 
+# Air moved to dsx-air hostnames. The previous names (air-ngc.nvidia.com,
+# ngc.air-inside.nvidia.com) still resolve to the same addresses and remain
+# mapped in airlib.api, so existing vaults keep working — they are just no
+# longer offered as choices here.
 AIR_INSTANCES = {
-    "1": ("Public NGC Air", "https://air-ngc.nvidia.com"),
-    "2": ("Internal (air-inside)", "https://ngc.air-inside.nvidia.com"),
+    "1": ("Public Air", "https://dsx-air.nvidia.com"),
+    "2": ("Internal (inside)", "https://inside.dsx-air.nvidia.com"),
 }
 
 
@@ -419,7 +448,7 @@ def prompt_air_url(current: str | None = None) -> str:
     print("  Which NVIDIA Air instance are you deploying against?")
     for k, (name, url) in AIR_INSTANCES.items():
         print(f"    [{k}] {name:24} ({url})")
-    print(f"    [3] Custom URL")
+    print("    [3] Custom URL")
     if current:
         # Pre-select the matching option so [Enter] keeps the current value.
         default = next(
@@ -465,20 +494,22 @@ def choose_fields_to_update(existing: dict) -> list[str]:
     print("    [3] air_url (Air instance)")
     print("    [4] username")
     print("    [5] ssh_key")
-    print("    [6] Nothing (exit)")
+    print("    [6] ngc_org (nv-ngc-org header)")
+    print("    [7] Nothing (exit)")
     while True:
         raw = input("  Choice [1]: ").strip() or "1"
         mapping = {
-            "1": ["api_key", "air_url", "username", "ssh_key"],
+            "1": ["api_key", "air_url", "username", "ssh_key", "ngc_org"],
             "2": ["api_key"],
             "3": ["air_url"],
             "4": ["username"],
             "5": ["ssh_key"],
-            "6": [],
+            "6": ["ngc_org"],
+            "7": [],
         }
         if raw in mapping:
             return mapping[raw]
-        warn("Enter 1-6.")
+        warn("Enter 1-7.")
 
 
 # ---------- main wizard ----------
@@ -501,7 +532,9 @@ def run_interactive() -> int:
     existing_path = find_existing_vault()
     existing_data: dict = {}
     existing_password: str | None = None
-    fields_to_update: list[str] = ["api_key", "air_url", "username", "ssh_key"]
+    # First-time setup collects everything; an existing vault narrows this via
+    # choose_fields_to_update(). Keep `ngc_org` here so a fresh run still asks.
+    fields_to_update: list[str] = ["api_key", "air_url", "username", "ssh_key", "ngc_org"]
 
     if existing_path is not None:
         banner("Existing vault detected")
@@ -539,10 +572,14 @@ def run_interactive() -> int:
         banner("SSH Key")
         new_data["air_ssh_key_path"] = prompt_ssh_key(existing_data.get("air_ssh_key_path"))
 
-    # Optional NGC org (nv-ngc-org header). Blank preserves the existing value,
-    # so this is a no-op Enter on partial updates that don't touch it.
-    banner("NGC Org (optional)")
-    new_data["air_org"] = prompt_ngc_org(existing_data.get("air_org"))
+    # Optional NGC org (nv-ngc-org header). Gated on the menu selection like
+    # every other field: it used to run unconditionally and rely on "blank
+    # preserves" to be a no-op on partial updates, but blank now offers to
+    # clear (ERA-50), so an ungated prompt would ask about the org during an
+    # unrelated ssh_key-only update.
+    if "ngc_org" in fields_to_update:
+        banner("NGC Org (optional)")
+        new_data["air_org"] = prompt_ngc_org(existing_data.get("air_org"))
 
     for k in ("air_api_key", "air_url", "air_username", "air_ssh_key_path", "air_org"):
         new_data.setdefault(k, existing_data.get(k, ""))

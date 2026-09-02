@@ -7,6 +7,11 @@ Utility scripts for ERA switch automation. These are the scripts used to fill
 out an Excel, generate inventory/configs/topology, and deploy — you normally
 invoke them through `make`, but the direct invocations are documented here too.
 
+Only the operator-facing entry points are listed below. Other files in this
+directory are shared library modules imported by those scripts (for example
+`asn_allocation.py`, `loopback_allocation.py`, `oob_reserved.py`) or internal
+helpers prefixed with `_`; neither is meant to be run directly.
+
 ---
 
 ## excel_parser.py
@@ -170,7 +175,7 @@ python3 scripts/validate_excel.py input/2-8-5-200/default/2-8-5-200.xlsx
 - Checks Nodes for duplicate function names, duplicate management IPs, missing core switches
 - Checks VLANs for valid IDs, duplicate names, overlapping subnets
 - Detects duplicate switch port assignments in Wire Map (two systems on same port)
-- Cross-validates: gateway within subnet, node IPs within mgmt_subnets, VLAN gateway within VLAN subnet
+- Cross-validates: gateway within subnet, node IPs within the resolved OOB VLAN subnet(s) (VRF `OOB` rows in VLANs & Profiles + each OOB switch's Nodes `OOB VLAN` column), VLAN gateway within VLAN subnet
 - Flags deployments exceeding the architecture's single-tier max SU count
 - Warns when an active server has more than one Display=Yes OOB row (Air's plain Ubuntu can't bond two OOB links — CRA rule)
 

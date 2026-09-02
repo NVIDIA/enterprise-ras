@@ -1,20 +1,60 @@
 ---
 # Host variables for gl-plane1-03 (Generated from Excel)
-ansible_host: 172.20.0.207
+ansible_host: 172.20.0.209
 hostname: gl-plane1-03
 mac_address: 48:b0:2d:4c:19:80
 ip_assignment_mode: dhcp
+acls:
+- id: acl-default-dos
+  control_plane_inbound: true
+  type: null
+  rule: []
+- id: acl-default-whitelist
+  control_plane_inbound: true
+  type: null
+  rule: []
 plane: 1
 lo_ip: 10.1.1.3/32
-vrf_gpu_loopback: 10.1.1.13/32
+vrf_gpu_loopback: 10.1.1.23/32
 asn: 4200101103
 overlay_peers:
-- 10.1.1.5
-- 10.1.1.6
-plane_mate_lo_ip: 10.1.1.5
+- 10.1.1.41
+- 10.1.1.42
+plane_mate_lo_ip: 10.1.1.41
 vlan900_ip: 192.168.0.4/20
 vlan900_vrr: 192.168.0.1/20
+gpu_rail_planes:
+  rail1_plane1:
+    vlan_id: 901
+    vni: 4901
+    subnet: 192.168.1.0/24
+    ip: 192.168.1.4/24
+    vrr: 192.168.1.1/24
+    vrf: GPU
+  rail2_plane1:
+    vlan_id: 902
+    vni: 4902
+    subnet: 192.168.2.0/24
+    ip: 192.168.2.4/24
+    vrr: 192.168.2.1/24
+    vrf: GPU
+  rail3_plane1:
+    vlan_id: 903
+    vni: 4903
+    subnet: 192.168.3.0/24
+    ip: 192.168.3.4/24
+    vrr: 192.168.3.1/24
+    vrf: GPU
+  rail4_plane1:
+    vlan_id: 904
+    vni: 4904
+    subnet: 192.168.4.0/24
+    ip: 192.168.4.4/24
+    vrr: 192.168.4.1/24
+    vrf: GPU
 gpu_subports: swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1
 gpu_breakout_parents: swp1,swp2,swp3,swp4,swp5,swp6,swp7,swp8,swp9
-isl_subports: swp47s0,swp47s1,swp48s0,swp48s1,swp49s0,swp49s1,swp50s0,swp50s1,swp51s0,swp51s1,swp52s0,swp52s1,swp53s0,swp53s1,swp54s0,swp54s1,swp55s0,swp55s1,swp56s0,swp56s1,swp57s0,swp57s1,swp58s0,swp58s1,swp59s0,swp59s1,swp60s0,swp60s1,swp61s0,swp61s1,swp62s0,swp62s1,swp63s0,swp63s1,swp64s0,swp64s1
-isl_breakout_parents: swp47,swp48,swp49,swp50,swp51,swp52,swp53,swp54,swp55,swp56,swp57,swp58,swp59,swp60,swp61,swp62,swp63,swp64
+isl_subports: swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp26s0,swp26s1,swp27s0,swp27s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1
+isl_breakout_parents: swp19,swp20,swp21,swp22,swp23,swp24,swp25,swp26,swp27,swp28,swp29,swp30,swp31,swp32,swp33,swp34,swp35,swp36
+gpu_rail_plane_subports:
+  rail3_plane1: swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1

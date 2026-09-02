@@ -228,7 +228,8 @@ Use `sshpass` to execute remotely:
 sudo apt install sshpass
 
 # Execute ZTP on remote switch
-sshpass -p 'Cumu1usLinux!' ssh cumulus@core-01 \
+# Replace <password> with switch_ansible_password from secrets.yml.
+sshpass -p '<password>' ssh cumulus@core-01 \
   "curl http://192.168.200.1/scripts/core-01.sh | bash"
 ```
 

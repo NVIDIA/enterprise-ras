@@ -14,6 +14,11 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from oob_reserved import (
+    AIR_MGMT_SVI_OCTET,
+    EXTERNAL_DHCP_OCTET,
+    EXT_STORAGE_FIRST_OCTET,
+    EXT_STORAGE_MAX_NODES,
+    GATEWAY_OCTET,
     OOB_RESERVED_OCTETS,
     OOB_RESERVED_OCTETS_L2,
     AIR_MGMT_RESERVED_OCTETS,
@@ -27,8 +32,23 @@ from oob_reserved import (
 
 
 class TestReservedSets:
-    def test_air_mgmt_is_subset_of_oob(self):
-        assert AIR_MGMT_RESERVED_OCTETS <= set(OOB_RESERVED_OCTETS)
+    def test_air_mgmt_is_not_assumed_to_be_a_subset_of_oob(self):
+        """The two planes host DIFFERENT infrastructure; neither contains the other.
+
+        This used to assert `AIR_MGMT <= OOB`, which held only by accident and
+        quietly encoded the belief that the air-mgmt plane could never own an
+        octet the OOB plane does not. ext-storage eth0 (.79+) lives on
+        air-mgmt only, so the subset relation is false -- and asserting it
+        would have blocked reserving those octets.
+        """
+        # Shared endpoints/L3-trio, genuinely common to both planes.
+        assert {0, 1, 77, 78, 255} <= AIR_MGMT_RESERVED_OCTETS
+        assert {0, 1, 77, 78, 255} <= set(OOB_RESERVED_OCTETS)
+        # air-mgmt-only: ext-storage eth0 band.
+        assert AIR_MGMT_RESERVED_OCTETS - set(OOB_RESERVED_OCTETS)
+        # OOB-only: ztp_server .100 and dhcp-oob .252 are not on air-mgmt.
+        assert {100, 252} <= set(OOB_RESERVED_OCTETS)
+        assert not ({100, 252} & AIR_MGMT_RESERVED_OCTETS)
 
     def test_utility_octet_is_78_and_reserved(self):
         # The 2026-06-24 maxscale collision was on .78 (utility jump).
@@ -41,10 +61,21 @@ class TestReservedSets:
         # default-scale Nodes tabs regenerate byte-identically.
         assert set(OOB_RESERVED_OCTETS) == {0, 1, 77, 78, 79, 100, 252, 254, 255}
 
-    def test_air_mgmt_matches_parser_skip_set(self):
-        # Must equal excel_parser.py's historical _AIR_MGMT_RESERVED so switch
-        # eth0 IPs on the 172.20.0.x plane stay byte-identical.
-        assert AIR_MGMT_RESERVED_OCTETS == {0, 1, 77, 78, 254, 255}
+    def test_air_mgmt_covers_every_consumer_of_the_plane(self):
+        """Every octet something takes on 172.20.0.x must be in the skip set.
+
+        This assertion used to pin the literal {0, 1, 77, 78, 254, 255} "so
+        switch eth0 IPs stay byte-identical" -- which froze an INCOMPLETE set
+        and actively guarded the defect: ext-storage eth0 (.79+) was taken on
+        this plane but absent here, so excel_parser's walk handed .79 to
+        gs-plane2-08 and it collided with ext-storage-01. Byte-identical
+        output is not the invariant; not double-assigning an address is.
+        """
+        expected = {0, GATEWAY_OCTET, EXTERNAL_DHCP_OCTET, UTILITY_OCTET,
+                    AIR_MGMT_SVI_OCTET, 255} | {
+            EXT_STORAGE_FIRST_OCTET + i for i in range(EXT_STORAGE_MAX_NODES)
+        }
+        assert AIR_MGMT_RESERVED_OCTETS == expected
 
 
 class TestOobOctet:
@@ -79,8 +110,10 @@ class TestFindCollisions:
         claims = [("su-09-node-03 (row 42)", "192.168.200.78")]
         collisions = find_oob_collisions(claims)
         assert len(collisions) == 1
-        octet, owners = collisions[0]
-        assert octet == 78
+        # ERA-93: keyed by ADDRESS, not octet — with more than one declared OOB
+        # VLAN an octet no longer identifies an address.
+        address, owners = collisions[0]
+        assert address == "192.168.200.78"
         assert "su-09-node-03 (row 42)" in owners
         assert any("utility" in o for o in owners)
 
@@ -91,8 +124,8 @@ class TestFindCollisions:
         ]
         collisions = find_oob_collisions(claims)
         assert len(collisions) == 1
-        octet, owners = collisions[0]
-        assert octet == 50
+        address, owners = collisions[0]
+        assert address == "192.168.200.50"
         assert "gpu-01 (row 5)" in owners and "gpu-02 (row 6)" in owners
 
     def test_out_of_subnet_ignored(self):

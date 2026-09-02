@@ -2,13 +2,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for gl-plane2-11
-# Generated: 2026-07-03T00:12:51Z
+# Generated: 2026-09-02T02:44:01Z
 # Format: NVUE CLI commands (GSL - GPU Spine/Leaf, plane 2)
 #============================================================================
 # Bridge and VLAN
 #============================================================================
 nv set bridge domain br_default type vlan-aware
-nv set bridge domain br_default vlan 900 vni 245900
+nv set bridge domain br_default vlan 920 vni 4920
 
 #============================================================================
 # EVPN
@@ -22,7 +22,7 @@ nv set evpn route-advertise svi-ip enabled
 nv set interface eth0 type eth
 nv set interface eth0 vrf mgmt
 
-nv set interface lo ipv4 address 10.1.2.11/32
+nv set interface lo ipv4 address 10.2.1.11/32
 nv set interface lo type loopback
 
 # 2x breakout on GPU access ports + ISL ports
@@ -30,18 +30,18 @@ nv set interface swp1,swp2,swp3,swp4,swp5,swp6,swp7,swp8,swp9,swp10,swp11,swp12,
 
 nv set interface swp37,swp38,swp39,swp40,swp41,swp42,swp43,swp44,swp45,swp46,swp47,swp48,swp49,swp50,swp51,swp52,swp53,swp54,swp55,swp56,swp57,swp58,swp59,swp60,swp61,swp62,swp63,swp64,swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp26s0,swp26s1,swp27s0,swp27s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1 type swp
 
-# GPU access ports -> VLAN 900 (untagged / access)
-nv set interface swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1 bridge domain br_default access 900
+# GPU access ports -> VLAN 920 (untagged / access)
+nv set interface swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1 bridge domain br_default access 920
 
-# vlan900 SVI (GPU VRF + VRR)
+# vlan920 SVI (GPU VRF + VRR)
 # 5.16 NVUE: SVI uses ipv4/ipv6 sub-objects; vrf is set without "ip" prefix.
-nv set interface vlan900 ipv4 address 192.168.16.12/20
-nv set interface vlan900 vrf GPU
-nv set interface vlan900 ipv4 vrr address 192.168.16.1/20
-nv set interface vlan900 ipv4 vrr state enabled
-nv set interface vlan900 ipv4 vrr vrr-state up
-nv set interface vlan900 type svi
-nv set interface vlan900 vlan 900
+nv set interface vlan920 ipv4 address 192.168.16.12/20
+nv set interface vlan920 vrf GPU
+nv set interface vlan920 ipv4 vrr address 192.168.16.1/20
+nv set interface vlan920 ipv4 vrr state enabled
+nv set interface vlan920 ipv4 vrr vrr-state up
+nv set interface vlan920 type svi
+nv set interface vlan920 vlan 920
 
 #============================================================================
 # NVE / VxLAN
@@ -50,7 +50,7 @@ nv set nve vxlan arp-nd-suppress enabled
 nv set nve vxlan decapsulation dscp action preserve
 nv set nve vxlan state enabled
 nv set nve vxlan encapsulation dscp action copy
-nv set nve vxlan source address 10.1.2.11
+nv set nve vxlan source address 10.2.1.11
 
 #============================================================================
 # QoS - RoCE lossless for GPU traffic
@@ -68,21 +68,23 @@ nv set interface swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,
 #============================================================================
 nv set router bgp autonomous-system 4200102111
 nv set router bgp state enabled
-nv set router bgp router-id 10.1.2.11
+nv set router bgp router-id 10.2.1.11
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
+nv set router policy route-map LOOPBACK_BGP rule 10 description permit_loopback_interface_routes
 nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
 nv set router policy route-map LOOPBACK_BGP rule 10 match type ipv4
 nv set router policy route-map WEIGHTED_ECMP rule 10 action permit
+nv set router policy route-map WEIGHTED_ECMP rule 10 description enable_w_ecmp_adjustment
 nv set router policy route-map WEIGHTED_ECMP rule 10 set ext-community-bw multipaths
 nv set router vrr state enabled
 
 #============================================================================
 # NTP
 #============================================================================
-nv set system ntp server 0.cumulusnetworks.pool.ntp.org
-nv set system ntp server 1.cumulusnetworks.pool.ntp.org
-nv set system ntp server 2.cumulusnetworks.pool.ntp.org
-nv set system ntp server 3.cumulusnetworks.pool.ntp.org
+nv set system ntp server 0.cumulusnetworks.pool.ntp.org association-type server
+nv set system ntp server 1.cumulusnetworks.pool.ntp.org association-type server
+nv set system ntp server 2.cumulusnetworks.pool.ntp.org association-type server
+nv set system ntp server 3.cumulusnetworks.pool.ntp.org association-type server
 
 #============================================================================
 # AAA - local user 'cumulus' (password set via ZTP)
@@ -130,15 +132,15 @@ nv set system wjh state enabled
 #============================================================================
 nv set vrf GPU evpn state enabled
 nv set vrf GPU evpn vlan 3003
-nv set vrf GPU evpn vni 245003
-nv set vrf GPU loopback ip address 10.1.2.21/32
+nv set vrf GPU evpn vni 5003
+nv set vrf GPU loopback ip address 10.2.1.31/32
 nv set vrf GPU router bgp address-family ipv4-unicast state enabled
 nv set vrf GPU router bgp address-family ipv4-unicast redistribute connected state enabled
 nv set vrf GPU router bgp address-family ipv4-unicast route-export to-evpn state enabled
 nv set vrf GPU router bgp address-family l2vpn-evpn state enabled
 nv set vrf GPU router bgp autonomous-system 4200102111
 nv set vrf GPU router bgp state enabled
-nv set vrf GPU router bgp router-id 10.1.2.11
+nv set vrf GPU router bgp router-id 10.2.1.11
 nv set vrf GPU table auto
 
 #============================================================================
@@ -152,18 +154,18 @@ nv set vrf default router bgp autonomous-system 4200102111
 nv set vrf default router bgp state enabled
 
 # Overlay peers (numbered, loopback-to-loopback)
-nv set vrf default router bgp neighbor 10.1.2.41 peer-group overlay
-nv set vrf default router bgp neighbor 10.1.2.41 type numbered
-nv set vrf default router bgp neighbor 10.1.2.42 peer-group overlay
-nv set vrf default router bgp neighbor 10.1.2.42 type numbered
-nv set vrf default router bgp neighbor 10.1.2.43 peer-group overlay
-nv set vrf default router bgp neighbor 10.1.2.43 type numbered
-nv set vrf default router bgp neighbor 10.1.2.44 peer-group overlay
-nv set vrf default router bgp neighbor 10.1.2.44 type numbered
-nv set vrf default router bgp neighbor 10.1.2.45 peer-group overlay
-nv set vrf default router bgp neighbor 10.1.2.45 type numbered
-nv set vrf default router bgp neighbor 10.1.2.46 peer-group overlay
-nv set vrf default router bgp neighbor 10.1.2.46 type numbered
+nv set vrf default router bgp neighbor 10.2.1.41 peer-group overlay
+nv set vrf default router bgp neighbor 10.2.1.41 type numbered
+nv set vrf default router bgp neighbor 10.2.1.42 peer-group overlay
+nv set vrf default router bgp neighbor 10.2.1.42 type numbered
+nv set vrf default router bgp neighbor 10.2.1.43 peer-group overlay
+nv set vrf default router bgp neighbor 10.2.1.43 type numbered
+nv set vrf default router bgp neighbor 10.2.1.44 peer-group overlay
+nv set vrf default router bgp neighbor 10.2.1.44 type numbered
+nv set vrf default router bgp neighbor 10.2.1.45 peer-group overlay
+nv set vrf default router bgp neighbor 10.2.1.45 type numbered
+nv set vrf default router bgp neighbor 10.2.1.46 peer-group overlay
+nv set vrf default router bgp neighbor 10.2.1.46 type numbered
 # internal_isl peers - every breakout subport on the ISL trunk ports (unnumbered)
 nv set vrf default router bgp neighbor swp19s0 peer-group internal_isl
 nv set vrf default router bgp neighbor swp19s0 type unnumbered
@@ -253,4 +255,4 @@ nv set vrf default router bgp peer-group overlay bfd profile overlay
 nv set vrf default router bgp peer-group overlay multihop-ttl 2
 nv set vrf default router bgp peer-group overlay remote-as external
 nv set vrf default router bgp peer-group overlay update-source lo
-nv set vrf default router bgp router-id 10.1.2.11
+nv set vrf default router bgp router-id 10.2.1.11

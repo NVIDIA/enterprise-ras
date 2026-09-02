@@ -17,22 +17,32 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 
-def _load(modname, filename):
-    spec = importlib.util.spec_from_file_location(modname, SCRIPTS / filename)
+def _load(modname, filename, base=SCRIPTS):
+    path = Path(base) / filename
+    if not path.exists():
+        return None
+    spec = importlib.util.spec_from_file_location(modname, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
-vr = _load("validate_requirements_mod", "validate_requirements.py")
+# validate_requirements is an internal-only script: in the monorepo it lives in
+# the sibling data-models/ tree; in the public distribution it is absent. Load it
+# from there when present, otherwise skip the vr-specific tests below.
+_DATA_MODELS = Path(__file__).resolve().parents[2] / "data-models"
+vr = _load("validate_requirements_mod", "validate_requirements.py", _DATA_MODELS)
+_needs_vr = pytest.mark.skipif(vr is None, reason="validate_requirements.py is internal-only (data-models/)")
 
 
+@_needs_vr
 def test_load_yaml_missing_file_friendly(tmp_path):
     with pytest.raises(SystemExit) as exc:
         vr._load_yaml(tmp_path / "nope.yml")
     assert "not found" in str(exc.value)
 
 
+@_needs_vr
 def test_load_yaml_malformed_friendly(tmp_path):
     bad = tmp_path / "bad.yml"
     bad.write_text("key: [unterminated\n  : : :\n")
@@ -41,6 +51,7 @@ def test_load_yaml_malformed_friendly(tmp_path):
     assert "Malformed YAML" in str(exc.value)
 
 
+@_needs_vr
 def test_load_yaml_valid_roundtrip(tmp_path):
     good = tmp_path / "ok.yml"
     good.write_text("a: 1\nb: [2, 3]\n")

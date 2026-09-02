@@ -1,6 +1,13 @@
 ---
-# GSL Plane 1 Configuration (Generated from Excel - 2-8-9-400)
+# GPU Plane 1 Configuration (Generated from Excel - 2-8-9-400)
 
+gpu_vlan: 900
+gpu_vni: 4900
+gpu_vrf_name: GPU
+gpu_evpn_vlan: 3003
+gpu_evpn_vni: 5003
 asn: 4260395788
 vlan900_vrr: 192.168.0.1/20
 gpu_subnet: 192.168.0.0/20
+gpu_breakout: 2x
+isl_breakout: 2x

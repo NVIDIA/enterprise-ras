@@ -51,9 +51,15 @@ def test_generated_inventory_uses_underscore_oob_group():
 
 
 def test_oob_server_host_name_unchanged():
-    """The HOST oob-server-01 keeps its hyphen — only the GROUP was renamed."""
-    hits = [h for h in SOURCE_HOSTS if "oob-server-01" in h.read_text()]
-    assert hits, "expected oob-server-01 host in at least one source inventory"
+    """The HOST oob-server-01 keeps its hyphen — only the GROUP was renamed.
+
+    The oob-server-01 Air virtual node now lives in the single-home
+    scripts/inventory_defaults.yml (host_vars); the seed hosts files are gone and
+    the node is only added to the output inventory at Air-deploy time.
+    """
+    defaults = (PROJECT_ROOT / "scripts" / "inventory_defaults.yml").read_text()
+    assert "oob-server-01" in defaults, \
+        "expected oob-server-01 vnode in scripts/inventory_defaults.yml"
 
 
 # ---------------------------------------------------------------------------

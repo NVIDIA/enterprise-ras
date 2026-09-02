@@ -10,10 +10,14 @@
     config_output_dir: "../exported-configurations-cli"
 
   tasks:
+    # One clock read for the whole run, not one subprocess per switch. Without
+    # run_once a 217-switch fabric spawns 217 `date` processes and can stamp
+    # configs from the same run with different timestamps.
     - name: Set timestamp fact
       set_fact:
         ansible_date_time:
           iso8601: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+      run_once: true
 
     - name: Create output directory
       file:

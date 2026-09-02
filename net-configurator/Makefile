@@ -28,11 +28,12 @@ SHELL := /bin/bash
 #   3. Environment variable
 #   4. SITE falls back to "default" if not set anywhere
 #
-VALID_ARCHS     := 2-4-3-200 2-4-5-800 2-8-5-200 2-8-9-400 2-8-9-800 2-8-9-400-SP
+VALID_ARCHS     := 2-4-3-200 2-4-5-400 2-4-5-800 2-8-5-200 2-8-9-400 2-8-9-800 2-8-9-400-SP
 
 # Reusable architecture description block — keeps help/error messages DRY
 define print_archs
 	@echo "  2-4-3-200   (2 CPUs, 4 GPUs, 3 NICs, 200G)"
+	@echo "  2-4-5-400   (2 CPUs, 4 GPUs, 5 NICs, 400G — depopulated 2-8-5-200)"
 	@echo "  2-4-5-800   (2 CPUs, 4 GPUs, 5 NICs, 800G — GB300 NVL72)"
 	@echo "  2-8-5-200   (2 CPUs, 8 GPUs, 5 NICs, 200G)"
 	@echo "  2-8-9-400   (2 CPUs, 8 GPUs, 9 NICs, 400G)"
@@ -42,11 +43,62 @@ endef
 
 # Shell-context version for use inside if/for blocks (no @ prefix, with \)
 ARCHS_ECHO = echo "  • 2-4-3-200   (2 CPUs, 4 GPUs, 3 NICs, 200G)"; \
+             echo "  • 2-4-5-400   (2 CPUs, 4 GPUs, 5 NICs, 400G — depopulated 2-8-5-200)"; \
              echo "  • 2-4-5-800   (2 CPUs, 4 GPUs, 5 NICs, 800G — GB300 NVL72)"; \
              echo "  • 2-8-5-200   (2 CPUs, 8 GPUs, 5 NICs, 200G)"; \
              echo "  • 2-8-9-400   (2 CPUs, 8 GPUs, 9 NICs, 400G)"; \
              echo "  • 2-8-9-800   (2 CPUs, 8 GPUs, 9 NICs, 800G — dual-plane GPU fabric)";	\
              echo "  • 2-8-9-400-SP (2 CPUs, 8 GPUs, 9 NICs, 400G — single-plane GPU fabric)";
+
+# ---------------------------------------------------------------------------
+# Case-insensitive command-line variable names
+# ---------------------------------------------------------------------------
+# Make variable names are case-sensitive, so `make ... site=default` silently
+# sets an unrelated variable and SITE falls through to .era-context — the
+# command appears to work while targeting a different deployment. Any case is
+# now accepted: site=, Site=, SITE= all reach SITE.
+#
+# Runs BEFORE the .era-context block so an alias wins over the context file,
+# exactly as the canonical uppercase form does. A variable already given in its
+# canonical form is never overwritten, so `ARCH=x arch=y` keeps x.
+#
+# Every variable an operator may pass. Anything not listed is left alone —
+# aliasing arbitrary names would let a typo silently become a real setting.
+_USER_VARS := ARCH SITE EXCEL LDAP NOZTP SIM FIX FORCE ALL MIN VRF \
+              IMPORT_SITE IMPORT_SKIP_VALIDATE GENERATE_SKIP_VALIDATE \
+              DEPLOY_SKIP_VALIDATE SKIP_UPLOAD SERVER_CONFIG SWITCHES_ONLY \
+              AUTO_CONFIRM RETRIES RETRY_DELAY ANSIBLE_VER
+
+# ASCII upper-case, shell-free (a $(shell) per variable would cost a fork on
+# every make invocation).
+_UC = $(subst a,A,$(subst b,B,$(subst c,C,$(subst d,D,$(subst e,E,$(subst f,F,\
+      $(subst g,G,$(subst h,H,$(subst i,I,$(subst j,J,$(subst k,K,$(subst l,L,\
+      $(subst m,M,$(subst n,N,$(subst o,O,$(subst p,P,$(subst q,Q,$(subst r,R,\
+      $(subst s,S,$(subst t,T,$(subst u,U,$(subst v,V,$(subst w,W,$(subst x,X,\
+      $(subst y,Y,$(subst z,Z,$(1)))))))))))))))))))))))))))
+
+define _alias_to_canonical
+  ifndef $(2)
+    $(2) := $$($(1))
+  endif
+endef
+
+$(foreach _v,$(.VARIABLES),$(if $(filter command line,$(origin $(_v))),\
+    $(if $(filter $(call _UC,$(_v)),$(_USER_VARS)),\
+        $(if $(filter $(call _UC,$(_v)),$(_v)),,\
+            $(eval $(call _alias_to_canonical,$(_v),$(call _UC,$(_v))))))))
+
+# Normalize the ARCH *value* case-insensitively against the known set, so
+# `2-8-9-400-sp` resolves to `2-8-9-400-SP`. Only `-SP` carries uppercase, and
+# it is the one arch people reliably mistype. Unknown values pass through
+# untouched so check_arch still reports them with the value the operator typed.
+ifdef ARCH
+    _ARCH_MATCH := $(shell printf '%s\n' $(VALID_ARCHS) | \
+        awk -v a='$(ARCH)' 'tolower($$0)==tolower(a){print; exit}')
+    ifneq ($(_ARCH_MATCH),)
+        ARCH := $(_ARCH_MATCH)
+    endif
+endif
 
 # Read from .era-context if not already set on command line.
 #
@@ -81,6 +133,69 @@ endif
 
 # Default site if still not set
 SITE ?= default
+
+# ---------------------------------------------------------------------------
+# SITE must be shell-safe BEFORE it reaches a shell.
+#
+# `scripts/_era_context.py` already validates SITE against
+# `^[A-Za-z0-9_-][A-Za-z0-9._-]*$` — but only for the value read from
+# `.era-context`. A command-line `SITE=` bypasses that entirely, and the very
+# next block splices it into `$(shell ... '$(SITE)' ...)`, which make evaluates
+# on EVERY invocation regardless of target. A single quote in the value ends
+# the quoting there, before any recipe runs. The same value also reaches 29
+# recipe lines unquoted.
+#
+# Validating once, here, covers the parse-time shell and every recipe at the
+# same time. Done with make's own string functions rather than a shell test:
+# handing the value to a shell in order to decide whether it is safe for a
+# shell is the bug, not the fix.
+# The word-count test runs FIRST and on the raw value: an embedded newline
+# breaks the $(subst) below at parse time, which stops make -- safely, but with
+# "unterminated call to function 'subst'" instead of anything an operator can
+# act on. Checking word count first turns that into a real message.
+ifneq ($(words $(SITE)),1)
+$(error Invalid SITE '$(SITE)': whitespace is not allowed. Site names match [A-Za-z0-9._-])
+endif
+
+# Parentheses get their own check for the same reason as the newline: an
+# unbalanced one breaks the $(subst) below while make is still parsing, so the
+# operator sees a make-internals error instead of the real problem.
+_SITE_LPAREN := (
+_SITE_RPAREN := )
+ifneq ($(findstring $(_SITE_LPAREN),$(SITE))$(findstring $(_SITE_RPAREN),$(SITE)),)
+$(error Invalid SITE '$(SITE)': parentheses are not allowed. Site names match [A-Za-z0-9._-])
+endif
+
+_SITE_OK := a b c d e f g h i j k l m n o p q r s t u v w x y z \
+            A B C D E F G H I J K L M N O P Q R S T U V W X Y Z \
+            0 1 2 3 4 5 6 7 8 9 _ - .
+_SITE_RESIDUE := $(SITE)
+$(foreach c,$(_SITE_OK),$(eval _SITE_RESIDUE := $$(subst $(c),,$(_SITE_RESIDUE))))
+
+ifneq ($(_SITE_RESIDUE),)
+$(error Invalid SITE '$(SITE)': contains character(s) outside [A-Za-z0-9._-])
+endif
+
+
+# Normalize the SITE *value* against the site directories that actually exist
+# for this arch. Sites are operator-named, so there is no fixed list to match
+# against — `Customer-A` and `customer-a` are both plausible spellings of one
+# real directory. Look in output/ first (where a generated site lives), then
+# input/. No match leaves SITE as typed, so the "no generated output at ..."
+# error still names what the operator asked for.
+ifdef ARCH
+    _SITE_MATCH := $(shell for d in output/$(ARCH)/*/ input/$(ARCH)/*/; do \
+        [ -d "$$d" ] || continue; \
+        b=$$(basename "$$d"); \
+        if [ "$$(printf '%s' "$$b" | tr 'A-Z' 'a-z')" = \
+             "$$(printf '%s' '$(SITE)' | tr 'A-Z' 'a-z')" ]; then \
+            printf '%s' "$$b"; break; \
+        fi; \
+    done 2>/dev/null)
+    ifneq ($(_SITE_MATCH),)
+        SITE := $(_SITE_MATCH)
+    endif
+endif
 
 INPUT_XLSX        = input/$(ARCH)/$(SITE)/$(ARCH).xlsx
 INVENTORY_DIR     = output/$(ARCH)/$(SITE)/inventory
@@ -130,7 +245,7 @@ define check_arch
 		echo "❌ ERROR: Unknown architecture '$(ARCH)'"; \
 		echo ""; \
 		echo "Available architectures:"; \
-		ls -1 input/ | grep -E '^[0-9]' | sed 's/^/  • /'; \
+		ls -1d input/*/ 2>/dev/null | xargs -n1 basename | sed 's/^/  • /'; \
 		echo ""; \
 		exit 1; \
 	fi
@@ -311,7 +426,7 @@ help-switch-ztp-deploy:  ## Show detailed help for switch-ztp-deploy
 	@echo "  Sets up OOB server, generates configs, and configures ZTP server."
 	@echo ""
 	@echo "REQUIRED:"
-	@echo "  ARCH=<type>    Architecture type (2-4-3-200, 2-4-5-800, 2-8-5-200, 2-8-9-400, 2-8-9-800, 2-8-9-400-SP)"
+	@echo "  ARCH=<type>    Architecture type ($(VALID_ARCHS))"
 	@echo ""
 	@echo "OPTIONAL:"
 	@echo "  SITE=<name>    Site name (default: 'default')"
@@ -416,13 +531,14 @@ help-deploy-servers:  ## Show detailed help for deploy-servers
 	@echo "        for manual fallback — no jump-host bottleneck)"
 	@echo ""
 	@echo "  make deploy-servers-via-jump ARCH=<type>"
-	@echo "    SSH from the laptop through oob-server-01 as a ProxyJump."
+	@echo "    SSH from the laptop through the OOB jump host as a ProxyJump"
+	@echo "    (utility in L3 OOB, oob-server-01 in legacy L2)."
 	@echo "    Use when running from a laptop with an Air sim (no dhcp-oob"
-	@echo "    access). Throughput is limited by oob-server-01's SSH concurrency"
+	@echo "    access). Throughput is limited by that host's SSH concurrency"
 	@echo "    (~3 parallel connections)."
 	@echo ""
 	@echo "REQUIRED:"
-	@echo "  ARCH=<type>    Architecture type (2-4-3-200, 2-4-5-800, 2-8-5-200, 2-8-9-400, 2-8-9-800, 2-8-9-400-SP)"
+	@echo "  ARCH=<type>    Architecture type ($(VALID_ARCHS))"
 	@echo ""
 	@echo "OPTIONAL:"
 	@echo "  SITE=<name>    Site name (default: 'default')"
@@ -466,7 +582,8 @@ help-air:  ## Show NVIDIA Air deployment guide
 	@echo ""
 	@echo "MANUAL WORKFLOW (fallback):"
 	@echo "  1. Upload topology JSON at air.nvidia.com"
-	@echo "  2. Add SSH services to oob-server-01 and dhcp-oob"
+	@echo "  2. Add SSH services to the jump + DHCP hosts (L3: utility,"
+	@echo "     external-dhcp; legacy L2: oob-server-01, dhcp-oob)"
 	@echo "  3. make air-connect ARCH=<type>            # enter SSH details"
 	@echo "  4. make switch-ztp-deploy ARCH=<type>"
 	@echo ""
@@ -526,6 +643,18 @@ generate:  ## Generate inventory + switch configs + Air topology - requires ARCH
 		-i $(INVENTORY_DIR)/hosts \
 		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)"
 	@echo "✅ CLI configurations generated in $(CONFIG_OUTPUT_DIR)/"
+	@# ERA-45: hard-fail instead of shipping a config that rendered without its
+	@# Wire-Map-derived subports (usually a mislabeled GPU spine/leaf — see the
+	@# validate-excel name/role warnings). The gl template emits this marker.
+	@if grep -rl "rendered without Wire Map-derived" $(CONFIG_OUTPUT_DIR)/ >/dev/null 2>&1; then \
+		echo ""; \
+		echo "❌ generate produced switch config(s) missing Wire-Map-derived subports:"; \
+		grep -rl "rendered without Wire Map-derived" $(CONFIG_OUTPUT_DIR)/ | sed 's/^/     /'; \
+		echo "   A switch rendered without its Wire-Map GPU/ISL ports — commonly a"; \
+		echo "   mislabeled Function (e.g. a gs-plane spine given a gl-plane Function)."; \
+		echo "   Fix the node's Function in the Excel, then re-run. Aborting."; \
+		exit 1; \
+	fi
 	@echo ""
 	@echo "Step 3: Generating Air topology..."
 	python3 scripts/topology_generator.py generate --arch $(ARCH) --site $(SITE) $(if $(SWITCHES_ONLY),--switches-only,)
@@ -539,17 +668,6 @@ endif
 ifdef AIR_SWITCHES_ONLY
 	@echo "  AIR_SWITCHES_ONLY: patching OOB to L3 mode..."
 	@sed -i 's/oob_uplink_mode: l2/oob_uplink_mode: l3/' $(INVENTORY_DIR)/group_vars/oob.yml $(INVENTORY_DIR)/group_vars/all/main.yml 2>/dev/null || true
-	@for f in $(INVENTORY_DIR)/host_vars/leaf*smn*ipp6.yml; do \
-		src="inventories/$(ARCH)/host_vars/$$(basename $$f .yml | sed 's/-ipp6//').yml"; \
-		if [ -f "$$src" ] && ! grep -q "^lo_ip:" "$$f"; then \
-			lo=$$(grep "^lo_ip:" "$$src" | awk '{print $$2}'); \
-			asn=$$(grep "^asn:" "$$src" | awk '{print $$2}'); \
-			rid=$$(echo $$lo | cut -d/ -f1); \
-			echo "lo_ip: $$lo" >> "$$f"; \
-			echo "router_id: $$rid" >> "$$f"; \
-			echo "bgp_asn: $$asn" >> "$$f"; \
-		fi; \
-	done
 	@ansible-playbook playbooks/generate-cli-configs.yml \
 		-i $(INVENTORY_DIR) \
 		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)" \
@@ -574,6 +692,14 @@ topology:  ## Generate Air topology only - requires ARCH, optional SITE
 	$(call check_arch,$@)
 	python3 scripts/topology_generator.py generate --arch $(ARCH) --site $(SITE)
 
+ip-report:  ## Emit read-only IP-assignment report from generated artifacts - requires ARCH, optional SITE
+	$(call check_arch,$@)
+	python3 scripts/emit_ip_report.py --arch $(ARCH) --site $(SITE)
+
+validation-bundle:  ## Package configs/inventory/topology/reports + Excel into a sendable .zip - requires ARCH, optional SITE
+	$(call check_arch,$@)
+	python3 scripts/make_validation_bundle.py --arch $(ARCH) --site $(SITE)
+
 validate-excel:  ## Validate Excel file before import/generate - requires EXCEL=<path> or ARCH
 	@if [ -n "$(EXCEL)" ]; then \
 		python3 scripts/validate_excel.py "$(EXCEL)"; \
@@ -590,7 +716,7 @@ validate-topology:  ## Validate Air topology against wiremap - requires ARCH, op
 	@echo "Validating Air topology for arch=$(ARCH) site=$(SITE)..."
 	python3 scripts/topology_generator.py validate --arch $(ARCH) --site $(SITE) $(if $(wildcard output/$(ARCH)/$(SITE)/.switches-only),--switches-only,)
 
-push-switch-configs:  ## Push and apply generated NVUE configs to core + OOB switches - requires ARCH, optional SITE
+push-switch-configs:  ## Push NVUE configs to core + OOB (bootstraps factory/expired password if needed) - requires ARCH, optional SITE
 	$(call check_arch,$@)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Pushing switch configs  arch=$(ARCH)  site=$(SITE)"
@@ -604,9 +730,9 @@ deploy-servers:  ## Deploy server configs (direct SSH) - requires ARCH, optional
 	@echo "Deploying to servers (direct) for arch=$(ARCH) site=$(SITE)..."
 	ansible-playbook playbooks/era-servers.yml -i $(INVENTORY_DIR)/hosts --ask-become-pass
 
-deploy-servers-via-jump:  ## Deploy server configs via ProxyJump through oob-server-01 (Air from laptop) - requires ARCH
+deploy-servers-via-jump:  ## Deploy server configs via ProxyJump through the OOB jump host (Air from laptop) - requires ARCH
 	$(call check_arch,$@)
-	@echo "Deploying to servers (ProxyJump via oob-server-01) for arch=$(ARCH) site=$(SITE)..."
+	@echo "Deploying to servers (ProxyJump via the OOB jump host) for arch=$(ARCH) site=$(SITE)..."
 	ansible-playbook playbooks/era-servers.yml -i $(INVENTORY_DIR)/hosts --ask-become-pass \
 		-e "via_server=true" -f 5
 
@@ -1251,7 +1377,7 @@ ifdef ARCH
 		echo "❌ ERROR: Unknown architecture '$(ARCH)'"; \
 		echo ""; \
 		echo "Available architectures:"; \
-		ls -1 input/ | grep -E '^[0-9]' | sed 's/^/  • /'; \
+		ls -1d input/*/ 2>/dev/null | xargs -n1 basename | sed 's/^/  • /'; \
 		echo ""; \
 		exit 1; \
 	else \
@@ -1703,4 +1829,7 @@ docs:  ## Show documentation links
 
 # Internal-only targets. The leading dash means a checkout without this file
 # (e.g. a public release) silently skips it.
--include Makefile.internal
+# Internal-only targets live at the monorepo root (one level up from this public
+# subtree). Present in the internal checkout, absent in the public distribution
+# where net-configurator/ is the repo root — the leading dash makes that a no-op.
+-include ../Makefile.internal

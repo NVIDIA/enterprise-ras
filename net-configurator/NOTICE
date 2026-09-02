@@ -1,0 +1,27 @@
+NVIDIA ERA net-configurator
+Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This product is licensed under the MIT License. See the LICENSE file for the
+full license text.
+
+================================================================================
+Third-party dependencies
+================================================================================
+
+This distribution does not vendor or redistribute third-party source code. The
+packages below are declared in requirements.txt and are installed by the user
+from their respective upstream sources at their own licenses; they are listed
+here for reference only.
+
+    ansible             GPL-3.0-or-later
+    ansible-core        GPL-3.0-or-later
+    httpx               BSD-3-Clause
+    openpyxl            MIT
+    pyyaml              MIT
+    rich                MIT
+    jinja2              BSD-3-Clause
+    pexpect             ISC
+
+Ansible and ansible-core are GPL-licensed and are invoked as separate
+executables at runtime; this project ships playbooks, roles, and templates
+consumed by them, and does not link against or incorporate their source.

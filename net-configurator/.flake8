@@ -18,10 +18,11 @@ max-line-length = 120
 #   W293 — whitespace on otherwise-blank lines (would be nice to clean
 #          but isn't a bug).
 #   W391 — blank line at end of file (cosmetic).
-#   F401 — imported but unused (some scripts re-export for back-compat).
-#   F541 — f-string without placeholders (harmless).
-#   F841 — local variable assigned but never used (sometimes kept for
-#          debug logging / future use).
+#
+# F401 / F541 / F841 were previously ignored here. They are NOT cosmetic: with
+# them suppressed the tree accumulated a validation rule whose loop body was
+# `pass` and a capacity check whose result was discarded, neither of which any
+# other tool flagged. All 29 outstanding hits were fixed; keep these enforced.
 extend-ignore =
     E402,
     E501,
@@ -36,10 +37,7 @@ extend-ignore =
     E731,
     E741,
     W293,
-    W391,
-    F401,
-    F541,
-    F841
+    W391
 
 exclude =
     .venv,
