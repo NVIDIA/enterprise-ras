@@ -28,10 +28,14 @@ management interface on every node, always.** Compute nodes have always
 honoured it — su-01-node-01 carries 18 data links and none of them touch eth0.
 """
 import json
+import sys
 from pathlib import Path
 
 import openpyxl
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
 
 NC = Path(__file__).resolve().parent.parent
 _SHIPPED_SITES = ("default", "largescale")
@@ -118,13 +122,13 @@ def test_no_duplicate_node_interface(path, arch, site):
 
 def _management_peer_names(arch, site):
     workbook = NC / "input" / arch / site / f"{arch}.xlsx"
-    wb = openpyxl.load_workbook(workbook, read_only=True, data_only=True)
+    wb = openpyxl.load_workbook(workbook, data_only=True)
     try:
-        rows = wb["Nodes"].iter_rows(min_row=2, values_only=True)
         return {
-            name
-            for function, name, _oob_vlan, _node_type, *_rest in rows
-            if str(function or "").strip().lower() in {"oob-switch", "edge", "air-oob"}
+            row["name"]
+            for row in workbook_access.node_rows(wb)
+            if str(row.get("function") or "").strip().lower()
+            in {"oob-switch", "edge", "air-oob"}
         }
     finally:
         wb.close()

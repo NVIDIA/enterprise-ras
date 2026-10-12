@@ -5,7 +5,7 @@
 
 > **Note:** The ERA automation tool uses an Excel-driven workflow. ZTP mode selection,
 > MAC addresses, and IP settings described below are configured in the Excel template
-> (Settings and Nodes tabs) and applied automatically when you run `make generate`.
+> (the Deployment and Switch Data sheets) and applied automatically when you run `make generate`.
 > This document is provided as a reference for understanding the ZTP modes and
 > troubleshooting.
 
@@ -61,7 +61,7 @@ make import EXCEL=your-config.xlsx
 make generate
 ```
 
-MAC addresses are read from the Nodes tab "MAC Address for ZTP" column. If left blank,
+MAC addresses are read from the Switch Data sheet's "ZTP MAC Address" column. If left blank,
 MACs are auto-generated. IP assignment mode defaults to DHCP for ZTP deployments.
 
 > **Note:** MAC addresses and IP assignment mode are configured in the Excel template
@@ -84,9 +84,11 @@ ip_assignment_mode: "dhcp"
 The `dnsmasq` configuration will include:
 
 ```conf
-# core-01 - Static IP with MAC address
-dhcp-host=44:38:39:00:01:01,10.0.0.201,core-01,12h,set:core_01
-dhcp-option=tag:core_01,239,http://192.168.200.1/scripts/core-01.sh
+# core-01 - static IP and hostname by MAC
+dhcp-host=44:38:39:00:01:01,core-01,10.0.0.201,12h
+# every switch on the interface gets the same ZTP script URL, served from
+# that interface's own address (the ZTP server, not the OOB gateway)
+dhcp-option=interface:eth1,239,http://10.0.0.100/scripts/ztp.sh
 ```
 
 ### Workflow
@@ -111,7 +113,7 @@ dhcp-option=tag:core_01,239,http://192.168.200.1/scripts/core-01.sh
 
 ### Configuration
 
-Configure static IPs in the Excel Nodes tab and import:
+Configure static IPs in the Excel Switch Data sheet and import:
 
 ```bash
 make import EXCEL=your-config.xlsx
@@ -138,14 +140,54 @@ ip_assignment_mode: "static"
 For static IP switches, `dnsmasq` provides DHCP information mode:
 
 ```conf
-# core-01 - Static IP - Switch has pre-configured IP
-# ZTP script available at: http://192.168.200.1/scripts/core-01.sh
-# If MAC provided, can still query DHCP for option 239:
-dhcp-host=44:38:39:00:01:01,ignore,set:core_01
-dhcp-option=tag:core_01,239,http://192.168.200.1/scripts/core-01.sh
+# Mode: Static IP (192.168.200.10)
+# Reserved at its static IP so the switch can still ZTP from this server
+dhcp-host=48:b0:2d:aa:01:01,core-01,192.168.200.10,12h
 ```
 
-**Note**: The `ignore` option means dnsmasq won't assign an IP, but will still provide DHCP options if the switch queries for them.
+When the switch row has a MAC, dnsmasq **reserves** the switch's static IP for
+that MAC, so a factory-fresh switch that DHCPs on boot gets its own management
+IP plus the per-interface option 239 (`ztp.sh`) and provisions itself. The
+switch keeps the same address after ZTP. Without a MAC there is no DHCP entry
+and the switch must be provisioned manually (below).
+
+> Earlier releases rendered `dhcp-host=<mac>,<hostname>,ignore` here, which
+> made dnsmasq refuse the switch outright, so a real switch could not ZTP.
+
+### Physical ZTP
+
+Physical (`deploy_in_air = No`) ZTP is supported in nc-v8. A physical site is
+generated in static mode with real addresses:
+
+| Generated | Physical site (`deploy_in_air = No`) | Air site (default) |
+|-----------|--------------------------------------|--------------------|
+| Switch `ansible_host` | Switch Data mgmt IP | auto-assigned air-mgmt IP |
+| Switch `mac_address` | Switch Data **ZTP MAC Address** (none when blank) | MAC the Air topology gives the VM |
+| DHCP entry | `dhcp-host=<mac>,<hostname>,<mgmt-ip>,12h` | same form, air-mgmt IP |
+| `ztp_interfaces` | one per OOB VLAN subnet, starting at `eth1`; your renames are kept | `eth1` air-mgmt (`172.20.0.0/24`) + OOB subnets (L2) |
+| ZTP server address | L2: `dhcp-oob` slot · L3: the `ztp_server` slot (`<oob-subnet>+100`) | Air infra addresses |
+| Infra hosts in inventory | L2: `dhcp-oob` · L3: `external-dhcp`, `utility` (your own servers) | plus `oob-server-01`, `external-conn`, Air_Only nodes |
+| `air-connect.py` | not run | run by `switch-ztp-deploy` |
+
+Fill in the **ZTP MAC Address** column of Switch Data for every switch that
+should ZTP, give each switch a mgmt IP inside its OOB VLAN subnet, and rename
+the generated `ztp_interfaces` to your ZTP server's NICs (see
+[ZTP_INTERFACE_CONFIGURATION.md](ZTP_INTERFACE_CONFIGURATION.md)); the
+names are kept when the inventory is regenerated, including by
+`switch-ztp-deploy`. The
+server host_vars (`dhcp-oob`, or `external-dhcp` / `utility`) are generated
+with `ansible_host: CHANGE_ME`: set them to your ZTP server and jump host. Then run
+`make switch-ztp-deploy` and, once the switches are up, `make validate-ztp-direct`.
+
+`setup-ztp-server` creates a local account on the ZTP server (default
+`netadmin`) and publishes its SSH public key at `/ztp_server_key.pub`. To use a
+different account, set `ztp_server_user: <name>` in the inventory's
+`group_vars/all/` or pass `-e ztp_server_user=<name>`; the name must be a valid
+Linux user name (`[a-z_][a-z0-9_-]`, at most 32 characters).
+
+> **Not verified on hardware.** The generated inventory and the rendered
+> dnsmasq configuration are covered by automated tests; no physical switch was
+> available to run a real ZTP boot against this release.
 
 ### Workflow
 
@@ -185,13 +227,18 @@ The ZTP server includes a helper script at `/opt/ztp/manual-ztp.sh`:
 
 ```bash
 # On ZTP server
-/opt/ztp/manual-ztp.sh core-01
+/opt/ztp/manual-ztp.sh core-01 192.168.200.1
 ```
 
 This script will:
-- Check if ZTP script and config exist
+- Check that `/var/www/ztp/scripts/ztp.sh` and `/var/www/ztp/configs/<switch>-config.sh` exist
 - Display manual execution options
-- Optionally SSH to switch and execute ZTP
+- Optionally SSH to the switch and run ZTP. The second argument is the ZTP
+  server address as the switch reaches it (the switch fetches the URL); without
+  it the helper only prints the options. It asks for the switch password
+  (`switch_ansible_password` from `secrets.yml`) without echo, or uses
+  `SSHPASS` if it is already exported, and passes it with `sshpass -e`, so the
+  password never appears in the process list.
 
 ### Option 2: Direct Execution on Switch
 
@@ -202,12 +249,14 @@ SSH to the switch and run:
 ssh cumulus@core-01
 
 # Download and execute ZTP script
-curl http://192.168.200.1/scripts/core-01.sh | bash
+# (every switch runs the same ztp.sh; it fetches configs/<hostname>-config.sh, with
+# <hostname> from the switch's DHCP lease, and stops if there is no lease; for a
+# static management address use push-switch-configs)
+curl http://192.168.200.1/scripts/ztp.sh | sudo bash
 
 # OR download first, then execute
-wget http://192.168.200.1/scripts/core-01.sh
-chmod +x core-01.sh
-./core-01.sh
+wget http://192.168.200.1/scripts/ztp.sh
+sudo bash ztp.sh
 ```
 
 ### Option 3: Cumulus ZTP Command
@@ -216,7 +265,7 @@ Use the built-in Cumulus ZTP command:
 
 ```bash
 # On switch
-sudo /usr/lib/cumulus/ztp -v -r http://192.168.200.1/scripts/core-01.sh
+sudo /usr/lib/cumulus/ztp -v -r http://192.168.200.1/scripts/ztp.sh
 ```
 
 ### Option 4: Remote Execution from ZTP Server
@@ -228,9 +277,11 @@ Use `sshpass` to execute remotely:
 sudo apt install sshpass
 
 # Execute ZTP on remote switch
-# Replace <password> with switch_ansible_password from secrets.yml.
-sshpass -p '<password>' ssh cumulus@core-01 \
-  "curl http://192.168.200.1/scripts/core-01.sh | bash"
+# Enter switch_ansible_password from secrets.yml (no echo). sshpass -e reads
+# it from SSHPASS, so it never appears in the process list.
+read -rs SSHPASS && export SSHPASS
+sshpass -e ssh cumulus@core-01 \
+  "curl http://192.168.200.1/scripts/ztp.sh | sudo bash"
 ```
 
 ---
@@ -320,12 +371,12 @@ router_id: "172.16.176.11"
 2. Check ZTP script exists
    ```bash
    # On ZTP server
-   ls -la /var/www/ztp/scripts/core-01.sh
+   ls -la /var/www/ztp/scripts/ztp.sh /var/www/ztp/configs/core-01-config.sh
    ```
 3. Test ZTP script manually
    ```bash
    # On switch
-   curl http://192.168.200.1/scripts/core-01.sh
+   curl http://192.168.200.1/scripts/ztp.sh
    ```
 
 ### Static Mode Issues
@@ -357,7 +408,7 @@ router_id: "172.16.176.11"
 1. Download and inspect script
    ```bash
    # On switch
-   curl http://192.168.200.1/scripts/core-01.sh -o /tmp/ztp.sh
+   curl http://192.168.200.1/scripts/ztp.sh -o /tmp/ztp.sh
    bash -x /tmp/ztp.sh  # Run with debug output
    ```
 2. Check configuration file exists
@@ -373,9 +424,9 @@ router_id: "172.16.176.11"
 
 ### General Debugging
 
-**Check ZTP status page**:
+**Check ZTP status page** (only with `status_page_enabled: Yes`; when it is off, `/` returns 404 and only the ZTP endpoints are served):
 ```bash
-curl http://192.168.200.1/
+curl -u era http://192.168.200.1/
 # Or open in browser: http://192.168.200.1/
 ```
 

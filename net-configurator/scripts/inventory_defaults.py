@@ -16,10 +16,10 @@ Guarded by tests/test_seedless_generation.py."""
 import copy
 from pathlib import Path
 
-import yaml
+from inventory_yaml import load_tool_yaml
 
 _DEFAULTS_YML = Path(__file__).resolve().parent / "inventory_defaults.yml"
-_DEFAULTS = yaml.safe_load(_DEFAULTS_YML.read_text()) or {}
+_DEFAULTS = load_tool_yaml(_DEFAULTS_YML.read_text()) or {}
 
 
 def arch_group_vars(section, arch):
@@ -55,6 +55,6 @@ def air_vnode_host_vars(arch, vnode):
     return copy.deepcopy(v) if v is not None else None
 
 
-SWITCHES_GROUP_VARS = '# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n# SPDX-License-Identifier: MIT\n\n# ============================================================================\n# Switches Group Variables\n# ============================================================================\n# Connection settings for all switches (core + oob)\n\nansible_password: "{{ switch_ansible_password }}"\n\n'
+SWITCHES_GROUP_VARS = '---\n# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n# SPDX-License-Identifier: MIT\n\n# ============================================================================\n# Switches Group Variables\n# ============================================================================\n# Connection settings for all switches (core + oob)\n\nansible_password: "{{ switch_ansible_password }}"\n\n'
 
-SERVERS_GROUP_VARS = '# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n# SPDX-License-Identifier: MIT\n\n# ============================================================================\n# Servers Group Variables\n# ============================================================================\n# Connection settings for all servers\n\nansible_password: "{{ server_ansible_password }}"\n\n'
+SERVERS_GROUP_VARS = '---\n# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n# SPDX-License-Identifier: MIT\n\n# ============================================================================\n# Servers Group Variables\n# ============================================================================\n# Connection settings for all servers\n\nansible_password: "{{ server_ansible_password }}"\n\n'

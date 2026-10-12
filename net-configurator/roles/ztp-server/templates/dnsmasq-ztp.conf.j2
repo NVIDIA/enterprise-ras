@@ -70,10 +70,10 @@ dhcp-host={{ switch_vars.mac_address }},{{ switch_hostname }},{{ switch_vars.ans
 # Mode: Static IP ({{ switch_vars.ansible_host }})
 # - Switch has pre-configured IP
 # - Manual ZTP: curl http://<ztp-server-ip>/scripts/ztp.sh | sudo bash
-# - Or use: /opt/ztp/manual-ztp.sh {{ switch_hostname }}
+# - Or use: /opt/ztp/manual-ztp.sh {{ switch_hostname }} <ztp-server-ip>
 {% if has_mac %}
-# Providing hostname via DHCP even though IP is static
-dhcp-host={{ switch_vars.mac_address }},{{ switch_hostname }},ignore
+# Reserved at its static IP so the switch can still ZTP from this server
+dhcp-host={{ switch_vars.mac_address }},{{ switch_hostname }},{{ switch_vars.ansible_host }},12h
 {% endif %}
 {% endif %}
 

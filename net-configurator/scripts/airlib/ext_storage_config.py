@@ -63,11 +63,18 @@ def _air_mgmt_net(air_mgmt_subnet: str | None) -> ipaddress.IPv4Network:
 def discover_ext_storage_targets(
     topology_json: dict,
     air_mgmt_subnet: str | None = DEFAULT_AIR_MGMT_SUBNET,
+    eth0_ips: dict[str, str] | None = None,
 ) -> list[dict]:
     """Discover ext-storage nodes and their CSL-facing peer interfaces.
 
     Returns one dict per ``ext-storage-*`` node (sorted by name):
         {idx, node_name, peer_ifaces, lo_ip, eth0_ip}
+
+    ``eth0_ip`` is taken from ``eth0_ips[node_name]`` when the inventory's
+    ``infra_addresses.air_mgmt`` block (excel_parser.plan_infra_addresses,
+    ERA-134) names the node; otherwise the historical ``network + 79 + idx``
+    is used and must be a usable host of ``air_mgmt_subnet`` -- an address
+    outside it is a hard error, never shipped.
 
     ``peer_ifaces`` are the node's ``eth*`` interfaces (other than ``eth0``)
     that cable to a switch ``swp*`` port — the BGP-unnumbered peers. Selection
@@ -117,13 +124,23 @@ def discover_ext_storage_targets(
                 f"oob_reserved.AIR_MGMT_RESERVED_OCTETS. Widen "
                 f"EXT_STORAGE_MAX_NODES so the switch-eth0 walk skips it too."
             )
+        net = _air_mgmt_net(air_mgmt_subnet)
+        planned = (eth0_ips or {}).get(node_name)
+        eth0 = (ipaddress.IPv4Address(str(planned).split("/")[0]) if planned
+                else net.network_address + EXT_STORAGE_FIRST_OCTET + idx)
+        if eth0 not in net or eth0 in (net.network_address, net.broadcast_address):
+            raise ValueError(
+                f"{node_name} eth0 {eth0} is not a usable host of air-mgmt "
+                f"subnet {net}; the node would be unreachable. Regenerate the "
+                f"inventory (make import) so infra_addresses places it, or "
+                f"widen the subnet."
+            )
         result.append({
             "idx": idx,
             "node_name": node_name,
             "peer_ifaces": sorted(set(peer_ifaces)),
             "lo_ip": f"10.187.5.{idx + 1}",
-            "eth0_ip": str(_air_mgmt_net(air_mgmt_subnet).network_address
-                           + EXT_STORAGE_FIRST_OCTET + idx),
+            "eth0_ip": str(eth0),
         })
     return result
 
@@ -186,6 +203,7 @@ def build_daemons() -> str:
 def build_eth0_netplan(
     eth0_ip: str,
     air_mgmt_subnet: str | None = DEFAULT_AIR_MGMT_SUBNET,
+    gateway: str | None = None,
 ) -> str:
     """Render the eth0 static-IP netplan (cust-net-edge-01 air-mgmt bridge leg).
 
@@ -196,9 +214,14 @@ def build_eth0_netplan(
     ERA-93: prefix length and gateway are derived from ``air_mgmt_subnet``. They
     were literal ``/24`` and ``172.20.0.254``, so moving the plane produced a
     netplan whose default route pointed at an address on a different network.
+
+    ERA-134: ``gateway`` is the SVI address the allocator placed
+    (``infra_addresses.air_mgmt.gateway``); the ``.254`` offset is only the
+    fallback for inventories that predate it.
     """
     _net = _air_mgmt_net(air_mgmt_subnet)
-    _gateway = _net.network_address + AIR_MGMT_SVI_OCTET
+    _gateway = (str(gateway).strip() if gateway and str(gateway).strip()
+                else _net.network_address + AIR_MGMT_SVI_OCTET)
     return (
         "network:\n"
         "  version: 2\n"

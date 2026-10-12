@@ -3,7 +3,6 @@
 import sys
 from pathlib import Path
 
-import pytest
 
 # Add scripts/ to path so we can import the modules
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"

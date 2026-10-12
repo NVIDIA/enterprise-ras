@@ -39,7 +39,7 @@ def test_config_source_is_wrapped_in_set_plus_x():
     with no intervening `set -x`)."""
     lines = _render_ztp().splitlines()
     src_idx = [i for i, ln in enumerate(lines)
-               if re.search(r"source\s+/tmp/\$\{hostname\}-config\.sh", ln)]
+               if re.search(r'source\s+"\$ztp_config_file"', ln)]
     assert len(src_idx) == 1, f"expected exactly one config source, got {src_idx}"
     i = src_idx[0]
     # Walk backwards to the nearest xtrace toggle — it must be `set +x`.
@@ -57,7 +57,7 @@ def test_set_x_reenabled_after_source_in_both_branches():
     """xtrace is restored after the source (so the rest of ZTP still traces)."""
     text = _render_ztp()
     # The source sits inside an if/else; both arms must re-enable set -x.
-    block = text[text.index("source /tmp/${hostname}-config.sh"):]
+    block = text[text.index('source "$ztp_config_file"'):]
     block = block[:block.index("function ping_until_reachable")] \
         if "function ping_until_reachable" in block else block
     assert block.count("set -x") >= 2, "set -x not re-enabled in both branches"

@@ -22,6 +22,9 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
+
 REPO = Path(__file__).resolve().parent.parent
 PARSER = REPO / "scripts" / "excel_parser.py"
 VALIDATE = REPO / "scripts" / "validate_excel.py"
@@ -79,12 +82,6 @@ def _yaml(path):
     return yaml.safe_load(path.read_text())
 
 
-def _vlan_rows(ws):
-    """Row indices of the VLAN table (a numeric VLAN ID in column A)."""
-    return [r for r in range(1, ws.max_row + 1)
-            if str(ws.cell(r, 1).value or "").strip().isdigit()]
-
-
 # ------------------------------------------------------- D-9: oob_vlan -----
 
 def test_oob_vlan_follows_vrf_column_not_the_name(gen):
@@ -94,12 +91,9 @@ def test_oob_vlan_follows_vrf_column_not_the_name(gen):
     Pre-ADR-0035 this returned 200 (name.startswith('OOB') missed 'mgmt-oob',
     so the silent fallback fired), which is the wrong VLAN."""
     def mutate(wb):
-        ws = wb["VLANs & Profiles"]
-        for r in _vlan_rows(ws):
-            if str(ws.cell(r, 6).value or "").strip().upper() == "OOB":
-                ws.cell(r, 1).value = 250          # not the fallback value
-                ws.cell(r, 2).value = "mgmt-oob"   # lowercase, no 'OOB' prefix
-                break
+        ws, cols, r = workbook_access.vlan_row(wb, "OOB")
+        ws.cell(r, cols["vlan"]).value = 250              # not the fallback value
+        ws.cell(r, cols["fabric name"]).value = "mgmt-oob"  # lowercase, no prefix
 
     p, inv = gen("authz-vrf", mutate)
     assert p.returncode == 0, p.stdout + p.stderr
@@ -112,11 +106,8 @@ def test_oob_vlan_follows_vrf_column_not_the_name(gen):
 def test_missing_oob_vrf_warns_instead_of_silently_defaulting(gen):
     """With no VRF=='OOB' VLAN the parser still falls back to 200, but says so."""
     def mutate(wb):
-        ws = wb["VLANs & Profiles"]
-        for r in _vlan_rows(ws):
-            if str(ws.cell(r, 6).value or "").strip().upper() == "OOB":
-                ws.cell(r, 6).value = "INBAND"   # no OOB-VRF VLAN remains
-                break
+        ws, cols, r = workbook_access.vlan_row(wb, "OOB")
+        ws.cell(r, cols["vrf"]).value = "INBAND"   # no OOB-VRF VLAN remains
 
     p, inv = gen("authz-novrf", mutate)
     assert p.returncode == 0, p.stdout + p.stderr
@@ -129,10 +120,11 @@ def test_missing_oob_vrf_warns_instead_of_silently_defaulting(gen):
 def test_oob_switch_without_wiremap_rows_warns(gen):
     """A switch with no Wire Map rows gets reference port pins — loudly."""
     def mutate(wb):
-        ws = wb["Wire Map"]
-        for r in range(ws.max_row, 1, -1):
-            if any("oob-switch-02" == str(ws.cell(r, c).value or "").strip()
-                   for c in (2, 6)):
+        ws, cols, first = workbook_access.sheet_table(wb, "Wiremap")
+        ends = (cols["system name (a)"], cols["system name (z)"])
+        for r in range(ws.max_row, first - 1, -1):
+            if any(str(ws.cell(r, c).value or "").strip() == "oob-switch-02"
+                   for c in ends):
                 ws.delete_rows(r)
 
     p, inv = gen("authz-nowm", mutate)
@@ -198,11 +190,7 @@ def test_ldap_still_fully_generated_when_enabled(gen):
     all_vars['ldap']). Prove LDAP is intact end-to-end when an operator turns it
     on: every key present, users generated, servers Excel-driven."""
     def mutate(wb):
-        ws = wb["Settings"]
-        for row in ws.iter_rows():
-            if str(row[0].value or "").strip() == "ldap_enabled":
-                ws.cell(row[0].row, 2).value = "Yes"
-                return
+        workbook_access.set_setting(wb, "ldap_enabled", "Yes")
 
     p, inv = gen("authz-ldapon", mutate)
     assert p.returncode == 0, p.stdout + p.stderr
@@ -264,10 +252,27 @@ def test_inventory_header_switch_count_matches_the_groups(gen):
 
 # ---------------------------------------------- A-1: dead key surfaced -----
 
-def test_ztp_enabled_is_reported_dead_not_silently_accepted():
-    """ztp_enabled has no consumer; validate must say so rather than accept it."""
+def test_ztp_enabled_is_reported_dead_not_silently_accepted(tmp_path):
+    """ztp_enabled has no consumer; validate must say so rather than accept it.
+
+    The shipped workbooks no longer declare it -- the intake form drops it
+    outright (`intake_layout.DROPPED_SETTINGS`, ERA-106 / GitLab #80), which
+    is why the clean half is asserted too: a warning that fires on a workbook
+    that does not carry the key would be a false positive.
+    """
     p = subprocess.run([sys.executable, str(VALIDATE), str(BASE)],
                        capture_output=True, text=True)
+    assert "ztp_enabled" not in (p.stdout + p.stderr), (
+        "the shipped workbook does not declare ztp_enabled, so nothing should "
+        "be reported about it")
+
+    dst = tmp_path / BASE.name
+    shutil.copy2(BASE, dst)
+    wb = openpyxl.load_workbook(dst)
+    workbook_access.set_setting(wb, "ztp_enabled", "Yes")
+    wb.save(dst)
+    p = subprocess.run([sys.executable, str(VALIDATE), str(dst)],
+                       capture_output=True, text=True)
     out = p.stdout + p.stderr
-    assert "ztp_enabled" in out and "no effect" in out
+    assert "ztp_enabled" in out and "no effect" in out, out[-800:]
     assert p.returncode == 0, "a dead key is a warning, not a hard failure"

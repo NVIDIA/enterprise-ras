@@ -30,6 +30,15 @@ three places that need them cannot drift apart:
 ``scripts/air-deploy.py`` is the *owner* that actually assigns these IPs to
 the L3 trio; its octets are exported here as named constants so its netplan
 literals stay tied to this registry.
+
+ERA-134 / ADR-0084: the octets below are PREFERENCES and KEEP-OUTS, not
+allocations. The address an infra node actually gets is decided by
+``infra_ip_allocation.allocate_infra_ip`` (reached through
+``excel_parser.plan_infra_addresses``), which honours the octet only when it
+exists inside the declared subnet and is free, and otherwise seats the node on
+the first free host. ``find_oob_collisions`` therefore takes the allocator's
+result (``infra_claims``) as the authoritative infra owners; the raw octets
+are seeded only as keep-outs on the addresses the subnet actually has.
 """
 import ipaddress
 
@@ -43,7 +52,14 @@ EXTERNAL_DHCP_OCTET = 77   # external-dhcp:eth1
 UTILITY_OCTET = 78         # utility (L3-OOB jump): eth1 on .200, eth2 on air-mgmt
 EXTERNAL_CONN_OCTET = 79   # external-conn (OOB plane: 192.168.200.79)
 ZTP_SERVER_OCTET = 100     # ztp_server
-DHCP_OOB_OCTET = 252       # dhcp-oob
+# Keep-out slot the generator's mgmt-IP walk has always skipped in both modes.
+# It is NOT where dhcp-oob lives: the generator emits dhcp-oob:eth2 at
+# network+78 when that host is free (ERA-134), and the address it actually gets
+# reaches this gate through find_oob_collisions(infra_claims=...). Kept at 252
+# so shipped workbooks are not renumbered; no fixed .78 claim exists in L2, so
+# a Nodes-tab host on .78 is preserved and dhcp-oob moves.
+LEGACY_DHCP_OOB_OCTET = 252
+DHCP_OOB_OCTET = LEGACY_DHCP_OOB_OCTET  # historical name; see above
 # ext-storage-NN eth0 on the AIR-MGMT plane (172.20.0.79, .80, ...), assigned
 # by scripts/airlib/ext_storage_config.py -- which imports these rather than
 # defining its own copy. It previously owned EXT_STORAGE_FIRST_OCTET privately
@@ -77,20 +93,21 @@ OOB_RESERVED_OCTETS = {
     UTILITY_OCTET: "utility (L3-OOB jump)",
     EXTERNAL_CONN_OCTET: "external-conn",
     ZTP_SERVER_OCTET: "ztp_server",
-    DHCP_OOB_OCTET: "dhcp-oob",
+    LEGACY_DHCP_OOB_OCTET: "reserved (legacy dhcp-oob slot)",
     254: "reserved",
     255: "broadcast address",
 }
 
 # Reserved octets for an L2-OOB deployment (the system default). The L3 EXIT-VRF
 # trio (.77/.78/.79) and ztp_server (.100) do NOT exist here — the L2 OOB plane
-# carries only the gateway/oob-server-01 (.1) and dhcp-oob (.252) as fixed,
-# non-Nodes-tab infrastructure. Used by the validate-excel gate so it does not
+# carries only the gateway/oob-server-01 (.1) as fixed, non-Nodes-tab
+# infrastructure; dhcp-oob is allocator-placed (prefers +78, falls through) and
+# arrives via ``infra_claims``. Used by the validate-excel gate so it does not
 # false-flag a Nodes-tab host that legitimately uses .77/.78/.79 in L2 mode.
 OOB_RESERVED_OCTETS_L2 = {
     0: "network address",
     GATEWAY_OCTET: "gateway / oob-server-01",
-    DHCP_OOB_OCTET: "dhcp-oob",
+    LEGACY_DHCP_OOB_OCTET: "reserved (legacy dhcp-oob slot)",
     254: "reserved",
     255: "broadcast address",
 }
@@ -101,7 +118,7 @@ def oob_reserved_for_mode(oob_uplink_mode):
 
     'l3' -> the full L3 set (EXIT-VRF trio + ztp_server). Anything else,
     including None/blank/unknown, -> the L2 set (matches the system default in
-    excel_parser._normalize_oob_uplink_mode).
+    utils.normalize_oob_uplink_mode).
     """
     if str(oob_uplink_mode or "").strip().lower() == "l3":
         return OOB_RESERVED_OCTETS
@@ -214,22 +231,37 @@ def oob_octet(ip_str, subnets=None):
     return None
 
 
-def find_oob_collisions(node_claims, reserved_octets=None, subnets=None):
+def find_oob_collisions(node_claims, reserved_octets=None, subnets=None,
+                        infra_claims=None):
     """Detect mgmt-IP collisions on the OOB management plane(s).
 
     Args:
         node_claims: iterable of ``(label, ip_str)`` pairs — typically one per
             Nodes-tab host (``label`` is a human row/function descriptor).
-        reserved_octets: octet->owner map to seed as implicit claimants;
+        reserved_octets: octet->owner map to seed as implicit KEEP-OUTS;
             defaults to the L3 superset (``OOB_RESERVED_OCTETS``). Callers that
             know the OOB mode should pass ``oob_reserved_for_mode(mode)`` so an
             L2 deployment is not flagged for legitimately using an L3-only octet
-            (.77/.78/.79). Each octet is seeded at ``network_address + octet``
-            of every declared subnet, matching ``air-deploy.py``, and skipped
-            where that address falls outside the network (a /25 OOB VLAN simply
-            has no offset 252, so dhcp-oob is not reserved there).
+            (.77/.79). Each octet is seeded at ``network_address + octet`` of
+            every declared subnet, matching ``air-deploy.py``. An offset the
+            subnet does not have (252 on a /26) is not an address anyone can
+            hold and is not seeded -- that is fine ONLY because the nodes that
+            need an address arrive through ``infra_claims`` instead.
         subnets: OOB VLAN subnets the workbook declares. ``None`` keeps the
             historical 192.168.200.0/24 default.
+        infra_claims: iterable of ``(owner, ip_str)`` pairs for the Air
+            infrastructure addresses the ALLOCATOR decided
+            (``excel_parser.plan_infra_addresses`` -> ``infra_addresses``).
+            These are the authoritative infra owners on the plane. Every one
+            of them must be a usable host of a declared subnet: an infra claim
+            that is outside every subnet (the ERA-134 ``100.82.254.206`` on a
+            /26) raises ``ValueError`` instead of being dropped, because a
+            dropped claim is exactly how the gate passed a fabric where
+            ``dhcp-oob`` did not exist.
+
+    Raises:
+        ValueError: an ``infra_claims`` entry is malformed or outside every
+            declared subnet.
 
     Returns:
         A list of ``(address, owners)`` tuples, sorted by address, for every
@@ -251,11 +283,32 @@ def find_oob_collisions(node_claims, reserved_octets=None, subnets=None):
         reserved_octets = OOB_RESERVED_OCTETS
 
     by_addr = {}
-    for net in _networks(subnets):
+    nets = _networks(subnets)
+    infra_claims = list(infra_claims or ())
+    infra_addrs = {str(_parse_host(ip)) for _, ip in infra_claims}
+    for net in nets:
         for octet, owner in (reserved_octets or {}).items():
             addr = net.network_address + int(octet)
-            if addr in net:
+            # An allocator-placed claimant that landed on its preferred slot
+            # is reported once, under its allocator name, not twice.
+            if addr in net and str(addr) not in infra_addrs:
                 by_addr.setdefault(str(addr), []).append(f"reserved: {owner}")
+
+    for owner, ip_str in infra_claims:
+        addr = _parse_host(ip_str)
+        if addr is None:
+            raise ValueError(
+                f"infrastructure claim '{owner}' has no usable address ({ip_str!r})")
+        home = next((n for n in nets
+                     if addr in n and addr not in (n.network_address, n.broadcast_address)),
+                    None)
+        if home is None:
+            raise ValueError(
+                f"infrastructure claim '{owner}' = {addr} is not a usable host of "
+                f"any declared OOB subnet ({', '.join(str(n) for n in nets) or 'none'}); "
+                f"the node would be unreachable. Every infra address must come "
+                f"from infra_ip_allocation.allocate_infra_ip.")
+        by_addr.setdefault(str(addr), []).append(f"reserved: {owner}")
 
     for label, ip_str in node_claims:
         addr = _parse_host(ip_str)

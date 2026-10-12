@@ -67,9 +67,10 @@
     # original validation_results contract, so downstream tasks are unchanged.
     - name: Collect from all switches in parallel (fan-out of probe calls)
       shell: |
+        IFS= read -r SSHPASS; export SSHPASS
         WORK=$(mktemp -d /tmp/ztpv.XXXXXX)
         {% for item in switch_list %}
-        bash /tmp/ztp_collect_probe.sh '{{ hostvars[item].ansible_host }}' '{{ switch_password }}' '{% if 'core' in hostvars[item].group_names or 'csl' in hostvars[item].group_names or 'gsl' in hostvars[item].group_names or 'cl' in hostvars[item].group_names or 'cs' in hostvars[item].group_names or 'gl' in hostvars[item].group_names or 'gs_plane1' in hostvars[item].group_names or 'gs_plane2' in hostvars[item].group_names or 'gl_plane1' in hostvars[item].group_names or 'gl_plane2' in hostvars[item].group_names %}1{% else %}0{% endif %}' > "$WORK/{{ item }}.out" 2>/dev/null &
+        bash /tmp/ztp_collect_probe.sh '{{ hostvars[item].ansible_host }}' '{% if 'core' in hostvars[item].group_names or 'csl' in hostvars[item].group_names or 'gsl' in hostvars[item].group_names or 'cl' in hostvars[item].group_names or 'cs' in hostvars[item].group_names or 'gl' in hostvars[item].group_names or 'gs_plane1' in hostvars[item].group_names or 'gs_plane2' in hostvars[item].group_names or 'gl_plane1' in hostvars[item].group_names or 'gl_plane2' in hostvars[item].group_names %}1{% else %}0{% endif %}' > "$WORK/{{ item }}.out" 2>/dev/null &
         {% endfor %}
         wait
         {% for item in switch_list %}
@@ -77,6 +78,8 @@
         cat "$WORK/{{ item }}.out" 2>/dev/null
         {% endfor %}
         rm -rf "$WORK"
+      args:
+        stdin: "{{ switch_password }}"
       register: ztp_fanout
       changed_when: false
       no_log: true
@@ -165,7 +168,7 @@
           ══════════════════════════════════════════════════════════════
 
           Per-switch raw `nv show` output (bridge, interface, vrf, ntp,
-          lldp, bgp, evpn, qos_roce, running config) lives in
+          lldp, bgp, evpn, EVPN multihoming, NVE VXLAN, qos_roce, running config) lives in
           {{ report_file | dirname }}/raw/.
         dest: "{{ report_file | default('/tmp/era-ztp-validation-report.txt') }}"
       delegate_to: localhost

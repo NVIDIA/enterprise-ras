@@ -8,7 +8,7 @@ Step-by-step procedure for deploying ERA in NVIDIA Air **without using the Air A
 > **Scope: this guide describes the legacy L2 OOB topology.** It runs Ansible from
 > `dhcp-oob` and routes through `oob-server-01`. The shipped default for every
 > architecture is **L3 OOB**, where the equivalent nodes are `utility` (jump/NAT)
-> and `external-dhcp` (DHCP/ZTP) — all seven default inventories declare
+> and `external-dhcp` (DHCP/ZTP) — all eight default inventories declare
 > `[jump]` as `utility`. Read the node names below as their L3 equivalents if you
 > are on the default topology. See [ROLES.md](ROLES.md) for the full mapping.
 
@@ -190,11 +190,11 @@ cd enterprise-ras/net-configurator
 ### 3.3 Set Up the Python Environment
 
 Air's dhcp-oob VM runs **Ubuntu 22.04**, which ships with **Python 3.10**.
-Our `requirements.txt` pins `ansible>=13.5.0`, which requires **Python 3.12+**.
+Our `requirements.txt` pins `ansible>=14.3.1`, which requires **Python 3.12+**.
 Trying to `pip install` on Python 3.10 fails with:
 
 ```
-ERROR: Could not find a version that satisfies the requirement ansible>=13.5.0
+ERROR: Could not find a version that satisfies the requirement ansible>=14.3.1
 ```
 
 **Install Python 3.12 from deadsnakes first**, then build the venv with it:
@@ -220,7 +220,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 
 # 5. Sanity check
-ansible --version        # expect: ansible [core 2.20+]
+ansible --version        # expect: ansible [core 2.21.4+]
 ```
 
 > **If `add-apt-repository` fails** with "Unable to fetch" or similar, dhcp-oob
@@ -319,7 +319,7 @@ oob_server_interfaces:
 
 The base64 blobs above assume the **default** subnets. If your Excel
 changes the OOB subnet (declared on the OOB VLAN row, VRF `OOB`, in
-"VLANs & Profiles" — see the
+`Network Data` — see the
 [Excel Configuration Guide](EXCEL_CONFIGURATION_GUIDE.md#oob-vlan-management-network))
 or adds additional OOB VLANs, the `eth2` entry in `oob-server-01.yml` must
 match. To find the correct values, inspect what the parser generated
@@ -544,7 +544,7 @@ make generate    # produces topology + node instructions
 # === Phase 3: On dhcp-oob ===
 git clone https://github.com/NVIDIA/enterprise-ras.git && cd enterprise-ras/net-configurator
 
-# Install Python 3.12 (Ubuntu 22.04 ships 3.10, Ansible 13+ needs 3.12+)
+# Install Python 3.12 (Ubuntu 22.04 ships 3.10, Ansible 14+ needs 3.12+)
 sudo add-apt-repository -y ppa:deadsnakes/ppa
 sudo apt-get update && sudo apt-get install -y python3.12 python3.12-venv
 

@@ -33,12 +33,16 @@ Usage:
 """
 
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
 
-import yaml
+_SCRIPT_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+import inventory_yaml
+from utils import read_topology_oob_uplink_mode
 
 
 def detect_mode(project_root: Path, arch: str, site: str) -> str:
@@ -49,14 +53,7 @@ def detect_mode(project_root: Path, arch: str, site: str) -> str:
     """
     topo_path = (project_root / "output" / arch / site / "topology"
                  / f"{arch}-topology.json")
-    if not topo_path.exists():
-        return "l2"
-    try:
-        with open(topo_path) as f:
-            t = json.load(f)
-        return str(t.get("_oob_uplink_mode", "l2")).strip().lower() or "l2"
-    except (json.JSONDecodeError, OSError):
-        return "l2"
+    return read_topology_oob_uplink_mode(topo_path)
 
 
 # Per-mode infra node names: (node_name, cli_arg_name, human_label)
@@ -76,7 +73,7 @@ def load_yaml(path: Path) -> dict:
     if not path.exists():
         return {}
     with open(path) as f:
-        data = yaml.safe_load(f) or {}
+        data = inventory_yaml.load(f) or {}
     return data
 
 
@@ -85,7 +82,7 @@ def save_yaml(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         f.write("---\n")
-        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+        inventory_yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
 
 def parse_host_port(value: str):

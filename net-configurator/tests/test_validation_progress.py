@@ -14,9 +14,8 @@ it read as a hang. The fix is two-part and easy to silently regress:
      dead air is explained, not read as a hang.
 
 These assert the markers are present rather than re-running Ansible (the live
-behavior is covered by docs/internal/validation-evidence/2026-06-29-validation-
-progress.md). The deterministic buffering proof is scripts/internal/... not
-required here.
+behavior is covered by ADR-0011's evidence). The deterministic buffering proof
+is scripts/internal/... not required here.
 """
 import re
 from pathlib import Path
@@ -39,7 +38,7 @@ def test_minimal_callback_targets_are_line_buffered():
     # so ansible's stdout streams through the Makefile pipe instead of block-
     # buffering until the long task finishes.
     minimal_lines = [l for l in mk.splitlines()
-                     if "ANSIBLE_STDOUT_CALLBACK=minimal" in l and "ansible-playbook" in l]
+                     if "ANSIBLE_STDOUT_CALLBACK=minimal" in l and "$(ANSIBLE_PLAYBOOK)" in l]
     assert minimal_lines, "expected minimal-callback validation invocations in Makefile"
     for line in minimal_lines:
         assert "PYTHONUNBUFFERED=1" in line, f"missing PYTHONUNBUFFERED on: {line.strip()}"

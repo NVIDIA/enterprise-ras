@@ -2,12 +2,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for gsl-plane2-02
-# Generated: 2026-09-02T02:45:09Z
+# Generated: 2026-09-18T13:11:22Z
 # Format: NVUE CLI commands (GSL - GPU Spine/Leaf, plane 2)
 #============================================================================
 # Bridge and VLAN
 #============================================================================
 nv set bridge domain br_default type vlan-aware
+nv set bridge domain br_default vlan 920 vni 4920
 nv set bridge domain br_default vlan 921 vni 4921
 nv set bridge domain br_default vlan 922 vni 4922
 nv set bridge domain br_default vlan 923 vni 4923
@@ -15,7 +16,6 @@ nv set bridge domain br_default vlan 924 vni 4924
 nv set bridge domain br_default vlan 925 vni 4925
 nv set bridge domain br_default vlan 926 vni 4926
 nv set bridge domain br_default vlan 927 vni 4927
-nv set bridge domain br_default vlan 928 vni 4928
 
 #============================================================================
 # EVPN
@@ -38,42 +38,42 @@ nv set interface swp1,swp2,swp3,swp4,swp5,swp6,swp7,swp8,swp9,swp10,swp11,swp12,
 nv set interface swp17,swp18,swp19,swp20,swp21,swp22,swp23,swp24,swp25,swp26,swp27,swp28,swp29,swp30,swp31,swp32,swp49,swp50,swp51,swp52,swp53,swp54,swp55,swp56,swp57,swp58,swp59,swp60,swp61,swp62,swp63,swp64,swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp48s0,swp48s1 type swp
 
 # GPU access ports per (rail, plane) - gpu_vlan_mode = per_rail_per_plane
-nv set interface swp1s0,swp3s0,swp5s0,swp7s0,swp9s0,swp11s0,swp13s0,swp15s0 bridge domain br_default access 922
-# vlan922 SVI (rail rail2_plane2)
-nv set interface vlan922 ipv4 address 192.168.22.3/24
-nv set interface vlan922 vrf GPU
-nv set interface vlan922 ipv4 vrr address 192.168.22.1/24
-nv set interface vlan922 ipv4 vrr state enabled
-nv set interface vlan922 ipv4 vrr vrr-state up
-nv set interface vlan922 type svi
-nv set interface vlan922 vlan 922
-nv set interface swp1s1,swp3s1,swp5s1,swp7s1,swp9s1,swp11s1,swp13s1,swp15s1 bridge domain br_default access 924
-# vlan924 SVI (rail rail4_plane2)
-nv set interface vlan924 ipv4 address 192.168.24.3/24
-nv set interface vlan924 vrf GPU
-nv set interface vlan924 ipv4 vrr address 192.168.24.1/24
-nv set interface vlan924 ipv4 vrr state enabled
-nv set interface vlan924 ipv4 vrr vrr-state up
-nv set interface vlan924 type svi
-nv set interface vlan924 vlan 924
-nv set interface swp2s0,swp4s0,swp6s0,swp8s0,swp10s0,swp12s0,swp14s0,swp16s0 bridge domain br_default access 926
-# vlan926 SVI (rail rail6_plane2)
-nv set interface vlan926 ipv4 address 192.168.26.3/24
-nv set interface vlan926 vrf GPU
-nv set interface vlan926 ipv4 vrr address 192.168.26.1/24
-nv set interface vlan926 ipv4 vrr state enabled
-nv set interface vlan926 ipv4 vrr vrr-state up
-nv set interface vlan926 type svi
-nv set interface vlan926 vlan 926
-nv set interface swp2s1,swp4s1,swp6s1,swp8s1,swp10s1,swp12s1,swp14s1,swp16s1 bridge domain br_default access 928
-# vlan928 SVI (rail rail8_plane2)
-nv set interface vlan928 ipv4 address 192.168.28.3/24
-nv set interface vlan928 vrf GPU
-nv set interface vlan928 ipv4 vrr address 192.168.28.1/24
-nv set interface vlan928 ipv4 vrr state enabled
-nv set interface vlan928 ipv4 vrr vrr-state up
-nv set interface vlan928 type svi
-nv set interface vlan928 vlan 928
+nv set interface swp1s0,swp3s0,swp5s0,swp7s0,swp9s0,swp11s0,swp13s0,swp15s0 bridge domain br_default access 921
+# vlan921 SVI (rail rail1_plane1)
+nv set interface vlan921 ipv4 address 192.168.21.3/24
+nv set interface vlan921 vrf GPU
+nv set interface vlan921 ipv4 vrr address 192.168.21.1/24
+nv set interface vlan921 ipv4 vrr state enabled
+nv set interface vlan921 ipv4 vrr vrr-state up
+nv set interface vlan921 type svi
+nv set interface vlan921 vlan 921
+nv set interface swp1s1,swp3s1,swp5s1,swp7s1,swp9s1,swp11s1,swp13s1,swp15s1 bridge domain br_default access 923
+# vlan923 SVI (rail rail3_plane1)
+nv set interface vlan923 ipv4 address 192.168.23.3/24
+nv set interface vlan923 vrf GPU
+nv set interface vlan923 ipv4 vrr address 192.168.23.1/24
+nv set interface vlan923 ipv4 vrr state enabled
+nv set interface vlan923 ipv4 vrr vrr-state up
+nv set interface vlan923 type svi
+nv set interface vlan923 vlan 923
+nv set interface swp2s0,swp4s0,swp6s0,swp8s0,swp10s0,swp12s0,swp14s0,swp16s0 bridge domain br_default access 925
+# vlan925 SVI (rail rail5_plane1)
+nv set interface vlan925 ipv4 address 192.168.25.3/24
+nv set interface vlan925 vrf GPU
+nv set interface vlan925 ipv4 vrr address 192.168.25.1/24
+nv set interface vlan925 ipv4 vrr state enabled
+nv set interface vlan925 ipv4 vrr vrr-state up
+nv set interface vlan925 type svi
+nv set interface vlan925 vlan 925
+nv set interface swp2s1,swp4s1,swp6s1,swp8s1,swp10s1,swp12s1,swp14s1,swp16s1 bridge domain br_default access 927
+# vlan927 SVI (rail rail7_plane1)
+nv set interface vlan927 ipv4 address 192.168.27.3/24
+nv set interface vlan927 vrf GPU
+nv set interface vlan927 ipv4 vrr address 192.168.27.1/24
+nv set interface vlan927 ipv4 vrr state enabled
+nv set interface vlan927 ipv4 vrr vrr-state up
+nv set interface vlan927 type svi
+nv set interface vlan927 vlan 927
 
 #============================================================================
 # NVE / VxLAN
@@ -104,6 +104,10 @@ nv set interface swp2s1,swp4s1,swp6s1,swp8s1,swp10s1,swp12s1,swp14s1,swp16s1 qos
 nv set router bgp autonomous-system 4260396888
 nv set router bgp state enabled
 nv set router bgp router-id 10.2.1.2
+nv set router bgp graceful-restart mode full
+nv set router bgp graceful-restart restart-time 180
+nv set router bgp graceful-restart path-selection-deferral-time 180
+nv set router bgp graceful-restart stale-routes-time 180
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
 nv set router policy route-map LOOPBACK_BGP rule 10 description permit_loopback_interface_routes
 nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
@@ -121,6 +125,7 @@ nv set system ntp server 3.cumulusnetworks.pool.ntp.org association-type server
 #============================================================================
 # AAA - local user 'cumulus' (password set via ZTP)
 #============================================================================
+nv set system aaa authentication order local
 nv set system aaa class nvapply action allow
 nv set system aaa class nvapply command-path / permission all
 nv set system aaa class nvshow action allow
@@ -172,6 +177,8 @@ nv set vrf GPU router bgp address-family ipv4-unicast route-export to-evpn state
 nv set vrf GPU router bgp address-family l2vpn-evpn state enabled
 nv set vrf GPU router bgp autonomous-system 4260396888
 nv set vrf GPU router bgp state enabled
+nv set vrf GPU router bgp path-selection multipath aspath-ignore enabled
+nv set vrf GPU router bgp address-family ipv4-unicast multipaths ebgp 128
 nv set vrf GPU router bgp router-id 10.2.1.2
 nv set vrf GPU table auto
 

@@ -73,12 +73,12 @@
     # to the "probe error" fallback).
     - name: Run the OOB BGP probe on all OOB switches (fan-out from jump)
       shell: |
-        export SSHPASS='{{ switch_password }}'
+        IFS= read -r SSHPASS; export SSHPASS
         SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
         WORK=$(mktemp -d /tmp/oobbgp.XXXXXX)
         {% for sw in oob_list %}
         ( if timeout 15 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[sw].ansible_host }} 'echo ok' >/dev/null 2>&1; then
-            timeout 60 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[sw].ansible_host }} "bash -s -- '{{ switch_password }}'" < /tmp/oob_bgp_probe.sh > "$WORK/{{ sw }}.json" 2>/dev/null;
+            { printf 'IFS= read -r PW\n%s\n' "$SSHPASS"; cat /tmp/oob_bgp_probe.sh; } | timeout 60 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[sw].ansible_host }} 'bash -s' > "$WORK/{{ sw }}.json" 2>/dev/null;
             python3 /tmp/oob_bgp_classify.py < "$WORK/{{ sw }}.json" > "$WORK/{{ sw }}.out" 2>/dev/null || true;
             [ -s "$WORK/{{ sw }}.out" ] || echo "OOB_BGP|FAIL|probe execution error" > "$WORK/{{ sw }}.out";
           else echo "OOB_BGP|FAIL|unreachable {{ hostvars[sw].ansible_host }}" > "$WORK/{{ sw }}.out"; fi ) &
@@ -89,6 +89,8 @@
         cat "$WORK/{{ sw }}.out" 2>/dev/null || echo "OOB_BGP|FAIL|no output"
         {% endfor %}
         rm -rf "$WORK"
+      args:
+        stdin: "{{ switch_password }}"
       register: oob_bgp_all
       changed_when: false
       no_log: true

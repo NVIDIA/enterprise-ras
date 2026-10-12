@@ -35,6 +35,9 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
+
 NC = Path(__file__).resolve().parent.parent
 ARCH = "2-4-3-200"
 ARCHS = ["2-4-3-200", "2-4-5-800", "2-8-5-200",
@@ -52,28 +55,50 @@ def _section(ws, label):
     raise AssertionError(f"section {label!r} not found")
 
 
-# (id, sheet, locator) — locator(wb) writes the payload and returns nothing.
-CASES = [
-    ("vrf-name", lambda wb, v: wb["VLANs & Profiles"].cell(
-        _section(wb["VLANs & Profiles"], "VRF Name") + 1, 1, v)),
-    ("vlan-name", lambda wb, v: wb["VLANs & Profiles"].cell(
-        _section(wb["VLANs & Profiles"], "VLAN ID") + 1, 2, v)),
-    ("profile-vrf", lambda wb, v: wb["VLANs & Profiles"].cell(
-        _section(wb["VLANs & Profiles"], "Profile") + 1, 6, v)),
-    ("profile-speed", lambda wb, v: wb["VLANs & Profiles"].cell(
-        _section(wb["VLANs & Profiles"], "Profile") + 1, 8, v)),
-    ("profile-autoneg", lambda wb, v: wb["VLANs & Profiles"].cell(
-        _section(wb["VLANs & Profiles"], "Profile") + 1, 11, v)),
-    ("prefix-list-name", lambda wb, v: wb["Prefix lists"].cell(2, 1, v)),
-    ("prefix-list-max-len", lambda wb, v: wb["Prefix lists"].cell(2, 4, v)),
-    ("route-map-name", lambda wb, v: wb["Route policy"].cell(2, 1, v)),
-    ("route-map-rule", lambda wb, v: wb["Route policy"].cell(2, 2, v)),
-    ("route-map-set-value", lambda wb, v: wb["Route policy"].cell(2, 7, v)),
-    ("community-list-name", lambda wb, v: wb["Community lists"].cell(2, 1, v)),
-    ("community-list-rule", lambda wb, v: wb["Community lists"].cell(2, 2, v)),
-    ("acl-name", lambda wb, v: wb["ACLs"].cell(2, 1, v)),
-]
+# (id, locator) — locator(wb) writes the payload and returns nothing.
+#
+# The shipped workbook is the intake form (ADR-0064): the VLAN table and the
+# stacked VRFs / Port Profiles sections live on `Network Data`, and the four
+# override sheets are no longer shipped at all (D6). Injection is still a
+# surface for them, because a user who needs one ADDS it -- so those cases
+# create the sheet first, which is exactly the path a customer takes.
+def _override(wb, sheet, header, col, value):
+    ws = wb[sheet] if sheet in wb.sheetnames else wb.create_sheet(sheet)
+    if ws.max_row < 1 or ws.cell(1, 1).value is None:
+        for c, name in enumerate(header, start=1):
+            ws.cell(1, c, name)
+    ws.cell(2, col, value)
 
+
+CASES = [
+    ("vrf-name", lambda wb, v: wb["Network Data"].cell(
+        _section(wb["Network Data"], "VRF Name") + 1, 1, v)),
+    # The VLAN table's name column is `Fabric Name`, and its data starts
+    # immediately under the header rather than under a section banner.
+    ("vlan-name", lambda wb, v: wb["Network Data"].cell(
+        _section(wb["Network Data"], "Fabric Name") + 1, 1, v)),
+    ("profile-vrf", lambda wb, v: wb["Network Data"].cell(
+        _section(wb["Network Data"], "Profile") + 1, 6, v)),
+    ("profile-speed", lambda wb, v: wb["Network Data"].cell(
+        _section(wb["Network Data"], "Profile") + 1, 8, v)),
+    ("profile-autoneg", lambda wb, v: wb["Network Data"].cell(
+        _section(wb["Network Data"], "Profile") + 1, 11, v)),
+    ("prefix-list-name", lambda wb, v: _override(
+        wb, "Prefix lists", ["Name", "Seq", "Action", "Max Len"], 1, v)),
+    ("prefix-list-max-len", lambda wb, v: _override(
+        wb, "Prefix lists", ["Name", "Seq", "Action", "Max Len"], 4, v)),
+    ("route-map-name", lambda wb, v: _override(
+        wb, "Route policy", ["Name", "Rule", "Seq", "Action", "Match", "Type", "Set"], 1, v)),
+    ("route-map-rule", lambda wb, v: _override(
+        wb, "Route policy", ["Name", "Rule", "Seq", "Action", "Match", "Type", "Set"], 2, v)),
+    ("route-map-set-value", lambda wb, v: _override(
+        wb, "Route policy", ["Name", "Rule", "Seq", "Action", "Match", "Type", "Set"], 7, v)),
+    ("community-list-name", lambda wb, v: _override(
+        wb, "Community lists", ["Name", "Rule"], 1, v)),
+    ("community-list-rule", lambda wb, v: _override(
+        wb, "Community lists", ["Name", "Rule"], 2, v)),
+    ("acl-name", lambda wb, v: _override(wb, "ACLs", ["Name"], 1, v)),
+]
 
 @pytest.mark.parametrize("name,writer", CASES, ids=[c[0] for c in CASES])
 @pytest.mark.parametrize("payload", ["evil; touch /tmp/era_pwned",
@@ -117,8 +142,8 @@ def test_shipped_workbooks_have_no_false_positives(arch, site):
 #   * rendered UNQUOTED as `nv set interface <bond> description <name>`;
 #   * written verbatim into the generated ansible inventory/hosts;
 #   * used as NVUE object names, where a space silently truncates.
-# Confirmed vector: renaming a node to `su-01-node-01; touch /tmp/x` in both
-# the Nodes and Wire Map sheets put it in bond_descriptions and rendered as
+# Confirmed vector: renaming a node to `su-01-node-01; touch /tmp/x` everywhere
+# it is named put it in bond_descriptions and rendered as
 # `nv set interface bond1s0 description su-01-node-01; touch /tmp/x`.
 
 _NAME_PAYLOADS = [
@@ -131,21 +156,8 @@ _NAME_PAYLOADS = [
 
 def _rename_node(xlsx, new_name):
     wb = openpyxl.load_workbook(xlsx)
-    ws = wb["Wire Map"]
-    h = [str(c.value or "").strip() for c in next(ws.iter_rows())]
-    for col in ("System Name (A)", "System Name (B)"):
-        if col not in h:
-            continue
-        i = h.index(col) + 1
-        for r in range(2, ws.max_row + 1):
-            if str(ws.cell(r, i).value or "").strip() == "su-01-node-01":
-                ws.cell(r, i).value = new_name
-    nws = wb["Nodes"]
-    nh = [str(c.value or "").strip().lower() for c in next(nws.iter_rows())]
-    ci = nh.index("name") + 1
-    for r in range(2, nws.max_row + 1):
-        if str(nws.cell(r, ci).value or "").strip() == "su-01-node-01":
-            nws.cell(r, ci).value = new_name
+    assert workbook_access.rename_node(wb, "su-01-node-01", new_name), (
+        "su-01-node-01 is not in the workbook; the payload would never render")
     wb.save(xlsx)
 
 

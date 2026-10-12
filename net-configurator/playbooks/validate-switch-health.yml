@@ -67,12 +67,12 @@
     # from sum-of-per-switch to ~slowest-single-switch (big win at 76 switches).
     - name: Run the health probe on all switches in parallel (fan-out from jump)
       shell: |
-        export SSHPASS='{{ switch_password }}'
+        IFS= read -r SSHPASS; export SSHPASS
         SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
         WORK=$(mktemp -d /tmp/swh.XXXXXX)
         {% for sw in switch_list %}
         ( if timeout 15 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[sw].ansible_host }} 'echo ok' >/dev/null 2>&1; then
-            timeout 60 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[sw].ansible_host }} "bash -s -- '{{ switch_password }}'" < /tmp/switch_health_probe.sh > "$WORK/{{ sw }}.out" 2>/dev/null || echo "CHECK|probe|FAIL|probe execution error" > "$WORK/{{ sw }}.out";
+            { printf 'IFS= read -r PW\n%s\n' "$SSHPASS"; cat /tmp/switch_health_probe.sh; } | timeout 60 sshpass -e ssh $SSH_OPTS cumulus@{{ hostvars[sw].ansible_host }} 'bash -s' > "$WORK/{{ sw }}.out" 2>/dev/null || echo "CHECK|probe|FAIL|probe execution error" > "$WORK/{{ sw }}.out";
           else echo "CHECK|ssh|FAIL|unreachable {{ hostvars[sw].ansible_host }}" > "$WORK/{{ sw }}.out"; fi ) &
         {% endfor %}
         wait
@@ -81,6 +81,8 @@
         cat "$WORK/{{ sw }}.out" 2>/dev/null || echo "CHECK|probe|FAIL|no output"
         {% endfor %}
         rm -rf "$WORK"
+      args:
+        stdin: "{{ switch_password }}"
       register: health_all
       changed_when: false
       no_log: true

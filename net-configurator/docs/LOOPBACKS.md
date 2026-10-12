@@ -3,19 +3,35 @@
 
 # Per-switch / per-VRF loopback overrides
 
-By default the parser computes loopback IPs from `Settings.loopback_base`
+> **Intake-form workbooks (ADR-0064):** there is no separate `Loopbacks`
+> sheet. The same per-switch overrides live in the **Switch Data** sheet's
+> `Loopback IP`, `OOB lo`, `INBAND (N-S) lo`, `EXIT lo`, `GPU lo`,
+> `STORAGE lo` and `ASN` columns, and `loopback_base` is a `Deployment`
+> setting. The tool builds the `Loopbacks & ASNs` view described below from
+> those columns in memory, so the column semantics here apply unchanged.
+
+By default the parser computes loopback IPs from `loopback_base`
+(`Deployment` sheet; `Settings` in the legacy view)
 (default `172.16.176`) using an offset pattern per switch and per VRF.
 That works for single-plane archs but breaks down for **dual-plane GSL
 designs**, where each plane lives in its own /24 (e.g. plane1
 `10.1.1.0/24`, plane2 `10.2.1.0/24`) and there's no formula relating
 one plane's loopbacks to the other.
 
-Add an optional **Loopbacks** sheet to the Excel input to drive every
-loopback explicitly. When present, its values win over the computed
-defaults — but the sheet is fully optional and existing Excels keep
-generating byte-identical output.
+Fill the per-switch loopback columns to drive every loopback explicitly.
+When present, those values win over the computed defaults — but they are
+fully optional and workbooks that leave them blank keep generating
+byte-identical output.
 
-## Sheet schema
+## Sheet schema (legacy `Loopbacks & ASNs` view)
+
+This is the shape the parser consumes. Shipped intake-form workbooks do not
+contain this sheet: `intake_to_legacy` builds it from the `Switch Data`
+columns listed above, one column to one column. **Precedence:** if a workbook
+*does* carry a literal `Loopbacks & ASNs` sheet, that sheet is used as-is and
+the `Switch Data` loopback / `ASN` columns are ignored for loopback purposes
+(`intake_to_legacy.py`: the view is only built when the sheet is absent).
+Keep one source — use the `Switch Data` columns and do not add this sheet.
 
 Sheet name: **`Loopbacks & ASNs`** (the legacy name `Loopbacks` is still
 accepted). Matched by any sheet whose name starts with `Loopbacks`.
@@ -36,7 +52,7 @@ matched case-insensitively; unknown headers are warned and ignored.
 The values above are also what the parser computes when the cells are left
 blank — see [Computed defaults](#computed-defaults--block-map).
 
-- **Switch** — hostname, must match the `Name` column on the Nodes tab.
+- **Switch** — hostname, must match the `Name` column on the Switch Data sheet.
 - **Default** — the underlay loopback (`lo_ip` + underlay BGP router-id).
 - **OOB / INBAND / EXIT / GPU / STORAGE** — per-VRF loopbacks.
 - **ASN** — the switch's BGP autonomous-system number (see
@@ -67,10 +83,23 @@ parse-time error naming the block rather than silently issuing a duplicate
 | `.167 - .182` | INBAND VRF loopback — `.166 + n` |
 | `.183 - .198` | EXIT VRF loopback — `.182 + n` |
 | `.199 - .214` | STORAGE VRF loopback — `.198 + n` |
-| `.215 - .254` | spare |
+| `.215 - .230` | GPU VRF loopback — `.214 + n` |
+| `.231 - .254` | spare |
 
-The GPU VRF loopback is the exception: it rides the GPU VLAN subnet rather
-than `loopback_base`, at `<gpu-subnet>.4 + n`.
+The GPU row applies to switches that actually run the GPU VRF on the N/S
+fabric — the cores of a collapsed or converged arch. A `csl` in a dedicated-GPU
+arch has no GPU VRF at all (the E/W switches own it), so it gets no GPU
+loopback.
+
+> **GPU used to be the exception here.** It took its loopback from the first GPU
+> VLAN's subnet, at `<gpu-subnet>.4 + n`, so `core-01` landed on `192.168.0.5`.
+> That is a tenant subnet with two other allocators in it — per-switch SVIs
+> counting up from `.2`, and host addresses from `.50` — and at four cores
+> `core-04`'s SVI and `core-01`'s loopback were both `.5`. It is the same
+> duplicate-`/32` failure that motivated the `.151+` re-space, on the one VRF
+> that re-space skipped. If you pinned a GPU loopback inside a rail subnet to
+> match the old default, move it into the block above; `make validate-excel`
+> now reports it as an error.
 
 **E/W plane fabric**, within each plane's own /24 (`PLANE_LOOPBACK_BLOCKS`,
 `n` = the switch's trailing index):
@@ -113,17 +142,23 @@ produce byte-identical output.
 - **Format** — every populated cell must parse as a valid IPv4 address
   (`/mask` optional; defaults to `/32`).
 - **Switch cross-reference** — switch names should appear in the
-  Nodes tab (warn on unknowns).
+  Switch Data sheet (warn on unknowns).
 - **Unknown columns** — warned and ignored.
 - **Duplicate IPs** — no two switches may share a Default loopback or
   the same per-VRF loopback (error).
 - **VLAN-subnet overlap** — no loopback IP may fall inside a VLAN
-  subnet owned by a *different* VRF (error). A GPU VRF loopback inside
-  the GPU VLAN subnet is allowed because that's how the parser
-  computes the default.
+  subnet owned by a *different* VRF (error), and a GPU loopback may not
+  fall inside a GPU rail subnet either. That case was previously allowed
+  because the parser computed exactly that address; it now allocates from
+  the block map above, so a rail-subnet loopback is the collision this
+  check exists to catch.
 - **`loopback_base` sanity** — if `Settings.loopback_base` is set,
-  Default IPs outside it produce one warning per divergent /24.
-  Dual-plane archs intentionally diverge, hence warn not error.
+  Default IPs outside it produce one warning per divergent /24. The
+  expected dual-plane layout is exempt: `gl-planeN-*` / `gs-planeN-*`
+  switches inside their own plane block `10.N.1.0/24`, and `gsl-planeN-*`
+  / `csl-*` switches. A plane switch in another plane's block, or in any
+  other /24, still warns. It is a warning, not an error, because a
+  custom plan may diverge on purpose.
 
 ## Per-node BGP ASN
 

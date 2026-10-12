@@ -3,18 +3,63 @@
 
 SHELL := /bin/bash
 
-.PHONY: help test generate deploy clean clean-output clean-all docs setup ztp ztp-setup ztp-update oob oob-setup \
+ANSIBLE_PLAYBOOK := scripts/ansible-playbook.sh
+
+.PHONY: help test generate deploy clean clean-output clean-all docs setup ztp-setup ztp-update oob-setup \
         lint restart-ldap restart-ldap-direct \
-        list-archs list-sites check-arch switch-ztp-deploy \
+        list-archs list-sites switch-ztp-deploy \
         help-generate help-ztp-setup help-oob-setup help-switch-ztp-deploy \
         help-deploy-servers deploy-servers deploy-servers-via-jump help-air \
         use show-context clear-context import \
         topology validate-topology validate validate-excel validate-ztp validate-ztp-direct \
+        convert-workbook complete-workbook \
         validate-config validate-servers validate-oob-bgp fix-ext-storage \
-        validate-ping-matrix validate-requirements extract-requirements \
+        validate-ping-matrix \
         air-setup help-air-setup air-connect air-show air-auth-test air-ssh-check air-deploy air-destroy air-list air-budget air-full-deploy deploy-exclude-servers \
         inventory status test-coverage test-fast push-switch-configs \
         deploy validate-all
+
+# ASCII upper-case, shell-free (a $(shell) per variable would cost a fork on
+# every make invocation).
+_UC = $(subst a,A,$(subst b,B,$(subst c,C,$(subst d,D,$(subst e,E,$(subst f,F,\
+      $(subst g,G,$(subst h,H,$(subst i,I,$(subst j,J,$(subst k,K,$(subst l,L,\
+      $(subst m,M,$(subst n,N,$(subst o,O,$(subst p,P,$(subst q,Q,$(subst r,R,\
+      $(subst s,S,$(subst t,T,$(subst u,U,$(subst v,V,$(subst w,W,$(subst x,X,\
+      $(subst y,Y,$(subst z,Z,$(1)))))))))))))))))))))))))))
+
+# ARCH and SITE must be shell-safe before they reach a shell, and so before the
+# first $(shell): make 4.4+ expands every exported variable, command-line ones
+# included, into the environment of each $(shell) it runs. A command-line or
+# environment variable is recursively expanded, so the checks read the raw text
+# with $(value …) and never expand it: `ARCH='x$(shell cmd)'` or a `${…}`
+# reference is refused as text instead of running while it is being checked.
+# Only make's own string functions are used, and no $(eval): a function result
+# is not expanded again, so nothing in the value is ever interpreted.
+_NAME_CHARS := a b c d e f g h i j k l m n o p q r s t u v w x y z \
+               A B C D E F G H I J K L M N O P Q R S T U V W X Y Z \
+               0 1 2 3 4 5 6 7 8 9 _ - .
+_strip_name_chars = $(if $(2),$(call _strip_name_chars,$(subst $(firstword $(2)),,$(1)),$(wordlist 2,$(words $(2)),$(2))),$(1))
+_NAME_LPAREN := (
+_NAME_RPAREN := )
+# $(call _assert_safe_var,VAR,LABEL,Noun) checks VAR and names it LABEL in the
+# operator-facing message; $(call _assert_safe_name,VAR,Noun) checks VAR itself.
+_assert_safe_var = $(strip \
+  $(if $(findstring $$,$(value $(1))),$(error Invalid $(2) '$(value $(1))': '$$' is not allowed. $(3) match [A-Za-z0-9._-])) \
+  $(if $(filter-out 1,$(words $(value $(1)))),$(error Invalid $(2) '$(value $(1))': whitespace is not allowed. $(3) match [A-Za-z0-9._-])) \
+  $(if $(findstring $(_NAME_LPAREN),$(value $(1)))$(findstring $(_NAME_RPAREN),$(value $(1))),$(error Invalid $(2) '$(value $(1))': parentheses are not allowed. $(3) match [A-Za-z0-9._-])) \
+  $(if $(call _strip_name_chars,$(value $(1)),$(_NAME_CHARS)),$(error Invalid $(2) '$(value $(1))': contains character(s) outside [A-Za-z0-9._-])))
+_assert_safe_name = $(call _assert_safe_var,$(1),$(1),$(2))
+# Every command-line spelling (ARCH=, arch=, Site=, …) and the canonical names
+# from any origin.
+$(foreach _v,$(.VARIABLES),$(if $(filter command line,$(origin $(_v))),\
+    $(if $(filter ARCH,$(call _UC,$(_v))),$(call _assert_safe_var,$(_v),ARCH,Architecture names))\
+    $(if $(filter SITE,$(call _UC,$(_v))),$(call _assert_safe_var,$(_v),SITE,Site names))))
+ifdef ARCH
+$(call _assert_safe_name,ARCH,Architecture names)
+endif
+ifdef SITE
+$(call _assert_safe_name,SITE,Site names)
+endif
 
 # ============================================================================
 # Architecture + Site Configuration
@@ -28,7 +73,21 @@ SHELL := /bin/bash
 #   3. Environment variable
 #   4. SITE falls back to "default" if not set anywhere
 #
-VALID_ARCHS     := 2-4-3-200 2-4-5-400 2-4-5-800 2-8-5-200 2-8-9-400 2-8-9-800 2-8-9-400-SP
+# The supported-arch set is read from the generated registry
+# scripts/valid_archs.yml (source of truth: data-models/models, ERA-88) —
+# the same file scripts/_valid_archs.py serves to every Python reader.
+# The registry-repair targets (Makefile.internal) must stay runnable when the
+# registry is missing, so only they are exempt from the fail-closed guard.
+VALID_ARCHS     := $(shell sed -n 's/^  - //p' scripts/valid_archs.yml 2>/dev/null)
+_REGISTRY_REPAIR_GOALS := valid-archs check-valid-archs
+_REGISTRY_HINT := $(if $(wildcard ../Makefile.internal),regenerate it with `make valid-archs`,restore it from your release: re-extract scripts/valid_archs.yml from the release tarball or run `git checkout -- scripts/valid_archs.yml` in a git clone)
+ifeq ($(strip $(VALID_ARCHS)),)
+    ifneq ($(filter-out $(_REGISTRY_REPAIR_GOALS),$(MAKECMDGOALS)),)
+        $(error scripts/valid_archs.yml is missing or empty — $(_REGISTRY_HINT))
+    else ifeq ($(strip $(MAKECMDGOALS)),)
+        $(error scripts/valid_archs.yml is missing or empty — $(_REGISTRY_HINT))
+    endif
+endif
 
 # Reusable architecture description block — keeps help/error messages DRY
 define print_archs
@@ -36,6 +95,7 @@ define print_archs
 	@echo "  2-4-5-400   (2 CPUs, 4 GPUs, 5 NICs, 400G — depopulated 2-8-5-200)"
 	@echo "  2-4-5-800   (2 CPUs, 4 GPUs, 5 NICs, 800G — GB300 NVL72)"
 	@echo "  2-8-5-200   (2 CPUs, 8 GPUs, 5 NICs, 200G)"
+	@echo "  2-8-5-400   (2 CPUs, 8 GPUs, 5 NICs, 400G — generated only, not yet Air-deployed)"
 	@echo "  2-8-9-400   (2 CPUs, 8 GPUs, 9 NICs, 400G)"
 	@echo "  2-8-9-800   (2 CPUs, 8 GPUs, 9 NICs, 800G — dual-plane GPU fabric)"
 	@echo "  2-8-9-400-SP (2 CPUs, 8 GPUs, 9 NICs, 400G — single-plane GPU fabric)"
@@ -46,6 +106,7 @@ ARCHS_ECHO = echo "  • 2-4-3-200   (2 CPUs, 4 GPUs, 3 NICs, 200G)"; \
              echo "  • 2-4-5-400   (2 CPUs, 4 GPUs, 5 NICs, 400G — depopulated 2-8-5-200)"; \
              echo "  • 2-4-5-800   (2 CPUs, 4 GPUs, 5 NICs, 800G — GB300 NVL72)"; \
              echo "  • 2-8-5-200   (2 CPUs, 8 GPUs, 5 NICs, 200G)"; \
+             echo "  • 2-8-5-400   (2 CPUs, 8 GPUs, 5 NICs, 400G — generated only, not yet Air-deployed)"; \
              echo "  • 2-8-9-400   (2 CPUs, 8 GPUs, 9 NICs, 400G)"; \
              echo "  • 2-8-9-800   (2 CPUs, 8 GPUs, 9 NICs, 800G — dual-plane GPU fabric)";	\
              echo "  • 2-8-9-400-SP (2 CPUs, 8 GPUs, 9 NICs, 400G — single-plane GPU fabric)";
@@ -67,19 +128,11 @@ ARCHS_ECHO = echo "  • 2-4-3-200   (2 CPUs, 4 GPUs, 3 NICs, 200G)"; \
 _USER_VARS := ARCH SITE EXCEL LDAP NOZTP SIM FIX FORCE ALL MIN VRF \
               IMPORT_SITE IMPORT_SKIP_VALIDATE GENERATE_SKIP_VALIDATE \
               DEPLOY_SKIP_VALIDATE SKIP_UPLOAD SERVER_CONFIG SWITCHES_ONLY \
-              AUTO_CONFIRM RETRIES RETRY_DELAY ANSIBLE_VER
-
-# ASCII upper-case, shell-free (a $(shell) per variable would cost a fork on
-# every make invocation).
-_UC = $(subst a,A,$(subst b,B,$(subst c,C,$(subst d,D,$(subst e,E,$(subst f,F,\
-      $(subst g,G,$(subst h,H,$(subst i,I,$(subst j,J,$(subst k,K,$(subst l,L,\
-      $(subst m,M,$(subst n,N,$(subst o,O,$(subst p,P,$(subst q,Q,$(subst r,R,\
-      $(subst s,S,$(subst t,T,$(subst u,U,$(subst v,V,$(subst w,W,$(subst x,X,\
-      $(subst y,Y,$(subst z,Z,$(1)))))))))))))))))))))))))))
+              AUTO_CONFIRM RETRIES RETRY_DELAY ANSIBLE_VER AIR_DISPLAY_FIX
 
 define _alias_to_canonical
   ifndef $(2)
-    $(2) := $$($(1))
+    $(2) := $$(value $(1))
   endif
 endef
 
@@ -92,11 +145,26 @@ $(foreach _v,$(.VARIABLES),$(if $(filter command line,$(origin $(_v))),\
 # `2-8-9-400-sp` resolves to `2-8-9-400-SP`. Only `-SP` carries uppercase, and
 # it is the one arch people reliably mistype. Unknown values pass through
 # untouched so check_arch still reports them with the value the operator typed.
+#
+# A plain `ARCH := …` is ignored by make when ARCH came from the command line
+# (`make generate ARCH=…`), so that spelling needs `override`. `override` changes
+# `$(origin ARCH)` to `override`; every origin test below therefore accepts both
+# `command line` and `override` via _ARCH_ON_CLI.
+_ARCH_ON_CLI := $(filter command line,$(origin ARCH))
+# Any command-line spelling of SITE (SITE=, site=, Site=) counts as explicit; the
+# canonical SITE materialised from an alias above has origin `file`, not
+# `command line`, so $(origin SITE) alone would miss `site=`.
+_SITE_ON_CLI := $(strip $(foreach _v,$(.VARIABLES),\
+    $(if $(and $(filter command line,$(origin $(_v))),$(filter SITE,$(call _UC,$(_v)))),1)))
 ifdef ARCH
     _ARCH_MATCH := $(shell printf '%s\n' $(VALID_ARCHS) | \
         awk -v a='$(ARCH)' 'tolower($$0)==tolower(a){print; exit}')
     ifneq ($(_ARCH_MATCH),)
-        ARCH := $(_ARCH_MATCH)
+        ifneq ($(_ARCH_ON_CLI),)
+            override ARCH := $(_ARCH_MATCH)
+        else
+            ARCH := $(_ARCH_MATCH)
+        endif
     endif
 endif
 
@@ -149,52 +217,62 @@ SITE ?= default
 # same time. Done with make's own string functions rather than a shell test:
 # handing the value to a shell in order to decide whether it is safe for a
 # shell is the bug, not the fix.
-# The word-count test runs FIRST and on the raw value: an embedded newline
-# breaks the $(subst) below at parse time, which stops make -- safely, but with
-# "unterminated call to function 'subst'" instead of anything an operator can
-# act on. Checking word count first turns that into a real message.
-ifneq ($(words $(SITE)),1)
-$(error Invalid SITE '$(SITE)': whitespace is not allowed. Site names match [A-Za-z0-9._-])
-endif
+# Re-run here because SITE may now come from .era-context or the default.
+$(call _assert_safe_name,SITE,Site names)
 
-# Parentheses get their own check for the same reason as the newline: an
-# unbalanced one breaks the $(subst) below while make is still parsing, so the
-# operator sees a make-internals error instead of the real problem.
-_SITE_LPAREN := (
-_SITE_RPAREN := )
-ifneq ($(findstring $(_SITE_LPAREN),$(SITE))$(findstring $(_SITE_RPAREN),$(SITE)),)
-$(error Invalid SITE '$(SITE)': parentheses are not allowed. Site names match [A-Za-z0-9._-])
-endif
-
-_SITE_OK := a b c d e f g h i j k l m n o p q r s t u v w x y z \
-            A B C D E F G H I J K L M N O P Q R S T U V W X Y Z \
-            0 1 2 3 4 5 6 7 8 9 _ - .
-_SITE_RESIDUE := $(SITE)
-$(foreach c,$(_SITE_OK),$(eval _SITE_RESIDUE := $$(subst $(c),,$(_SITE_RESIDUE))))
-
-ifneq ($(_SITE_RESIDUE),)
-$(error Invalid SITE '$(SITE)': contains character(s) outside [A-Za-z0-9._-])
+# A command-line SITE= must name the directory import-excel.py actually writes.
+# The importer collapses hyphen runs, trims edge hyphens and maps `.` to `-`
+# (scripts/_site_name.py); applying the same rule here keeps import, generate
+# and deploy on one directory. Safe to hand to $(shell): the charset guard
+# above has already run. `override` because a command-line value cannot be
+# reassigned otherwise (see _ARCH_ON_CLI).
+ifneq ($(_SITE_ON_CLI),)
+    _SITE_CANON := $(shell python3 scripts/_site_name.py '$(SITE)')
+    ifneq ($(_SITE_CANON),)
+        ifneq ($(_SITE_CANON),$(SITE))
+            $(warning SITE '$(SITE)' is stored on disk as '$(_SITE_CANON)' (import-excel.py naming) — using '$(_SITE_CANON)')
+            override SITE := $(_SITE_CANON)
+        endif
+    endif
 endif
 
 
 # Normalize the SITE *value* against the site directories that actually exist
 # for this arch. Sites are operator-named, so there is no fixed list to match
 # against — `Customer-A` and `customer-a` are both plausible spellings of one
-# real directory. Look in output/ first (where a generated site lives), then
-# input/. No match leaves SITE as typed, so the "no generated output at ..."
-# error still names what the operator asked for.
+# real directory. An exact directory always wins; otherwise look in output/
+# first (where a generated site lives), then input/, for a case-insensitive
+# match. No match leaves SITE as typed, so the "no generated output at ..."
+# error still names what the operator asked for. On a case-insensitive
+# filesystem (macOS default) the $(wildcard) already hits the differently-cased
+# directory, so SITE keeps the typed spelling and no warning is printed.
+# `override`: a plain `SITE :=` cannot reassign a command-line variable, which
+# is how every operator and CI passes it (GitLab #63) — so the block used to
+# fire only for environment/.era-context values. Downstream code keys on
+# _SITE_ON_CLI, not $(origin SITE), for the same reason as _ARCH_ON_CLI.
+# Skipped when EXCEL= is given: those targets take the arch from the workbook
+# (import-excel.py / _excel_context.py), so $(ARCH) here may be a stale
+# .era-context value and a match under it would retarget the wrong arch's site.
+# The importer still applies _site_name.py to the typed value.
 ifdef ARCH
-    _SITE_MATCH := $(shell for d in output/$(ARCH)/*/ input/$(ARCH)/*/; do \
-        [ -d "$$d" ] || continue; \
-        b=$$(basename "$$d"); \
-        if [ "$$(printf '%s' "$$b" | tr 'A-Z' 'a-z')" = \
-             "$$(printf '%s' '$(SITE)' | tr 'A-Z' 'a-z')" ]; then \
-            printf '%s' "$$b"; break; \
-        fi; \
-    done 2>/dev/null)
-    ifneq ($(_SITE_MATCH),)
-        SITE := $(_SITE_MATCH)
+ifeq ($(EXCEL),)
+    ifeq ($(wildcard output/$(ARCH)/$(SITE)/ input/$(ARCH)/$(SITE)/),)
+        _SITE_MATCH := $(shell for d in output/$(ARCH)/*/ input/$(ARCH)/*/; do \
+            [ -d "$$d" ] || continue; \
+            b=$$(basename "$$d"); \
+            if [ "$$(printf '%s' "$$b" | tr 'A-Z' 'a-z')" = \
+                 "$$(printf '%s' '$(SITE)' | tr 'A-Z' 'a-z')" ]; then \
+                printf '%s' "$$b"; break; \
+            fi; \
+        done 2>/dev/null)
+        ifneq ($(_SITE_MATCH),)
+            ifneq ($(_SITE_MATCH),$(SITE))
+                $(warning SITE '$(SITE)' matches existing site directory '$(_SITE_MATCH)' — using '$(_SITE_MATCH)')
+                override SITE := $(_SITE_MATCH)
+            endif
+        endif
     endif
+endif
 endif
 
 INPUT_XLSX        = input/$(ARCH)/$(SITE)/$(ARCH).xlsx
@@ -213,17 +291,38 @@ define detect_ldap
 endef
 CONFIG_OUTPUT_DIR = output/$(ARCH)/$(SITE)/configs
 
-# Validate ansible-core version meets minimum requirement (2.20.4)
+# Validate ansible-core version meets the floor. The floor is read from
+# requirements.txt rather than restated here: a hardcoded copy silently went
+# stale across the 2.20.4 -> 2.21.4 bump and stopped warning about the very
+# versions that bump was removing (ERA-114).
 define check_ansible
 	@ANSIBLE_VER=$$(ansible --version 2>/dev/null | head -1 | grep -oP 'core \K[0-9.]+'); \
+	MIN=$$(grep -oP '^ansible-core>=\K[0-9]+(\.[0-9]+)*' requirements.txt 2>/dev/null); \
 	if [ -z "$$ANSIBLE_VER" ]; then \
 		echo "⚠️  WARNING: ansible not found — install with: pip install -r requirements.txt"; \
-	else \
-		MIN="2.20.4"; \
-		if [ "$$(printf '%s\n' "$$MIN" "$$ANSIBLE_VER" | sort -V | head -1)" != "$$MIN" ]; then \
-			echo "⚠️  WARNING: ansible-core $$ANSIBLE_VER is below minimum $$MIN — upgrade with: pip install -r requirements.txt"; \
-		fi; \
+	elif [ -z "$$MIN" ]; then \
+		echo "⚠️  WARNING: could not read the ansible-core floor from requirements.txt — version not checked"; \
+	elif [ "$$(printf '%s\n' "$$MIN" "$$ANSIBLE_VER" | sort -V | head -1)" != "$$MIN" ]; then \
+		echo "⚠️  WARNING: ansible-core $$ANSIBLE_VER is below minimum $$MIN — upgrade with: pip install -r requirements.txt"; \
 	fi
+endef
+
+# Refuse to generate/deploy with a switch password that fails the ERA policy
+# (ADR-0078: Cumulus password-security rules; placeholders such as CHANGE_ME,
+# ADR-0091/0100), or with the status page enabled but no
+# dedicated, non-placeholder status_page_password. Server-side passwords are
+# not gated. SECRETS_PASSWORD_POLICY=placeholder relaxes to
+# placeholder/empty/username only; ERA_DEV_ALLOW_PLACEHOLDER_SECRETS=1
+# (development only: warns, records output/<arch>/<site>/DEV-PLACEHOLDER-SECRETS.txt)
+# accepts the shipped switch placeholders; GENERATE_SKIP_VALIDATE=1 (generate)
+# or DEPLOY_SKIP_VALIDATE=1 (deploy targets) bypasses, like their Excel gates.
+SECRETS_PASSWORD_POLICY ?= hardening
+define check_secrets
+	@python3 scripts/check_secrets.py --arch $(ARCH) --site $(SITE) --policy $(SECRETS_PASSWORD_POLICY) || { \
+		echo "   Set GENERATE_SKIP_VALIDATE=1 or DEPLOY_SKIP_VALIDATE=1 to bypass (not recommended)."; \
+		[ -z "$(GENERATE_SKIP_VALIDATE)$(DEPLOY_SKIP_VALIDATE)" ] && exit 1; \
+		echo "   *_SKIP_VALIDATE set — proceeding anyway."; \
+	}
 endef
 
 # Validate ARCH is set and input directory exists
@@ -283,9 +382,16 @@ import:  ## Import a filled-out Excel file — auto-detects arch/site from the f
 			{ echo "❌ Import failed. Check the Excel file and try again."; exit 1; }; \
 	fi
 
-# IMPORT_SITE is only set when the user explicitly passes SITE= on the command line.
-# This prevents the SITE ?= default fallback from overriding the Excel site_name.
-ifeq ($(origin SITE),command line)
+complete-workbook:  ## Write <arch>-complete.xlsx with every resolved IP - requires ARCH, optional SITE
+	$(call check_arch,$@)
+	@python3 scripts/emit_complete_workbook.py \
+		--source input/$(ARCH)/$(SITE)/$(ARCH).xlsx \
+		--arch $(ARCH) --site $(SITE)
+
+# IMPORT_SITE is only set when the user explicitly passes SITE= (any spelling) on
+# the command line. This prevents the SITE ?= default fallback from overriding
+# the Excel site_name.
+ifneq ($(_SITE_ON_CLI),)
     IMPORT_SITE := $(SITE)
 else
     IMPORT_SITE :=
@@ -391,8 +497,6 @@ list-archs:  ## List available architecture types
 	$(print_archs)
 	@echo ""
 	@echo "Naming: {CPUs}-{GPUs}-{NICs}-{B}  (B = avg per-GPU East/West bandwidth, Gbps)"
-	@echo "  Exception: in 2-4-3-200 / 2-8-5-200 (1:2 NIC:GPU) the trailing"
-	@echo "  number follows the per-NIC link speed instead."
 	@echo ""
 	@echo "Usage: make <command> ARCH=<type> [SITE=<name>]"
 
@@ -452,10 +556,22 @@ help-generate:  ## Show detailed help for generate
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo ""
 	@echo "DESCRIPTION:"
-	@echo "  Three-step pipeline that regenerates everything from the Excel source:"
+	@echo "  Pipeline that regenerates everything from the Excel source:"
+	@echo "    0. Validate the Excel, check secrets.yml passwords"
 	@echo "    1. Parse Excel → Ansible inventory (host_vars, group_vars, hosts)"
 	@echo "    2. Generate NVUE CLI configuration scripts for all switches"
 	@echo "    3. Generate NVIDIA Air topology file"
+	@echo "    4. Generate per-node Node Instruction scripts"
+	@echo "    5. Cross-check netplan ↔ topology eth-numbering"
+	@echo "    6. Prune per-node files of nodes that left the inventory"
+	@echo ""
+	@echo "  Step 6 DELETES files. It removes only host_vars/<node>.yml,"
+	@echo "  configs/<node>-config.sh and node-instructions/<node>.sh that an"
+	@echo "  earlier 'make generate' wrote (recorded in generated-manifest.json)"
+	@echo "  and whose node is no longer in inventory/hosts (renamed/disabled in"
+	@echo "  the Excel). Hand-made files are reported and left alone; secrets.yml,"
+	@echo "  hosts, group_vars and topology JSON are never touched. Preview with:"
+	@echo "    python3 scripts/prune_stale_artifacts.py --arch <arch> --site <site> --dry-run --adopt-all"
 	@echo ""
 	@echo "REQUIRED:"
 	@echo "  ARCH=<type>    Architecture type"
@@ -470,7 +586,8 @@ help-generate:  ## Show detailed help for generate
 	@echo "OUTPUT:"
 	@echo "  output/<arch>/<site>/inventory/   (hosts, host_vars/, group_vars/)"
 	@echo "  output/<arch>/<site>/configs/     (core-01-config.sh, oob-switch-01-config.sh, etc.)"
-	@echo "  output/<arch>/<site>/topology/    (Air topology JSON)"
+	@echo "  output/<arch>/<site>/topology/    (Air topology JSON, node-instructions/)"
+	@echo "  output/<arch>/<site>/generated-manifest.json  (per-node files owned by the generator)"
 	@echo ""
 
 help-ztp-setup:  ## Show detailed help for ztp-setup
@@ -527,14 +644,15 @@ help-deploy-servers:  ## Show detailed help for deploy-servers
 	@echo "    Direct SSH from the control host to each server's ansible_host."
 	@echo "    Use when:"
 	@echo "      • running on-prem with workstation→server reachability, OR"
-	@echo "      • running from inside an Air sim on dhcp-oob (recommended"
-	@echo "        for manual fallback — no jump-host bottleneck)"
+	@echo "      • running from inside an Air sim on the [jump] host (utility in"
+	@echo "        L3 OOB, dhcp-oob in legacy L2) — recommended for manual"
+	@echo "        fallback, no jump-host bottleneck"
 	@echo ""
 	@echo "  make deploy-servers-via-jump ARCH=<type>"
 	@echo "    SSH from the laptop through the OOB jump host as a ProxyJump"
 	@echo "    (utility in L3 OOB, oob-server-01 in legacy L2)."
-	@echo "    Use when running from a laptop with an Air sim (no dhcp-oob"
-	@echo "    access). Throughput is limited by that host's SSH concurrency"
+	@echo "    Use when running from a laptop with an Air sim (no shell on the"
+	@echo "    in-sim jump host). Throughput is limited by that host's SSH concurrency"
 	@echo "    (~3 parallel connections)."
 	@echo ""
 	@echo "REQUIRED:"
@@ -597,7 +715,7 @@ help-air:  ## Show NVIDIA Air deployment guide
 setup:  ## Setup test environment
 	@echo "Setting up test environment..."
 	python3 -m venv .venv-test
-	.venv-test/bin/pip install -r tests/requirements.txt
+	.venv-test/bin/pip install -r requirements.txt -r tests/requirements.txt
 	@echo "✅ Test environment ready!"
 
 test:  ## Run all tests
@@ -626,20 +744,23 @@ generate:  ## Generate inventory + switch configs + Air topology - requires ARCH
 	$(call check_ansible)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "Step 0: Validating Excel before generation..."
-	@python3 scripts/validate_excel.py input/$(ARCH)/$(SITE)/$(ARCH).xlsx || { \
+	@AIR_DISPLAY_FIX="$(AIR_DISPLAY_FIX)" python3 scripts/validate_excel.py input/$(ARCH)/$(SITE)/$(ARCH).xlsx || { \
 		echo ""; \
 		echo "❌ Validation failed. Refusing to generate from an invalid Excel."; \
 		echo "   Set GENERATE_SKIP_VALIDATE=1 to bypass (not recommended)."; \
 		[ -z "$(GENERATE_SKIP_VALIDATE)" ] && exit 1; \
 		echo "   GENERATE_SKIP_VALIDATE=1 set — proceeding anyway."; \
 	}
+	@echo "Step 0b: Checking switch passwords in secrets.yml..."
+	$(call check_secrets)
+	@python3 scripts/prune_stale_artifacts.py --arch $(ARCH) --site $(SITE) --mark-start
 	@echo ""
 	@echo "Step 1: Generating inventory from Excel for arch=$(ARCH) site=$(SITE)..."
 	python3 scripts/excel_parser.py --arch $(ARCH) --site $(SITE) --skip-validate
 	@echo ""
 	@echo "Step 2: Generating NVUE CLI configurations..."
 	@mkdir -p $(CONFIG_OUTPUT_DIR)
-	ansible-playbook playbooks/generate-cli-configs.yml \
+	$(ANSIBLE_PLAYBOOK) playbooks/generate-cli-configs.yml \
 		-i $(INVENTORY_DIR)/hosts \
 		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)"
 	@echo "✅ CLI configurations generated in $(CONFIG_OUTPUT_DIR)/"
@@ -668,7 +789,7 @@ endif
 ifdef AIR_SWITCHES_ONLY
 	@echo "  AIR_SWITCHES_ONLY: patching OOB to L3 mode..."
 	@sed -i 's/oob_uplink_mode: l2/oob_uplink_mode: l3/' $(INVENTORY_DIR)/group_vars/oob.yml $(INVENTORY_DIR)/group_vars/all/main.yml 2>/dev/null || true
-	@ansible-playbook playbooks/generate-cli-configs.yml \
+	@$(ANSIBLE_PLAYBOOK) playbooks/generate-cli-configs.yml \
 		-i $(INVENTORY_DIR) \
 		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)" \
 		--limit "oob" > /dev/null 2>&1
@@ -687,6 +808,9 @@ else
 	@echo "Step 5: Cross-check netplan ↔ topology eth-numbering..."
 	@python3 scripts/check-eth-consistency.py --arch $(ARCH) --site $(SITE)
 endif
+	@echo ""
+	@echo "Step 6: Pruning per-node artefacts of nodes no longer in the inventory..."
+	@python3 scripts/prune_stale_artifacts.py --arch $(ARCH) --site $(SITE)
 
 topology:  ## Generate Air topology only - requires ARCH, optional SITE
 	$(call check_arch,$@)
@@ -700,11 +824,44 @@ validation-bundle:  ## Package configs/inventory/topology/reports + Excel into a
 	$(call check_arch,$@)
 	python3 scripts/make_validation_bundle.py --arch $(ARCH) --site $(SITE)
 
+convert-workbook:  ## Convert a legacy workbook to the intake form (ADR-0064) - EXCEL=<path> or ARCH
+	@if [ -n "$(EXCEL)" ]; then \
+		SRC="$(EXCEL)"; \
+	elif [ -n "$(ARCH)" ]; then \
+		SRC="input/$(ARCH)/$(SITE)/$(ARCH).xlsx"; \
+	else \
+		echo "Usage: make convert-workbook EXCEL=/path/to/legacy.xlsx"; \
+		echo "       make convert-workbook ARCH=2-8-9-800 [SITE=default]"; \
+		echo ""; \
+		echo "Writes <name>.intake.xlsx alongside the source workbook."; \
+		echo "Override the destination with OUT=/path/to/out.xlsx"; \
+		exit 1; \
+	fi; \
+	if [ ! -f "$$SRC" ]; then \
+		echo "❌ ERROR: no such workbook: $$SRC"; exit 1; \
+	fi; \
+	DEST="$(OUT)"; \
+	if [ -z "$$DEST" ]; then \
+		DEST="$${SRC%.xlsx}.intake.xlsx"; \
+	fi; \
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+	echo "Converting to the intake form (ADR-0064)"; \
+	echo "  from: $$SRC"; \
+	echo "  to  : $$DEST"; \
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+	python3 scripts/convert_workbook.py "$$SRC" "$$DEST" || exit 1; \
+	echo ""; \
+	echo "✓ Wrote $$DEST"; \
+	echo ""; \
+	echo "The intake form is the only input format (ADR-0064). Point"; \
+	echo "\`make import\` / \`make generate\` at the converted workbook;"; \
+	echo "the legacy original is no longer read."
+
 validate-excel:  ## Validate Excel file before import/generate - requires EXCEL=<path> or ARCH
 	@if [ -n "$(EXCEL)" ]; then \
-		python3 scripts/validate_excel.py "$(EXCEL)"; \
+		AIR_DISPLAY_FIX="$(AIR_DISPLAY_FIX)" python3 scripts/validate_excel.py "$(EXCEL)"; \
 	elif [ -n "$(ARCH)" ]; then \
-		python3 scripts/validate_excel.py input/$(ARCH)/$(SITE)/$(ARCH).xlsx; \
+		AIR_DISPLAY_FIX="$(AIR_DISPLAY_FIX)" python3 scripts/validate_excel.py input/$(ARCH)/$(SITE)/$(ARCH).xlsx; \
 	else \
 		echo "Usage: make validate-excel EXCEL=/path/to/file.xlsx"; \
 		echo "       make validate-excel ARCH=2-8-5-200 [SITE=default]"; \
@@ -718,26 +875,28 @@ validate-topology:  ## Validate Air topology against wiremap - requires ARCH, op
 
 push-switch-configs:  ## Push NVUE configs to core + OOB (bootstraps factory/expired password if needed) - requires ARCH, optional SITE
 	$(call check_arch,$@)
+	$(call check_secrets)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Pushing switch configs  arch=$(ARCH)  site=$(SITE)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	ansible-playbook playbooks/push-switch-configs.yml \
+	$(ANSIBLE_PLAYBOOK) playbooks/push-switch-configs.yml \
 		-i $(INVENTORY_DIR)/hosts \
 		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)"
 
 deploy-servers:  ## Deploy server configs (direct SSH) - requires ARCH, optional SITE
 	$(call check_arch,$@)
 	@echo "Deploying to servers (direct) for arch=$(ARCH) site=$(SITE)..."
-	ansible-playbook playbooks/era-servers.yml -i $(INVENTORY_DIR)/hosts --ask-become-pass
+	$(ANSIBLE_PLAYBOOK) playbooks/era-servers.yml -i $(INVENTORY_DIR)/hosts --ask-become-pass
 
 deploy-servers-via-jump:  ## Deploy server configs via ProxyJump through the OOB jump host (Air from laptop) - requires ARCH
 	$(call check_arch,$@)
 	@echo "Deploying to servers (ProxyJump via the OOB jump host) for arch=$(ARCH) site=$(SITE)..."
-	ansible-playbook playbooks/era-servers.yml -i $(INVENTORY_DIR)/hosts --ask-become-pass \
+	$(ANSIBLE_PLAYBOOK) playbooks/era-servers.yml -i $(INVENTORY_DIR)/hosts --ask-become-pass \
 		-e "via_server=true" -f 5
 
 ztp-setup:  ## Setup ZTP server (dnsmasq + nginx) - requires ARCH, optional SITE
 	$(call check_arch,$@)
+	$(call check_secrets)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Setting up ZTP Server  arch=$(ARCH)  site=$(SITE)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -746,7 +905,7 @@ ztp-setup:  ## Setup ZTP server (dnsmasq + nginx) - requires ARCH, optional SITE
 	@echo "⚠️  Do NOT use if you already have isc-dhcp-server running!"
 	@echo ""
 	@mkdir -p $(CONFIG_OUTPUT_DIR)
-	@ansible-playbook playbooks/setup-ztp-server.yml -i $(INVENTORY_DIR)/hosts \
+	@$(ANSIBLE_PLAYBOOK) playbooks/setup-ztp-server.yml -i $(INVENTORY_DIR)/hosts \
 		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)" \
 		--ask-become-pass
 	@echo "✅ ZTP server ready!"
@@ -775,6 +934,73 @@ help-air-setup:  ## Show air-setup usage
 	@echo "  for fields you don't change."
 	@echo ""
 
+# ARCH is OPTIONAL here (unlike other per-deployment targets): without it the
+# wizard edits the shared template inventories/secrets.yml. Only an explicit
+# command-line ARCH= selects a deployment — .era-context is deliberately NOT
+# consulted, so `make secrets` always means the template.
+# SITE likewise: only a command-line SITE= counts; the global $(SITE) has already
+# absorbed .era-context, which must not leak another customer's site into here.
+# _SITE_ON_CLI, not $(origin SITE): canonicalisation above may have `override`d
+# the value, which changes its origin.
+ifneq ($(_SITE_ON_CLI),)
+_SECRETS_SITE := $(SITE)
+else
+_SECRETS_SITE := default
+endif
+secrets:  ## Create/edit/vault-encrypt secrets.yml (shared template; ARCH=... for one deployment)
+ifneq ($(filter command line,$(origin arch) $(origin site) $(origin Arch) $(origin Site)),)
+	@echo "❌ ERROR: make variables are case-sensitive — use ARCH=... / SITE=... (got a lowercase/mixed-case spelling)."; \
+	 echo "   Refusing to guess: a misspelled ARCH would silently edit the shared template instead of the deployment."; \
+	 exit 1
+endif
+ifneq ($(_ARCH_ON_CLI),)
+	$(call check_arch,$@)
+	@python3 scripts/secrets-setup.py --arch $(ARCH) --site $(_SECRETS_SITE)
+else
+	@python3 scripts/secrets-setup.py
+endif
+
+help-secrets:  ## Show secrets usage
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  make secrets — Create, edit and vault-encrypt secrets.yml"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "  make secrets                         edit the shared template"
+	@echo "      inventories/secrets.yml  (created from secrets.yml.example if absent)"
+	@echo "      This is the seed 'make generate' copies into every arch/site the"
+	@echo "      first time it runs, so it sets the org-wide default going forward."
+	@echo ""
+	@echo "  make secrets ARCH=<type> [SITE=<name>]   edit one deployment's copy"
+	@echo "      output/<arch>/<site>/inventory/group_vars/all/secrets.yml"
+	@echo "      (directories are created if 'make generate' has not run yet)."
+	@echo "      ARCH and SITE must be given on the command line — .era-context is"
+	@echo "      ignored here so a bare 'make secrets' always means the template"
+	@echo "      and 'make secrets ARCH=x' always means x/default."
+	@echo ""
+	@echo "  The wizard prompts for active keys in docs/SECRETS_AND_VAULT.md, keeps"
+	@echo "  values you don't change, and rejects switch-side passwords"
+	@echo "  (switch_password, switch_ansible_password) that fail the ERA policy."
+	@echo "  Generate/deploy enforce those switch checks via scripts/check_secrets.py."
+	@echo "  The wizard also checks ldap_user_default_password when LDAP is enabled"
+	@echo "  or deployment LDAP settings are unknown."
+	@echo "  Cumu1usLinux! is allowed without an override. Other placeholders such"
+	@echo "  as CHANGE_ME remain rejected; SECRETS_PASSWORD_POLICY=placeholder"
+	@echo "  relaxes complexity, not placeholder/empty/username checks."
+	@echo "  Disabled LDAP skips both LDAP passwords. Deployment settings come from"
+	@echo "  the workbook and inventory; unknown deployment state still checks LDAP."
+	@echo "  Only the shared template asks whether to configure LDAP (default no)."
+	@echo ""
+	@echo "  At the end it offers to 'ansible-vault encrypt' the file. A vault"
+	@echo "  password found in ANSIBLE_VAULT_PASSWORD_FILE or .era-secrets/vault-pass"
+	@echo "  (the one 'make air-setup' uses for the Air vault) is offered, never"
+	@echo "  assumed: say n to type a different one, then choose whether to save it"
+	@echo "  to .era-secrets/vault-pass (replacing the Air password needs explicit"
+	@echo "  consent). An already-encrypted secrets.yml is decrypted in memory,"
+	@echo "  edited and re-encrypted — with the same password or a new one (rekey)."
+	@echo "  Values are never echoed."
+	@echo ""
+
 air-connect:  ## Set Air SSH connection details - requires ARCH, optional SITE
 	$(call check_arch,$@)
 	@python3 scripts/air-connect.py --arch $(ARCH) --site $(SITE)
@@ -793,14 +1019,17 @@ air-auth-test:  ## Test Air API credentials and connectivity - requires ARCH
 
 air-deploy:  ## Create Air simulation, configure SSH, and connect - requires ARCH
 	$(call check_arch,$@)
+	$(call check_secrets)
 	@python3 scripts/air-deploy.py --arch $(ARCH) --site $(SITE) $(if $(SERVER_CONFIG),--server-config,) $(if $(NOZTP),--no-ztp,) $(if $(RETRIES),--retry-on-capacity $(RETRIES),) $(if $(RETRY_DELAY),--retry-delay $(RETRY_DELAY),)
 
 air-deploy-retry:  ## Same as air-deploy but retries on capacity errors - RETRIES=3 RETRY_DELAY=300 by default
 	$(call check_arch,$@)
+	$(call check_secrets)
 	@python3 scripts/air-deploy.py --arch $(ARCH) --site $(SITE) $(if $(SERVER_CONFIG),--server-config,) $(if $(NOZTP),--no-ztp,) --retry-on-capacity $(or $(RETRIES),3) --retry-delay $(or $(RETRY_DELAY),300)
 
 air-deploy-switches-only:  ## Deploy a switches-only, no-ZTP Air sim (no server VMs; full switch config + unconnected stubs) - requires ARCH
 	$(call check_arch,$@)
+	$(call check_secrets)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Switches-only / no-ZTP deploy  arch=$(ARCH)  site=$(SITE)"
 	@echo "  (server VMs omitted; switch configs unchanged; server-facing ports"
@@ -848,7 +1077,9 @@ help-air-destroy:  ## Show air-destroy usage and examples
 	@echo ""
 	@echo "What it does NOT do:"
 	@echo "  - Does not reset local inventory: ansible_host / ansible_port in"
-	@echo "    host_vars/oob-server-01.yml and dhcp-oob.yml remain as stale"
+	@echo "    the infra-node host_vars (utility.yml, external-conn.yml and"
+	@echo "    external-dhcp.yml in L3 OOB; oob-server-01.yml and dhcp-oob.yml"
+	@echo "    in legacy L2) remain as stale"
 	@echo "    pointers until the next 'make air-deploy' overwrites them"
 	@echo "  - Does not remove status_page_url from group_vars/all/main.yml"
 	@echo ""
@@ -859,7 +1090,12 @@ help-air-destroy:  ## Show air-destroy usage and examples
 	@echo ""
 	@echo "Related:"
 	@echo "  make air-list ARCH=<type>       Show all simulations and their IDs"
-	@echo "  python3 scripts/air-destroy.py --arch <type> --cleanup-only"
+	@echo "  python3 scripts/air-destroy.py --arch <type> --site <name> --cleanup-only"
+	@echo "                                  Delete only this site's UserConfigs"
+	@echo "                                  (ERA-<site>-<arch> or ERA-<site>-<arch>-…);"
+	@echo "                                  never a simulation, never another site's;"
+	@echo "                                  lists matches, then asks unless --force"
+	@echo "                                  (names at Air's 64-char limit are kept)"
 	@echo "      Sweep orphaned UserConfigs without touching any simulation."
 	@echo "      Use after a destroy that crashed mid-flight. (Not wired into Make.)"
 	@echo ""
@@ -940,6 +1176,10 @@ deploy:  ## One-command deployment: import Excel + generate + create Air sim + Z
 	fi
 	@echo ""
 	@set -e; eval "$$(python3 scripts/_excel_context.py '$(EXCEL)')"; \
+	[ -z "$(IMPORT_SITE)" ] || _SITE="$(IMPORT_SITE)"; \
+	if [ -n "$(_ARCH_ON_CLI)" ] && [ "$(ARCH)" != "$$_ARCH" ]; then \
+		echo "⚠️  ARCH=$(ARCH) on the command line is ignored: the arch comes from the workbook ($$_ARCH)."; \
+	fi; \
 	_LDAP=$$(python3 scripts/_check_ldap_enabled.py "$$_ARCH" "$$_SITE"); \
 	echo "╔════════════════════════════════════════════════════════════════════╗"; \
 	echo "║           ERA Full Deployment Pipeline (with server config)        ║"; \
@@ -948,7 +1188,11 @@ deploy:  ## One-command deployment: import Excel + generate + create Air sim + Z
 	echo ""; \
 	echo "This will:"; \
 	echo "  ✓ Step 1: Validate Excel input"; \
-	echo "  ✓ Step 2: Import Excel (auto-detect arch/site)"; \
+	if [ -n "$(IMPORT_SITE)" ]; then \
+		echo "  ✓ Step 2: Import Excel (arch from workbook, site=$(IMPORT_SITE) from command line)"; \
+	else \
+		echo "  ✓ Step 2: Import Excel (auto-detect arch/site)"; \
+	fi; \
 	echo "  ✓ Step 3: Generate inventory + configs + topology"; \
 	if [ "$(NOZTP)" = "1" ]; then \
 		echo "  ✓ Step 4: Create Air sim + inject switch+server configs (NOZTP=1, no DHCP/HTTP fetch)"; \
@@ -1136,13 +1380,10 @@ deploy-exclude-servers:  ## Deploy switches only (no server config) - requires E
 			{ echo "❌ Import failed."; exit 1; }; \
 	fi
 	@echo ""
-	@set -e; \
-	if [ -n "$(ARCH)" ] && [ -n "$(SITE)" ]; then \
-		_ARCH="$(ARCH)"; _SITE="$(SITE)"; \
-	elif [ -n "$(EXCEL)" ]; then \
-		eval "$$(python3 scripts/_excel_context.py '$(EXCEL)')"; \
-	else \
-		eval "$$(python3 scripts/_era_context.py)"; \
+	@set -e; eval "$$(python3 scripts/_excel_context.py '$(EXCEL)')"; \
+	[ -z "$(IMPORT_SITE)" ] || _SITE="$(IMPORT_SITE)"; \
+	if [ -n "$(_ARCH_ON_CLI)" ] && [ "$(ARCH)" != "$$_ARCH" ]; then \
+		echo "⚠️  ARCH=$(ARCH) on the command line is ignored: the arch comes from the workbook ($$_ARCH)."; \
 	fi; \
 	_LDAP=$$(python3 scripts/_check_ldap_enabled.py "$$_ARCH" "$$_SITE"); \
 	echo "╔════════════════════════════════════════════════════════════════════╗"; \
@@ -1152,7 +1393,11 @@ deploy-exclude-servers:  ## Deploy switches only (no server config) - requires E
 	echo ""; \
 	echo "This will:"; \
 	echo "  ✓ Step 1: Validate Excel input"; \
-	echo "  ✓ Step 2: Import Excel (auto-detect arch/site)"; \
+	if [ -n "$(IMPORT_SITE)" ]; then \
+		echo "  ✓ Step 2: Import Excel (arch from workbook, site=$(IMPORT_SITE) from command line)"; \
+	else \
+		echo "  ✓ Step 2: Import Excel (auto-detect arch/site)"; \
+	fi; \
 	echo "  ✓ Step 3: Generate inventory + configs + topology"; \
 	if [ "$(NOZTP)" = "1" ]; then \
 		echo "  ✓ Step 4: Create Air sim + inject switch configs (NOZTP=1)"; \
@@ -1222,7 +1467,15 @@ deploy-exclude-servers:  ## Deploy switches only (no server config) - requires E
 # the mode we'd risk accepting a stale L2 file in a site that's been
 # reconfigured to L3 (or vice versa) and silently use the wrong target.
 define check_air_connection
-	@_MODE=$$(python3 scripts/_show_oob_mode.py "output/$(ARCH)/$(SITE)/topology/$(ARCH)-topology.json"); \
+	@_AIR=$$(python3 scripts/_show_deploy_in_air.py "$(INPUT_XLSX)") || { \
+		echo "  ✗ Cannot read 'Deploy in Air' from $(INPUT_XLSX) — run make validate-excel."; \
+		exit 1; \
+	}; \
+	if [ "$$_AIR" = "no" ]; then \
+		echo "  Deploy in Air = No — not an Air site, skipping air-connect."; \
+		exit 0; \
+	fi; \
+	_MODE=$$(python3 scripts/_show_oob_mode.py "output/$(ARCH)/$(SITE)/topology/$(ARCH)-topology.json"); \
 	case "$$_MODE" in l3) _CHECK="$(INVENTORY_DIR)/host_vars/utility.yml" ;; \
 	                    *) _CHECK="$(INVENTORY_DIR)/host_vars/oob-server-01.yml" ;; esac; \
 	if [ ! -f "$$_CHECK" ] || grep -q 'CHANGE_ME' "$$_CHECK" 2>/dev/null; then \
@@ -1240,18 +1493,19 @@ oob-setup:  ## Setup OOB server - requires ARCH, optional SITE
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Setting up OOB Server  arch=$(ARCH)  site=$(SITE)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@ansible-playbook playbooks/setup-oob-server.yml -i $(INVENTORY_DIR)/hosts --ask-become-pass
+	@$(ANSIBLE_PLAYBOOK) playbooks/setup-oob-server.yml -i $(INVENTORY_DIR)/hosts --ask-become-pass
 	@echo "✅ OOB server configured!"
 
 ztp-update:  ## Update ZTP configurations - requires ARCH, optional SITE
 	$(call check_arch,$@)
+	$(call check_secrets)
 	@echo "Generating CLI configurations for arch=$(ARCH) site=$(SITE)..."
 	@mkdir -p $(CONFIG_OUTPUT_DIR)
-	ansible-playbook playbooks/generate-cli-configs.yml \
+	$(ANSIBLE_PLAYBOOK) playbooks/generate-cli-configs.yml \
 		-i $(INVENTORY_DIR)/hosts \
 		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)"
 	@echo "Updating ZTP server..."
-	ansible-playbook playbooks/setup-ztp-server.yml -i $(INVENTORY_DIR)/hosts \
+	$(ANSIBLE_PLAYBOOK) playbooks/setup-ztp-server.yml -i $(INVENTORY_DIR)/hosts \
 		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)"
 	@echo "✅ ZTP configurations updated!"
 
@@ -1261,16 +1515,18 @@ validate-ztp-direct:  ## Validate ZTP by SSHing directly to each switch (on-prem
 	$(call check_arch,$@)
 	@mkdir -p $(REPORT_DIR)
 	@echo "Validating ZTP configuration (direct SSH) for arch=$(ARCH) site=$(SITE)..."
-	@ANSIBLE_STDOUT_CALLBACK=minimal PYTHONUNBUFFERED=1 ansible-playbook -i $(INVENTORY_DIR)/hosts \
+	@ANSIBLE_STDOUT_CALLBACK=minimal PYTHONUNBUFFERED=1 $(ANSIBLE_PLAYBOOK) -i $(INVENTORY_DIR)/hosts \
 		playbooks/validate-ztp-direct.yml \
 		-e '{"report_file": "$(CURDIR)/$(REPORT_DIR)/ztp-validation.txt"}' 2>&1 | \
-		grep --line-buffered -v '^\[WARNING\]' | grep --line-buffered -v 'Callback dispatch' | grep --line-buffered -v '^$$'
-	@echo ""
-	@if [ -f $(REPORT_DIR)/ztp-validation.txt ]; then \
-		sed '/RAW COMMAND OUTPUT/,$$d' $(REPORT_DIR)/ztp-validation.txt; \
+		grep --line-buffered -v '^\[WARNING\]' | grep --line-buffered -v 'Callback dispatch' | grep --line-buffered -v '^$$'; \
+		_STATUS=$${PIPESTATUS[0]}; \
 		echo ""; \
-		echo "📄 Full report with raw command output: $(REPORT_DIR)/ztp-validation.txt"; \
-	fi
+		if [ -f $(REPORT_DIR)/ztp-validation.txt ]; then \
+			sed '/RAW COMMAND OUTPUT/,$$d' $(REPORT_DIR)/ztp-validation.txt; \
+			echo ""; \
+			echo "📄 Full report with raw command output: $(REPORT_DIR)/ztp-validation.txt"; \
+		fi; \
+		exit $$_STATUS
 
 validate-switch-health:  ## Tier-1 switch operational-health checks (apply/BGP/EVPN-ES/VNI/intf) via jump - requires ARCH, optional SITE
 	$(call check_arch,$@)
@@ -1279,7 +1535,7 @@ validate-switch-health:  ## Tier-1 switch operational-health checks (apply/BGP/E
 	@echo "========================================"
 	@echo "Switch Health (Tier 1)  arch=$(ARCH)  site=$(SITE)"
 	@echo "========================================"
-	@ANSIBLE_STDOUT_CALLBACK=minimal PYTHONUNBUFFERED=1 ansible-playbook -i $(INVENTORY_DIR)/hosts \
+	@ANSIBLE_STDOUT_CALLBACK=minimal PYTHONUNBUFFERED=1 $(ANSIBLE_PLAYBOOK) -i $(INVENTORY_DIR)/hosts \
 		playbooks/validate-switch-health.yml \
 		-e "arch=$(ARCH) site=$(SITE)" \
 		-e '{"report_file": "$(CURDIR)/$(REPORT_DIR)/switch-health.txt"}'
@@ -1296,7 +1552,7 @@ validate-oob-bgp:  ## Gating OOB↔CSL BGP check (L3 OOB only; N/A otherwise) vi
 	echo "========================================"; \
 	echo "OOB↔CSL BGP (gating)  arch=$(ARCH)  site=$(SITE)"; \
 	echo "========================================"; \
-	ANSIBLE_STDOUT_CALLBACK=minimal PYTHONUNBUFFERED=1 ansible-playbook -i $(INVENTORY_DIR)/hosts \
+	ANSIBLE_STDOUT_CALLBACK=minimal PYTHONUNBUFFERED=1 $(ANSIBLE_PLAYBOOK) -i $(INVENTORY_DIR)/hosts \
 		playbooks/validate-oob-bgp.yml \
 		-e "arch=$(ARCH) site=$(SITE)" \
 		-e '{"report_file": "$(CURDIR)/$(REPORT_DIR)/oob-bgp-validation.txt"}'
@@ -1305,14 +1561,14 @@ fix-ext-storage:  ## Auto-remediate ext-storage nodes missing/inactive FRR via t
 	$(call check_arch,$@)
 	python3 scripts/fix-ext-storage-frr.py --arch $(ARCH) --site $(SITE)
 
-validate-ztp:  ## Validate ZTP via dhcp-oob bastion (works from laptop or inside Air) - requires ARCH, optional SITE
+validate-ztp:  ## Validate ZTP via the [jump] host (works from laptop or inside Air) - requires ARCH, optional SITE
 	$(call check_arch,$@)
 	@mkdir -p $(REPORT_DIR)
 	@echo ""
 	@echo "========================================"
 	@echo "ZTP Validation  arch=$(ARCH)  site=$(SITE)"
 	@echo "========================================"
-	@ANSIBLE_STDOUT_CALLBACK=minimal PYTHONUNBUFFERED=1 ansible-playbook -i $(INVENTORY_DIR)/hosts \
+	@ANSIBLE_STDOUT_CALLBACK=minimal PYTHONUNBUFFERED=1 $(ANSIBLE_PLAYBOOK) -i $(INVENTORY_DIR)/hosts \
 		playbooks/validate-ztp.yml \
 		-e '{"report_file": "$(CURDIR)/$(REPORT_DIR)/ztp-validation.txt"}' 2>&1 | \
 		grep --line-buffered -v '^\[WARNING\]' | grep --line-buffered -v 'Callback dispatch' | grep --line-buffered -v '^$$'; \
@@ -1327,7 +1583,7 @@ validate-ztp:  ## Validate ZTP via dhcp-oob bastion (works from laptop or inside
 		if [ -z "$(SKIP_UPLOAD)" ] && [ "$$_STATUS_PAGE" = "1" ] && [ -f "$(REPORT_DIR)/ztp-validation.txt" ]; then \
 			echo ""; \
 			echo "Uploading ZTP validation report to status page..."; \
-			ansible-playbook -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
+			$(ANSIBLE_PLAYBOOK) -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
 				-e '{"reports_dir": "$(CURDIR)/$(REPORT_DIR)"}' 2>/dev/null && \
 				echo "  ✅ Report uploaded to status page" || \
 				echo "  ⚠️  Report upload failed (non-critical)"; \
@@ -1335,7 +1591,7 @@ validate-ztp:  ## Validate ZTP via dhcp-oob bastion (works from laptop or inside
 		if ! $(MAKE) --no-print-directory validate-oob-bgp ARCH=$(ARCH) SITE=$(SITE); then _STATUS=1; fi; \
 		exit $$_STATUS
 
-validate-config:  ## Compare running config vs generated config (runs on dhcp-oob) - requires ARCH, optional SITE
+validate-config:  ## Compare running config vs generated config (runs on the [jump] host) - requires ARCH, optional SITE
 	$(call check_arch,$@)
 	@mkdir -p $(REPORT_DIR)
 	@echo ""
@@ -1343,7 +1599,7 @@ validate-config:  ## Compare running config vs generated config (runs on dhcp-oo
 	@echo "  Config Validation  arch=$(ARCH)  site=$(SITE)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@set -o pipefail; \
-	ansible-playbook -i $(INVENTORY_DIR)/hosts playbooks/validate-config.yml \
+	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY_DIR)/hosts playbooks/validate-config.yml \
 		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)" \
 		-e '{"report_file": "$(CURDIR)/$(REPORT_DIR)/config-validation.txt"}'; \
 	_AP=$$?; \
@@ -1357,49 +1613,21 @@ validate-config:  ## Compare running config vs generated config (runs on dhcp-oo
 	if [ -z "$(SKIP_UPLOAD)" ] && [ "$$_STATUS_PAGE" = "1" ] && [ -f "$(REPORT_DIR)/config-validation.txt" ]; then \
 		echo ""; \
 		echo "Uploading config validation report to status page..."; \
-		ansible-playbook -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
+		$(ANSIBLE_PLAYBOOK) -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
 			-e '{"reports_dir": "$(CURDIR)/$(REPORT_DIR)"}' 2>/dev/null && \
 			echo "  ✅ Report uploaded to status page" || \
 			echo "  ⚠️  Report upload failed (non-critical)"; \
 	fi; \
 	exit $$_AP
 
-validate-requirements:  ## Validate generated config against architecture requirements - optional ARCH
-	@echo ""
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  Architecture Requirements Validation"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-ifdef ARCH
-	@if [ ! -f scripts/validate_requirements.py ]; then \
-		echo "  Internal-only target — requires architecture reference docs"; \
-		echo "  that are not included in the public release. Skipping."; \
-	elif [ ! -d "input/$(ARCH)" ]; then \
-		echo "❌ ERROR: Unknown architecture '$(ARCH)'"; \
-		echo ""; \
-		echo "Available architectures:"; \
-		ls -1d input/*/ 2>/dev/null | xargs -n1 basename | sed 's/^/  • /'; \
-		echo ""; \
-		exit 1; \
-	else \
-		python3 scripts/validate_requirements.py --arch $(ARCH) --site $(SITE); \
-	fi
-else
-	@if [ -f scripts/validate_requirements.py ]; then \
-		python3 scripts/validate_requirements.py; \
-	else \
-		echo "  Internal-only target — requires architecture reference docs"; \
-		echo "  that are not included in the public release. Skipping."; \
-	fi
-endif
-
-validate-servers:  ## Validate server config — bonds, VLANs, connectivity (runs on dhcp-oob) - requires ARCH
+validate-servers:  ## Validate server config — bonds, VLANs, connectivity (runs on the [jump] host) - requires ARCH
 	$(call check_arch,$@)
 	@mkdir -p $(REPORT_DIR)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Validating server architecture  arch=$(ARCH)  site=$(SITE)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@set -o pipefail; \
-	ansible-playbook playbooks/validate-servers.yml \
+	$(ANSIBLE_PLAYBOOK) playbooks/validate-servers.yml \
 		-i $(INVENTORY_DIR)/hosts \
 		-e '{"report_file": "$(CURDIR)/$(REPORT_DIR)/server-validation.txt"}'; \
 	_AP=$$?; \
@@ -1413,7 +1641,7 @@ validate-servers:  ## Validate server config — bonds, VLANs, connectivity (run
 	if [ -z "$(SKIP_UPLOAD)" ] && [ "$$_STATUS_PAGE" = "1" ] && [ -f "$(REPORT_DIR)/server-validation.txt" ]; then \
 		echo ""; \
 		echo "Uploading server validation report to status page..."; \
-		ansible-playbook -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
+		$(ANSIBLE_PLAYBOOK) -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
 			-e '{"reports_dir": "$(CURDIR)/$(REPORT_DIR)"}' 2>/dev/null && \
 			echo "  ✅ Report uploaded to status page" || \
 			echo "  ⚠️  Report upload failed (non-critical)"; \
@@ -1426,20 +1654,27 @@ validate-ping-matrix:  ## Run full server-to-server ping matrix (all VLANs) - re
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Server Ping Matrix  arch=$(ARCH)  site=$(SITE)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@ansible-playbook playbooks/validate-ping-matrix.yml \
+	@rm -f "$(REPORT_DIR)/ping-matrix-report.txt"; \
+	$(ANSIBLE_PLAYBOOK) playbooks/validate-ping-matrix.yml \
 		-i $(INVENTORY_DIR)/hosts \
-		-e '{"local_report": "$(CURDIR)/$(REPORT_DIR)/ping-matrix-report.txt"}' && \
-	echo "" && \
-	cat $(REPORT_DIR)/ping-matrix-report.txt && \
+		-e '{"local_report": "$(CURDIR)/$(REPORT_DIR)/ping-matrix-report.txt"}'; \
+	_AP=$$?; \
+	echo ""; \
+	if [ -f "$(REPORT_DIR)/ping-matrix-report.txt" ]; then \
+		cat "$(REPORT_DIR)/ping-matrix-report.txt"; \
+	else \
+		echo "  (no ping matrix report generated)"; \
+	fi; \
 	_STATUS_PAGE=$$(grep -q 'status_page_enabled.*[Yy]es\|status_page_enabled.*[Tt]rue' $(INVENTORY_DIR)/group_vars/all/main.yml 2>/dev/null && echo 1); \
 	if [ -z "$(SKIP_UPLOAD)" ] && [ "$$_STATUS_PAGE" = "1" ] && [ -f "$(REPORT_DIR)/ping-matrix-report.txt" ]; then \
 		echo ""; \
 		echo "Uploading ping matrix report to ZTP server..."; \
-		ansible-playbook -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
+		$(ANSIBLE_PLAYBOOK) -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
 			-e '{"reports_dir": "$(CURDIR)/$(REPORT_DIR)"}' 2>/dev/null && \
 			echo "  ✅ Report uploaded to ZTP status page" || \
 			echo "  ⚠️  Report upload failed (non-critical)"; \
-	fi
+	fi; \
+	exit $$_AP
 
 validate-all:  ## Run all 5 validations: topology + config (canary) + ZTP + switch-health + servers (Servers N/A for switches-only) - requires ARCH
 	$(call check_arch,$@)
@@ -1530,7 +1765,7 @@ validate-all:  ## Run all 5 validations: topology + config (canary) + ZTP + swit
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 		echo "  Uploading reports to ZTP server..."; \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-		ansible-playbook -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
+		$(ANSIBLE_PLAYBOOK) -i $(INVENTORY_DIR)/hosts playbooks/upload-reports.yml \
 			-e '{"reports_dir": "$(CURDIR)/$(REPORT_DIR)"}' 2>/dev/null && \
 			echo "  ✅ Reports uploaded to ZTP status page" || \
 			echo "  ⚠️  Report upload failed (non-critical)"; \
@@ -1566,28 +1801,12 @@ validate-all:  ## Run all 5 validations: topology + config (canary) + ZTP + swit
 	fi; \
 	exit $$_OVERALL
 
-extract-requirements:  ## Extract requirements from architecture PDFs into drafts for review
-	@echo ""
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  Extracting Requirements from Architecture PDFs"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@if [ ! -f scripts/extract_requirements.py ]; then \
-		echo "  Internal-only target — requires architecture reference docs"; \
-		echo "  that are not included in the public release. Skipping."; \
-	else \
-		python3 scripts/extract_requirements.py --all --draft; \
-		echo ""; \
-		echo "Drafts written to docs/requirements/drafts/"; \
-		echo "Review port assignments (OCR can misparse), then copy to docs/requirements/"; \
-	fi
-	@echo ""
-
 restart-ldap:  ## Restart LDAP via OOB server - requires ARCH, optional SITE
 	$(call check_arch,$@)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Restarting LDAP  arch=$(ARCH)  site=$(SITE)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@ansible-playbook playbooks/restart-ldap-switches.yml -i $(INVENTORY_DIR)/hosts
+	@$(ANSIBLE_PLAYBOOK) playbooks/restart-ldap-switches.yml -i $(INVENTORY_DIR)/hosts
 	@echo "✅ LDAP service restart process complete!"
 
 restart-ldap-direct:  ## Restart LDAP via direct SSH - requires ARCH, optional SITE
@@ -1595,7 +1814,7 @@ restart-ldap-direct:  ## Restart LDAP via direct SSH - requires ARCH, optional S
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Restarting LDAP (direct)  arch=$(ARCH)  site=$(SITE)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@ansible-playbook playbooks/restart-ldap-switches-direct.yml -i $(INVENTORY_DIR)/hosts --ask-become-pass
+	@$(ANSIBLE_PLAYBOOK) playbooks/restart-ldap-switches-direct.yml -i $(INVENTORY_DIR)/hosts --ask-become-pass
 	@echo "✅ LDAP service restart process complete!"
 
 # ============================================================================
@@ -1605,6 +1824,7 @@ restart-ldap-direct:  ## Restart LDAP via direct SSH - requires ARCH, optional S
 
 switch-ztp-deploy:  ## Complete ZTP deployment - requires ARCH, optional SITE LDAP=1
 	$(call check_arch,$@)
+	$(call check_secrets)
 	$(check_air_connection)
 	$(detect_ldap)
 	@echo ""
@@ -1640,13 +1860,13 @@ switch-ztp-deploy:  ## Complete ZTP deployment - requires ARCH, optional SITE LD
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  STEP 1/6: Configure OOB Server"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@ansible-playbook playbooks/setup-oob-server.yml -i $(INVENTORY_DIR)/hosts
+	@$(ANSIBLE_PLAYBOOK) playbooks/setup-oob-server.yml -i $(INVENTORY_DIR)/hosts
 	@echo ""
 	@if [ "$(_LDAP_ACTIVE)" = "1" ]; then \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 		echo "  STEP 2/6: Configure LDAP Server"; \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-		ansible-playbook playbooks/era-servers.yml -i $(INVENTORY_DIR)/hosts --tags ldap; \
+		$(ANSIBLE_PLAYBOOK) playbooks/era-servers.yml -i $(INVENTORY_DIR)/hosts --tags ldap; \
 		echo ""; \
 	fi
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1665,7 +1885,7 @@ switch-ztp-deploy:  ## Complete ZTP deployment - requires ARCH, optional SITE LD
 	@echo "  STEP 4/6: Generate Switch Configurations + Topology"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@mkdir -p $(CONFIG_OUTPUT_DIR)
-	ansible-playbook playbooks/generate-cli-configs.yml \
+	$(ANSIBLE_PLAYBOOK) playbooks/generate-cli-configs.yml \
 		-i $(INVENTORY_DIR)/hosts \
 		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)"
 	python3 scripts/topology_generator.py generate --arch $(ARCH) --site $(SITE)
@@ -1675,7 +1895,7 @@ switch-ztp-deploy:  ## Complete ZTP deployment - requires ARCH, optional SITE LD
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  Status page is independent of ZTP — runs even in NOZTP=1 so the"
 	@echo "  operator dashboard + /reports/ landing zone exist for validate-*."
-	@ansible-playbook playbooks/setup-status-page.yml -i $(INVENTORY_DIR)/hosts \
+	@$(ANSIBLE_PLAYBOOK) playbooks/setup-status-page.yml -i $(INVENTORY_DIR)/hosts \
 		-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)"
 	@echo ""
 	@if [ "$(NOZTP)" = "1" ]; then \
@@ -1688,7 +1908,7 @@ switch-ztp-deploy:  ## Complete ZTP deployment - requires ARCH, optional SITE LD
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 		echo "  STEP 6/6: Setup ZTP Server"; \
 		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-		ansible-playbook playbooks/setup-ztp-server.yml -i $(INVENTORY_DIR)/hosts \
+		$(ANSIBLE_PLAYBOOK) playbooks/setup-ztp-server.yml -i $(INVENTORY_DIR)/hosts \
 			-e "config_output_dir=../$(CONFIG_OUTPUT_DIR)"; \
 	fi
 	@echo ""
@@ -1700,7 +1920,7 @@ switch-ztp-deploy:  ## Complete ZTP deployment - requires ARCH, optional SITE LD
 	@echo ""
 	@echo "Next steps:"
 	@echo "  1. Power on switches — they will auto-configure via ZTP"
-	@echo "  2. Verify ZTP server: curl http://<ztp-server-ip>/"
+	@echo "  2. Verify ZTP server (from the OOB subnet): curl http://<ztp-server-ip>/scripts/ztp.sh"
 	@echo "  3. Validate switches after boot:"
 	@echo ""
 	@echo "     make validate-ztp ARCH=$(ARCH) SITE=$(SITE)"
@@ -1741,7 +1961,7 @@ lint:  ## Lint YAML and Python files
 	fi
 	@echo "Linting Python files..."
 	@if command -v flake8 >/dev/null 2>&1; then \
-		flake8 scripts/ --max-line-length=120; \
+		flake8 scripts/ tests/ --max-line-length=120; \
 	else \
 		echo "❌ flake8 not installed — cannot lint. Run: pip install flake8 (or: make setup)"; \
 		exit 1; \
@@ -1779,7 +1999,7 @@ validate:  ## Validate Ansible syntax - requires ARCH, optional SITE
 	@echo "Validating Ansible syntax for arch=$(ARCH) site=$(SITE)..."
 	@for playbook in playbooks/*.yml; do \
 		echo "  Checking $$playbook..."; \
-		ansible-playbook $$playbook --syntax-check -i $(INVENTORY_DIR)/hosts; \
+		$(ANSIBLE_PLAYBOOK) $$playbook --syntax-check -i $(INVENTORY_DIR)/hosts; \
 	done
 	@echo "✅ Syntax validation complete"
 
@@ -1787,7 +2007,16 @@ inventory:  ## Show inventory summary - requires ARCH, optional SITE
 	$(call check_arch,$@)
 	@echo "📋 Inventory Summary for arch=$(ARCH) site=$(SITE)"
 	@echo ""
-	@ansible-inventory -i $(INVENTORY_DIR)/hosts --list --yaml | head -50
+	@# Drain ansible-inventory into a temp file, then truncate for display:
+	@# piping straight into `head -50` closes the pipe early and Ansible dies
+	@# with a "[Errno 32] Broken pipe" traceback. stderr and the exit status
+	@# of ansible-inventory are passed through untouched.
+	@tmp=$$(mktemp) || exit 1; trap 'rm -f "$$tmp"' EXIT; \
+		ansible-inventory -i $(INVENTORY_DIR)/hosts --list --yaml > "$$tmp"; rc=$$?; \
+		head -50 "$$tmp"; \
+		total=$$(wc -l < "$$tmp"); \
+		if [ "$$total" -gt 50 ]; then echo "  … ($$((total - 50)) more lines; run ansible-inventory -i $(INVENTORY_DIR)/hosts --list --yaml for the full output)"; fi; \
+		exit $$rc
 
 status:  ## Show project status
 	@echo "📊 ERA Network Automation - Project Status"
@@ -1817,6 +2046,8 @@ docs:  ## Show documentation links
 	@echo ""
 	@echo "Main Documentation:"
 	@echo "  - README.md                          Project overview"
+	@echo "  - docs/EXCEL_CONFIGURATION_GUIDE.md  Filling in the intake workbook"
+	@echo "  - SECURITY.md                        Secrets, known risks, pre-deploy checklist"
 	@echo ""
 	@echo "Playbooks:"
 	@echo "  - playbooks/README.md                Playbook documentation"

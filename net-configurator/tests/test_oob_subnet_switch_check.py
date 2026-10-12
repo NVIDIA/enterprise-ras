@@ -25,6 +25,9 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
+
 REPO = Path(__file__).resolve().parent.parent
 VALIDATOR = REPO / "scripts" / "validate_excel.py"
 
@@ -51,17 +54,8 @@ def mutated(tmp_path):
         dst = tmp_path / f"{ARCH}.xlsx"
         shutil.copy2(BASE, dst)
         wb = openpyxl.load_workbook(dst)
-        ws = wb["Nodes"]
-        hdr = [str(c.value or "").strip() for c in ws[1]]
-        name_c = hdr.index("Name") + 1
-        ip_c = hdr.index("Mgmt IP Address") + 1
-        hit = False
-        for r in range(2, ws.max_row + 1):
-            if str(ws.cell(r, name_c).value or "").strip() == match_name:
-                ws.cell(r, ip_c).value = ip
-                hit = True
-                break
-        assert hit, f"{match_name} not found in the Nodes tab"
+        assert workbook_access.set_node_mgmt_ip(wb, match_name, ip), \
+            f"{match_name} is not a node in this workbook"
         wb.save(dst)
         return _run(dst)
     return _go

@@ -8,7 +8,6 @@ The fix encrypts to a temp file and atomically os.replace()s on success.
 """
 import importlib.util
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest

@@ -7,10 +7,12 @@
 # awk REMOTELY, and returns the RESULT|/---RAW:--- block — 1 connection instead
 # of ~19. Output is byte-compatible with the serial collector.
 #
-# Args:  $1 = switch mgmt IP   $2 = ssh/sudo password   $3 = BGP-capable (1/0)
+# Args:  $1 = switch mgmt IP   $2 = BGP-capable (1/0)
+# Env:   SSHPASS = ssh password (never an argument: argv is world-readable in ps)
 
-IP="$1"; PW="$2"; BGP="${3:-0}"
-export SSHPASS="$PW"
+IP="$1"; BGP="${2:-0}"
+: "${SSHPASS:?SSHPASS must be set in the environment}"
+export SSHPASS
 OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=8 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
 # One session: stream the collection script (quoted heredoc -> runs verbatim on
@@ -37,6 +39,8 @@ if [ "$BGP" = "1" ]; then
   bgp_configured=$(printf '%s\n' "$bgp_output" | awk '/^configured-neighbors/{print $2}')
   bgp_established=$(printf '%s\n' "$bgp_output" | awk '/^established-neighbors/{print $2}')
   evpn_output=$(nv show evpn 2>/dev/null || echo "N/A")
+  evpn_multihoming_output=$(nv show evpn multihoming 2>/dev/null || echo "N/A")
+  nve_vxlan_output=$(nv show nve vxlan 2>/dev/null || echo "N/A")
   evpn_l2vni=$(nv show evpn --output json 2>/dev/null | jq -r '."l2vni-count" // 0' 2>/dev/null || echo "0")
   evpn_l3vni=$(nv show evpn --output json 2>/dev/null | jq -r '."l3vni-count" // 0' 2>/dev/null || echo "0")
   bgp_neighbor_output=$(nv show vrf default router bgp neighbor 2>/dev/null || echo "N/A")
@@ -69,6 +73,8 @@ if [ "$BGP" = "1" ]; then
   echo "---RAW:bgp---"; echo "$bgp_output"
   echo "---RAW:bgp_neighbor---"; echo "$bgp_neighbor_output"
   echo "---RAW:evpn---"; echo "$evpn_output"
+  echo "---RAW:evpn_multihoming---"; echo "$evpn_multihoming_output"
+  echo "---RAW:nve_vxlan---"; echo "$nve_vxlan_output"
   echo "---RAW:evpn_vni---"; echo "$evpn_vni_output"
   echo "---RAW:qos_roce---"; echo "$qos_roce_output"
 fi

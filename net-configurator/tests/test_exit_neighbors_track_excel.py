@@ -62,12 +62,28 @@ def _expand(edge):
 _SHIPPED_SITES = ("default", "largescale")
 
 
+def _group_hosts(hosts_file, group):
+    """Hosts listed directly under `[group]` in an INI inventory."""
+    members, current = [], None
+    for line in hosts_file.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("["):
+            current = line.strip("[]")
+        elif line and not line.startswith(("#", ";")) and current == group:
+            members.append(line.split()[0])
+    return members
+
+
 def _cases():
+    """One case per N/S role that has switches. Collapsed-core archs still emit
+    a core.yml group_vars with no core hosts; nothing renders for those."""
     for gv in sorted(NC.glob("output/*/*/inventory/group_vars/*.yml")):
         if gv.stem not in _ROLES:
             continue
         arch, site = gv.parts[-5], gv.parts[-4]
         if site not in _SHIPPED_SITES:
+            continue
+        if not _group_hosts(gv.parent.parent / "hosts", gv.stem):
             continue
         yield pytest.param(gv, arch, site, gv.stem,
                            id=f"{arch}/{site}/{gv.stem}")

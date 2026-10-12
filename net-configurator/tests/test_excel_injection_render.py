@@ -16,7 +16,6 @@ Two layers: structural (the real template files use the safe pattern — catches
 drift) + behavioral (the pattern actually neutralizes a benign touch-payload when
 run through bash).
 """
-import re
 import shlex
 import subprocess
 from pathlib import Path

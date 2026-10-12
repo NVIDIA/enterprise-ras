@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for oob-switch-12
-# Generated: 2026-09-02T02:44:59Z
+# Generated: 2026-09-18T13:11:13Z
 # Format: NVUE CLI commands
 
 #============================================================================
@@ -69,6 +69,10 @@ nv set router bfd profile overlay min-tx-interval 1000
 nv set router bgp autonomous-system 4260394800
 nv set router bgp state enabled
 nv set router bgp router-id 172.16.176.112
+nv set router bgp graceful-restart mode full
+nv set router bgp graceful-restart restart-time 180
+nv set router bgp graceful-restart path-selection-deferral-time 180
+nv set router bgp graceful-restart stale-routes-time 180
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
 nv set router policy route-map LOOPBACK_BGP rule 10 description permit_loopback_interface_routes
 nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
@@ -89,6 +93,7 @@ nv set system ntp server 3.cumulusnetworks.pool.ntp.org association-type server
 #============================================================================
 # AAA
 #============================================================================
+nv set system aaa authentication order local
 nv set system aaa class nvapply action allow
 nv set system aaa class nvapply command-path / permission all
 nv set system aaa class nvshow action allow
@@ -136,6 +141,8 @@ nv set vrf OOB router bgp address-family ipv4-unicast route-export to-evpn state
 nv set vrf OOB router bgp address-family l2vpn-evpn state enabled
 nv set vrf OOB router bgp autonomous-system 4260394800
 nv set vrf OOB router bgp state enabled
+nv set vrf OOB router bgp path-selection multipath aspath-ignore enabled
+nv set vrf OOB router bgp address-family ipv4-unicast multipaths ebgp 128
 nv set vrf OOB router bgp router-id 172.16.176.132
 
 #============================================================================

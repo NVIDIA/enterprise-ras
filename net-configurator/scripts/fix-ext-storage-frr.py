@@ -20,6 +20,7 @@ Usage:  make fix-ext-storage ARCH=<arch> [SITE=<site>]
 import argparse
 import base64
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +36,10 @@ from airlib.ext_storage_config import (  # noqa: E402
     build_daemons,
     build_frr_conf,
     discover_ext_storage_targets,
+)
+from secrets_loader import (  # noqa: E402
+    SecretsError, has_native_vault_source, find_vault_password_file,
+    load_server_password,
 )
 
 
@@ -100,6 +105,25 @@ def _load_yaml(path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def ansible_child_env(environ=None, project_root=None) -> dict:
+    """Environment for the ad-hoc ``ansible`` child (ERA-143).
+
+    The inventory's ``group_vars/all/secrets.yml`` is vault-encrypted, and the
+    ``make`` playbook targets go through ``scripts/ansible-playbook.sh``, which
+    exports the saved ``.era-secrets/vault-pass`` as
+    ``ANSIBLE_VAULT_PASSWORD_FILE``. A bare ``ansible`` call has no such
+    wrapper, so the same discovery is applied here unless the caller already
+    provides a native vault source.
+    """
+    env = dict(os.environ if environ is None else environ)
+    if env.get("ANSIBLE_VAULT_PASSWORD_FILE") or has_native_vault_source(env):
+        return env
+    vault_pass = find_vault_password_file(project_root=project_root, environ=env)
+    if vault_pass is not None:
+        env["ANSIBLE_VAULT_PASSWORD_FILE"] = str(vault_pass)
+    return env
+
+
 def _run_via_jump(inv_hosts: Path, node_pw: str, eth0_ip: str,
                   script: str) -> tuple[int, str]:
     """Run a root shell on an ext-storage node through the Air jump.
@@ -116,7 +140,8 @@ def _run_via_jump(inv_hosts: Path, node_pw: str, eth0_ip: str,
         f"ubuntu@{eth0_ip} 'sudo bash -s'"
     )
     cmd = ["ansible", "jump", "-i", str(inv_hosts), "-m", "shell", "-a", inner]
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+                       env=ansible_child_env())
     return p.returncode, (p.stdout + p.stderr)
 
 
@@ -141,17 +166,23 @@ def main() -> int:
     # air-deploy pinned it from, so a re-install lands on the addresses the sim
     # actually has instead of the 172.20.0.x literal the builder defaults to.
     _main_yml = base / "inventory" / "group_vars" / "all" / "main.yml"
-    air_mgmt_subnet = (_load_yaml(_main_yml) or {}).get("air_mgmt_subnet")
+    _main_vars = _load_yaml(_main_yml) or {}
+    air_mgmt_subnet = _main_vars.get("air_mgmt_subnet")
+    _infra_air = (_main_vars.get("infra_addresses") or {}).get("air_mgmt") or {}
 
     targets = [t for t in discover_ext_storage_targets(
-        topology, air_mgmt_subnet=air_mgmt_subnet or DEFAULT_AIR_MGMT_SUBNET)
+        topology, air_mgmt_subnet=air_mgmt_subnet or DEFAULT_AIR_MGMT_SUBNET,
+        eth0_ips=_infra_air)
         if t["peer_ifaces"]]
     if not targets:
         print("✓ No ext-storage nodes with CSL uplinks in this topology — nothing to fix.")
         return 0
 
-    secrets = _load_yaml(base / "inventory" / "group_vars" / "all" / "secrets.yml")
-    node_pw = secrets.get("server_ansible_password", "")
+    try:
+        node_pw = load_server_password(base / "inventory")
+    except SecretsError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 1
 
     print(f"Remediating {len(targets)} ext-storage node(s) via the Air jump...", flush=True)
     tried_and_failed = []

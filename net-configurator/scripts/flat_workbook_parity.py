@@ -33,6 +33,17 @@ FAMILIES = (("sample", "default"), ("largescale", "largescale"))
 
 SITE_NAME_KEY = "site_name"
 
+# The sheet carrying `site_name`: `Deployment` in the intake form (ADR-0064),
+# `Settings` in the legacy layout. The one cell a flat workbook is allowed to
+# differ by lives on it, so keying this to one name made every flat workbook
+# read as stale the moment the format changed.
+SITE_NAME_SHEETS = ("Deployment", "Settings")
+
+
+def _site_name_sheet(cells):
+    return next((s for s in SITE_NAME_SHEETS if s in cells), None)
+
+
 # What a reader of a failure should do about it. These files are not authored:
 # they are regenerated from the per-arch sources by the maintainers, so the fix
 # is never a hand-edit of the flat workbook.
@@ -63,12 +74,25 @@ def discover_archs(input_dir: Path) -> tuple[str, ...]:
     }))
 
 
+# `make convert-workbook` writes `<name>.intake.xlsx` beside its source, so a
+# converted workbook can legitimately appear at the top of `input/`. It is not
+# a flat workbook and has no site directory to match, so discovery must skip
+# it -- otherwise converting anything makes this check report a phantom
+# orphan. Same rule as `tests/conftest.legacy_workbooks`.
+INTAKE_SUFFIX = ".intake.xlsx"
+
+
+def _is_intake(path: Path) -> bool:
+    return path.name.endswith(INTAKE_SUFFIX)
+
+
 def discover_flat_workbooks(input_dir: Path) -> tuple[tuple[str, str, Path], ...]:
     """Every flat workbook on disk as (prefix, arch, path)."""
     return tuple(sorted(
         (prefix, p.stem[len(prefix) + 1:], p)
         for prefix, _scale in FAMILIES
         for p in input_dir.glob(f"{prefix}-*.xlsx")
+        if not _is_intake(p)
     ))
 
 
@@ -108,7 +132,8 @@ def workbook_cells(path: Path) -> dict[str, tuple[tuple, ...]]:
 def expected_cells(source: Path, site_name: str) -> dict[str, tuple[tuple, ...]]:
     """The source's cells as they should appear in the derived flat workbook."""
     cells = workbook_cells(source)
-    settings = cells.get("Settings")
+    sheet = _site_name_sheet(cells)
+    settings = cells.get(sheet) if sheet else None
     if settings is None:
         return cells
     patched = []
@@ -116,12 +141,12 @@ def expected_cells(source: Path, site_name: str) -> dict[str, tuple[tuple, ...]]
         if row and row[0] == SITE_NAME_KEY and len(row) > 1:
             row = (row[0], site_name) + tuple(row[2:])
         patched.append(tuple(row))
-    cells["Settings"] = tuple(patched)
+    cells[sheet] = tuple(patched)
     return cells
 
 
 def _site_name_of(cells: dict[str, tuple[tuple, ...]]) -> str | None:
-    for row in cells.get("Settings", ()):
+    for row in cells.get(_site_name_sheet(cells) or "", ()):
         if row and row[0] == SITE_NAME_KEY and len(row) > 1:
             return row[1]
     return None

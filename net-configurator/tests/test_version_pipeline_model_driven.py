@@ -12,9 +12,9 @@ Root cause: the VERSIONS table is keyed by the models' function vocabulary
 the `classify_node()` vocabulary (`oob`, `gsl`, `csl`, …). Only `core` is
 spelled the same in both, so only `core` ever matched.
 
-The miss was invisible because an unmatched role fell through to
-SWITCH_OS_FALLBACK — a DIFFERENT, OLDER image — with no warning, so a deploy
-would report "validated 5.18.0" while running 5.16.0.
+The miss was invisible because an unmatched role fell through to a different,
+older image with no warning, so a deploy would report "validated 5.18.0" while
+running an older release.
 """
 
 import sys
@@ -26,7 +26,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from topology_generator import (  # noqa: E402
-    SWITCH_OS_FALLBACK,
     TopologyGenerator,
     UnresolvedSwitchVersionError,
 )
@@ -167,15 +166,20 @@ class TestModelVocabularyReachesTopology:
             f"{TARGET}: {wrong}"
         )
 
-    def test_no_switch_silently_falls_back(self, tmp_path):
-        """The specific failure mode: a DIFFERENT, older image, no warning."""
-        images = _uniform_images(tmp_path)
-        fell_back = {n: img for n, img in images.items()
-                     if img == SWITCH_OS_FALLBACK}
-        assert not fell_back, (
-            f"{len(fell_back)} switch(es) silently fell back to "
-            f"{SWITCH_OS_FALLBACK} instead of {TARGET_IMAGE}: {fell_back}"
+    def test_missing_role_group_raises(self, tmp_path):
+        """A switch role absent from VERSIONS fails during generation."""
+        version_map = {
+            key: TARGET for key in MODEL_VERSION_KEYS if key != "core"
+        }
+        path = _build_workbook(
+            version_map, [(TARGET, TARGET_IMAGE)], tmp_path,
         )
+        gen = TopologyGenerator(path, arch="2-8-9-800", site="default")
+        with pytest.raises(
+            UnresolvedSwitchVersionError,
+            match="core-01",
+        ):
+            gen.generate()
 
     def test_oob_specifically(self, tmp_path):
         """`oob-switch` (models) vs `oob` (classify_node) — the exact mismatch."""
@@ -213,9 +217,21 @@ class TestUnresolvedVersionFailsLoudly:
             TopologyGenerator(path, arch="2-8-9-800", site="default")
         msg = str(exc.value)
         assert TARGET in msg, "error must name the unresolved version"
-        assert SWITCH_OS_FALLBACK not in msg or "fallback" not in msg.lower(), (
-            "must not present the fallback as an acceptable outcome"
+
+    def test_recognised_role_with_no_resolved_image_raises(self, tmp_path):
+        """A recognised switch role whose image resolves nowhere names the switch in its error."""
+        path = _build_workbook(
+            {k: TARGET for k in MODEL_VERSION_KEYS},
+            [(TARGET, TARGET_IMAGE)], tmp_path,
         )
+        gen = TopologyGenerator(path, arch="2-8-9-800", site="default")
+        gen._switch_os.pop("core")
+        gen._name_to_role["mystery-switch-01"] = "core"
+        with pytest.raises(
+            UnresolvedSwitchVersionError,
+            match="mystery-switch-01",
+        ):
+            gen._resolve_os("mystery-switch-01")
 
     def test_empty_image_map_raises(self, tmp_path):
         path = _build_workbook({k: TARGET for k in MODEL_VERSION_KEYS}, [], tmp_path)

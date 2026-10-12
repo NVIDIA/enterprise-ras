@@ -74,8 +74,13 @@ def test_vrf_loopbacks_never_hit_switch_loopback_range(n_leaves):
     EXIT loopback previously landed on .11 — another switch's global router-id.
     """
     for sw, vrf, ip in _alloc(n_leaves):
+        # Every VRF now allocates from LOOPBACK_BASE, GPU included, so this
+        # guard no longer skips anything. It stays because the check below is
+        # only meaningful for addresses in that /24 — if a VRF is ever given
+        # its own range again, skipping is the correct behaviour, not asserting
+        # a .150 floor against an unrelated subnet.
         if not ip.startswith(LOOPBACK_BASE):
-            continue                      # GPU rides the GPU data subnet
+            continue
         last = int(ip.rsplit(".", 1)[1])
         assert last > 150, (
             f"{sw}:{vrf} = {ip} falls inside the switch-loopback/VTEP range "
@@ -97,6 +102,52 @@ def test_vrf_blocks_do_not_overlap_each_other():
         assert ra.stop <= rb.start, f"{a} block {ra} overlaps {b} block {rb}"
     for vrf, r in spans.items():
         assert r.stop - 1 <= 254, f"{vrf} block {r} runs past the /24"
+
+
+def test_gpu_loopback_comes_from_the_loopback_pool_not_the_rail_subnet():
+    """GPU was the last VRF still cutting its loopback from a tenant subnet.
+
+    It used to be `<first GPU VLAN subnet>.4 + n`, putting it in a /24 that
+    also carries per-switch SVIs from .2 and (ADR-0062) host addresses from
+    .50 — three uncoordinated allocators in one subnet. `_alloc`'s GPU VLAN
+    is 192.168.110.0/24, so the old scheme gave leaf-01 192.168.110.5.
+    """
+    got = generate_vrf_loopbacks(VLANS, 1)["GPU"]
+    assert got == f"{LOOPBACK_BASE}.{VRF_LOOPBACK_BLOCKS['GPU'] + 1}/32"
+    assert not got.startswith("192.168.110."), "GPU loopback back in the rail subnet"
+
+
+def test_gpu_loopback_never_lands_in_any_vlan_subnet():
+    """The property, not the formula: no declared VLAN may contain it.
+
+    Written against every VLAN in the fixture rather than just the GPU one,
+    because the failure mode is a loopback sharing a subnet with hosts —
+    which VRF owns that subnet is irrelevant to the collision.
+    """
+    import ipaddress
+    nets = [ipaddress.ip_network(v["subnet"]) for v in VLANS]
+    for n_leaves in range(1, MAX_LEAVES + 1):
+        ip = ipaddress.ip_address(
+            generate_vrf_loopbacks(VLANS, n_leaves)["GPU"].split("/")[0])
+        for net in nets:
+            assert ip not in net, f"{ip} (leaf-{n_leaves:02d} GPU) sits inside {net}"
+
+
+def test_a_four_core_fabric_no_longer_duplicates_an_svi():
+    """The concrete latent bug this change closes.
+
+    Rail-subnet SVIs are `1 + core_num` and the old GPU loopback was
+    `4 + core_num`, both in the same /24. At four cores those series meet:
+    core-04's SVI and core-01's loopback were both `<rail>.5`. Shipped archs
+    have two cores, so it never fired — it was waiting on fabric growth.
+    """
+    rail = "192.168.110"
+    old_loopbacks = {f"{rail}.{4 + n}" for n in range(1, 5)}
+    svis = {f"{rail}.{1 + n}" for n in range(1, 5)}
+    assert old_loopbacks & svis == {f"{rail}.5"}, \
+        "fixture no longer reproduces the original collision"
+    new = {generate_vrf_loopbacks(VLANS, n)["GPU"].split("/")[0] for n in range(1, 5)}
+    assert not (new & svis)
 
 
 def test_storage_gets_a_loopback_when_the_vrf_exists():

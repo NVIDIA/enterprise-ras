@@ -42,6 +42,7 @@ def test_deploy_site_override_logic():
         '[ -n "$_DEPLOY_SITE" ] || _DEPLOY_SITE="$_SITE"; '
         'echo "$_DEPLOY_SITE"'
     )
+
     def run(env):
         return subprocess.run(["bash", "-c", script], capture_output=True,
                               text=True, env=env).stdout.strip()

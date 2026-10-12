@@ -1,0 +1,6 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+# Local account on the ZTP server that owns the SSH key published at
+# /ztp_server_key.pub. Override in group_vars or with -e ztp_server_user=<name>.
+ztp_server_user: netadmin

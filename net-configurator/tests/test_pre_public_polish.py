@@ -27,10 +27,17 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 # #16 — inventory group name
 # ---------------------------------------------------------------------------
 
-SOURCE_HOSTS = sorted((PROJECT_ROOT / "inventories").glob("*/hosts"))
+# The per-arch seed hosts files are gone; the shipped inventories are the
+# generated reference outputs.
+SOURCE_HOSTS = sorted(p for site in ("default", "largescale")
+                      for p in (PROJECT_ROOT / "output").glob(f"*/{site}/inventory/hosts"))
 
 
-@pytest.mark.parametrize("hosts_file", SOURCE_HOSTS, ids=lambda p: p.parent.name)
+def test_shipped_inventories_exist():
+    assert len(SOURCE_HOSTS) >= 16
+
+
+@pytest.mark.parametrize("hosts_file", SOURCE_HOSTS, ids=lambda p: "/".join(p.parts[-4:-2]))
 def test_source_inventory_uses_underscore_oob_group(hosts_file):
     text = hosts_file.read_text()
     assert "[oob-server]" not in text, (

@@ -4,8 +4,10 @@
 """
 ERA Excel Parser — generates Ansible inventory from wiremap Excel templates.
 
-Parses the Nodes and Wire Map sheets from each architecture's Excel file and
-produces host_vars, group_vars, and hosts files under output/<arch>/<site>/inventory/.
+Reads the intake workbook (Wiremap, Network Data, Switch Data, Host Data
+and Deployment) and produces host_vars, group_vars and hosts under
+output/<arch>/<site>/inventory/. Internal helpers use legacy-shaped in-memory
+views supplied by intake_to_legacy; these are not additional user-authored tabs.
 
 Usage:
     # Generate inventory for a single architecture
@@ -22,8 +24,8 @@ import ipaddress
 import openpyxl
 import hashlib
 import re
+import shlex
 import sys
-import yaml
 import zipfile
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -37,12 +39,28 @@ from utils import (
     build_nic_destinations,
     plane_for_switch,
     loopbacks_sheet_name,
+    normalize_oob_uplink_mode,
 )
-from oob_reserved import AIR_MGMT_RESERVED_OCTETS, OOB_RESERVED_OCTETS
+from oob_reserved import (AIR_MGMT_RESERVED_OCTETS, OOB_RESERVED_OCTETS,
+                          AIR_MGMT_SVI_OCTET, EXT_STORAGE_FIRST_OCTET,
+                          ZTP_SERVER_OCTET, oob_reserved_for_mode)
+from infra_ip_allocation import (
+    DHCP_OOB_PREFERRED_OFFSET, DHCP_POOL_PREFERRED_OFFSETS, UTILITY_PREFERRED_OFFSET,
+    EXTERNAL_DHCP_PREFERRED_OFFSET, UTILITY_AIR_MGMT_PREFERRED_OFFSET,
+    allocate_infra_ips, dhcp_pool, infra_gateway, taken_addresses,
+)
+from gpu_ip_allocation import DUAL_PLANE_NICS_PER_NODE, GPU_HOST_START_OFFSET, gpu_host_ips
 import asn_allocation as asn_alloc
+import inventory_yaml
+from inventory_yaml import AnsibleExpr, has_jinja_marker
 import loopback_allocation as lb_alloc
 from inventory_defaults import (
     SERVERS_GROUP_VARS, SWITCHES_GROUP_VARS, arch_group_vars, air_vnode_host_vars)
+from intake_reader import column_map as _intake_column_map, header_row as _intake_header_row, \
+    read_deployment as _intake_read_deployment
+from intake_derive import DerivationError, derive_convergence, derive_gpu_planes
+from intake_layout import host_row_groups as intake_host_row_groups
+import intake_to_legacy
 
 # RFC1123-ish: node name used as a host_vars filename + a bare INI hosts token.
 _INV_HOSTNAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
@@ -63,6 +81,20 @@ def assert_valid_inv_hostname(name):
             f"Ansible inventory entry. Fix the Name cell."
         )
     return name
+
+
+def require_air_vnode_host_vars(arch, vnode):
+    """Air virtual-node host_vars defaults for (arch, vnode); a registered arch
+    with no block is a hard error rather than a silently missing host_vars file."""
+    src_vars = air_vnode_host_vars(arch, vnode)
+    if src_vars is None:
+        raise SystemExit(
+            f"❌ No Air virtual-node host_vars defaults for {vnode!r} under "
+            f"architecture {arch!r} (scripts/inventory_defaults.yml host_vars). "
+            f"Air deploy would be left without {vnode}.yml — add the arch block "
+            f"(alias an existing one) rather than skipping the node."
+        )
+    return src_vars
 
 
 def load_workbook_safe(path, **kwargs):
@@ -90,6 +122,11 @@ DEFAULT_DISABLED_INTERFACES = {
 
 # Loopback network base
 LOOPBACK_BASE = '172.16.176'
+
+# Intake-form sheets the parser reads directly (ADR-0064). `Read Me` and
+# `Derived` are informational; the legacy-shaped views are built in memory.
+REQUIRED_INTAKE_SHEETS = ('Wiremap', 'Deployment', 'Switch Data',
+                          'Host Data', 'Network Data')
 
 # Loopback allocation (N/S per-VRF blocks + E/W plane blocks) moved to
 # loopback_allocation.py — the single source shared with the arch generator,
@@ -364,7 +401,7 @@ def extract_role_index(name):
 #
 #   OPTIONAL (parser falls back)
 #   - display_in_air               Defaults to False if blank
-#   - system_role / function       Falls back to Nodes-tab lookup (MR !28)
+#   - system_role / function       Falls back to Nodes-tab lookup
 #   - switch_role / switch_function   Same
 #
 #   OPERATOR DOCUMENTATION (parser ignores; kept for cabling crew)
@@ -402,10 +439,13 @@ _WM_HEADER_ALIASES = {
     'switch_role':     ('function (b)', 'function(b)', 'b-side function',
                         'b side function',
                         'switch function', 'switch role', 'switch type'),
-    'switch_name':     ('system name (b)', 'system name(b)', 'b-side system name',
-                        'b side system name', 'b-side name', 'b side name',
+    'switch_name':     ('system name (b)', 'system name(b)',
+                        'system name (z)', 'system name(z)',
+                        'b-side system name', 'b side system name',
+                        'b-side name', 'b side name',
                         'switch name', 'switch hostname', 'peer'),
-    'switch_port':     ('port (b)', 'port(b)', 'b-side port', 'b side port',
+    'switch_port':     ('port (b)', 'port(b)', 'port (z)', 'port(z)',
+                        'b-side port', 'b side port',
                         'switch port', 'peer port', 'switch interface'),
 }
 
@@ -719,6 +759,262 @@ def _dataplane_host_ips(subnet_str, idx, count, legacy_start, stride, reserved=2
 # deciding "how many nodes draw from this subnet" has to group them the way the
 # allocation loop does. Kept as one table so the two cannot drift;
 # validate_excel.py encodes the same grouping in its `checks` list.
+class DeclaredIpError(ValueError):
+    """A `Host Data` data-plane IP declaration cannot be honoured (ADR-0034)."""
+
+
+# Which `Host Data` logical interface fills which devices slot, per role. The
+# subnet key is looked up in build_devices' subnet_map (support falls back to
+# cpu exactly as the allocator does).
+_DECLARED_BOND_SLOTS = {
+    'compute': {'bond0': ('bond_ip', ('cpu',))},
+    'storage': {'bond0': ('bond_ip1', ('storage',)),
+                'bond1': ('bond_ip2', ('storage',))},
+    'support': {'bond0': ('bond_ip1', ('support', 'cpu')),
+                'bond1': ('bond_ip2', ('support', 'cpu'))},
+    'k8s': {'bond0': ('bond_ip1', ('support', 'cpu')),
+            'bond1': ('bond_ip2', ('support', 'cpu'))},
+    'bcme': {'bond0': ('bond_ip1', ('support', 'cpu')),
+             'bond1': ('bond_ip2', ('support', 'cpu'))},
+}
+
+# Which Wire Map interface list a role's bonds are built from (first key
+# present wins) and how many data NICs each bond needs before the server
+# renderers create it. Mirrors roles/nodes|storage|support/templates/
+# interfaces.j2 and air-deploy.py's netplan builders: compute puts every CPU
+# NIC in bond0; storage/support pair NICs [0,1] into bond0 and [2,3] into bond1.
+_DECLARED_BOND_NICS = {
+    'compute': (('cpu',), {'bond0': 1}),
+    'storage': (('storage', 'cpu'), {'bond0': 2, 'bond1': 4}),
+    'support': (('support', 'cpu'), {'bond0': 2, 'bond1': 4}),
+    'k8s': (('support', 'cpu'), {'bond0': 2, 'bond1': 4}),
+    'bcme': (('support', 'cpu'), {'bond0': 2, 'bond1': 4}),
+}
+
+
+def _bond_data_nics(entry):
+    """The host's Wire Map data NICs its bonds are built from (eth0 excluded)."""
+    keys, _need = _DECLARED_BOND_NICS.get(entry.get('role'), ((), {}))
+    ifaces = entry.get('interfaces') or {}
+    for key in keys:
+        if key in ifaces:
+            return [i for i in ifaces[key] if str(i).lower() != 'eth0']
+    return []
+
+
+def _check_declared_ip(raw, subnet_str, claimed_offsets):
+    """Normalise a declared cell to ``'ip/prefix'`` inside ``subnet_str``.
+
+    ``claimed_offsets`` are host offsets the fabric owns in this subnet
+    (gateway, SVIs, and for GPU subnets everything below the fixed host
+    start). Network and broadcast are always refused. Raises DeclaredIpError.
+    """
+    try:
+        net = ipaddress.ip_network(subnet_str, strict=False)
+    except (ValueError, TypeError):
+        raise DeclaredIpError(
+            "no valid subnet is defined for this interface's VLAN")
+    raw = str(raw).strip()
+    addr_s, _, pfx = raw.partition('/')
+    try:
+        addr = ipaddress.IPv4Address(addr_s.strip())
+    except ValueError:
+        raise DeclaredIpError(f"{raw!r} is not a valid IPv4 address")
+    if pfx.strip() and pfx.strip() != str(net.prefixlen):
+        raise DeclaredIpError(
+            f"declared prefix /{pfx.strip()} does not match the VLAN subnet {net}")
+    if addr not in net:
+        raise DeclaredIpError(f"{addr} is outside the VLAN subnet {net}")
+    if addr in (net.network_address, net.broadcast_address):
+        raise DeclaredIpError(f"{addr} is the network/broadcast address of {net}")
+    off = int(addr) - int(net.network_address)
+    if off in claimed_offsets:
+        raise DeclaredIpError(
+            f"{addr} is claimed by the fabric ({claimed_offsets[off]})")
+    return f"{addr}/{net.prefixlen}"
+
+
+def _bond_claims(subnet_str, gateway, reserved):
+    """Offsets the fabric owns in a bonded data VLAN -> owner, mirroring
+    `_svi_reserved_offsets` (gateway + one SVI per SVI-bearing switch)."""
+    try:
+        net = ipaddress.ip_network(subnet_str, strict=False)
+    except (ValueError, TypeError):
+        return {}
+    base = int(net.network_address)
+    claims = {}
+    try:
+        claims[int(ipaddress.ip_address(_svi_gateway_ip(subnet_str, gateway))) - base] = \
+            'VRR/anycast gateway'
+    except ValueError:
+        pass
+    for k in range(1, max(int(reserved) - 1, 1)):
+        svi = _svi_switch_ip(subnet_str, gateway, k)
+        claims.setdefault(int(ipaddress.ip_address(svi)) - base,
+                          f'switch SVI (switch ordinal {k})')
+    return claims
+
+
+def _gpu_claims():
+    """Every offset below the fixed GPU host start is fabric territory."""
+    return {o: f'GPU fabric range (below host offset {GPU_HOST_START_OFFSET})'
+            for o in range(1, GPU_HOST_START_OFFSET)}
+
+
+def _device_dataplane_slots(entry):
+    """Every data-plane address slot of a device -> current value.
+
+    Slot keys: ``'bond_ip'``/``'bond_ip1'``/``'bond_ip2'``,
+    ``('gpu_interfaces', <nic>)`` or ``('gpu_ips', <index>)``.
+    """
+    slots = {}
+    for slot in ('bond_ip', 'bond_ip1', 'bond_ip2'):
+        if entry.get(slot):
+            slots[slot] = entry[slot]
+    for g in entry.get('gpu_interfaces') or []:
+        slots[('gpu_interfaces', g['iface'])] = g['ip']
+    for i, ip in enumerate(entry.get('gpu_ips') or []):
+        slots[('gpu_ips', i)] = ip
+    return slots
+
+
+def _set_device_slot(entry, slot, value):
+    if isinstance(slot, str):
+        entry[slot] = value
+        return
+    kind, key = slot
+    if kind == 'gpu_interfaces':
+        for g in entry['gpu_interfaces']:
+            if g['iface'] == key:
+                g['ip'] = value
+        return
+    entry['gpu_ips'][key] = value
+    if key == 0 and 'gpu_ip1' in entry:
+        entry['gpu_ip1'] = value
+    if key == 1 and 'gpu_ip2' in entry:
+        entry['gpu_ip2'] = value
+
+
+def _slot_label(slot):
+    return slot if isinstance(slot, str) else f"{slot[0]}[{slot[1]}]"
+
+
+def _apply_declared_dataplane_ips(devices, declared, subnet_map, gateway_map, reserved,
+                                  wired=True):
+    """Overlay `Host Data` declarations onto allocated devices; fail closed.
+
+    Rules (ADR-0034): a declaration binds by `Logical Interface` for bonds
+    and by NIC name for GPU interfaces; when a Wire Map was supplied
+    (``wired``) a declared bond must actually exist on the host, i.e. the
+    host has enough data NICs for the server renderers to build it; every
+    row of one bond must agree; the
+    address must sit inside that interface's VLAN, off the fabric's claims,
+    and be unique across the fabric -- including against addresses the
+    allocator handed to OTHER hosts, which is reported as a collision rather
+    than silently re-seating the allocated host. All problems are collected
+    and raised together so the operator fixes the sheet once.
+    """
+    errors = []
+    overrides = {}   # host -> {slot: (value, where)}
+
+    for host in sorted(declared):
+        rows = declared[host]
+        entry = devices.get(host)
+        if entry is None:
+            for d in rows:
+                errors.append(
+                    f"Host Data row {d['row']} ({host} {d['logical']}): host "
+                    f"is not an active server, so its data-plane IP cannot be "
+                    f"applied")
+            continue
+        role = entry.get('role')
+        bond_slots = _DECLARED_BOND_SLOTS.get(role, {})
+        current = _device_dataplane_slots(entry)
+        gpu_by_nic = {g['iface'].lower(): g['iface']
+                      for g in entry.get('gpu_interfaces') or []}
+        gpu_order = [e.lower() for e in (entry.get('interfaces') or {}).get('gpu') or []
+                     if e.lower() != 'eth0']
+        data_nics = _bond_data_nics(entry)
+        _keys, bond_need = _DECLARED_BOND_NICS.get(role, ((), {}))
+        per_slot = {}
+        for d in rows:
+            where = f"Host Data row {d['row']} ({host} {d['logical']})"
+            logical = d['logical']
+            nic = d['nic'] or (d['physical'] or '').lower()
+            if logical in bond_slots:
+                slot, keys = bond_slots[logical]
+                need = bond_need.get(logical, 0)
+                if wired and len(data_nics) < need:
+                    errors.append(
+                        f"{where}: {logical} does not exist on this host -- its "
+                        f"Wire Map has {len(data_nics)} data NIC(s) "
+                        f"{data_nics} and the server templates build {logical} "
+                        f"only from {need} or more; a declared address would be "
+                        f"silently omitted from the generated configuration")
+                    continue
+                key = next((k for k in keys if subnet_map.get(k)), None)
+                subnet = subnet_map.get(key) if key else None
+                claims = _bond_claims(subnet, gateway_map.get(key, ''), reserved)
+            elif logical in gpu_by_nic or nic in gpu_by_nic:
+                slot = ('gpu_interfaces', gpu_by_nic.get(logical) or gpu_by_nic[nic])
+                subnet = current[slot]
+                claims = _gpu_claims()
+            elif ('gpu_ips', 0) in current and (logical in gpu_order or nic in gpu_order):
+                slot = ('gpu_ips', gpu_order.index(logical if logical in gpu_order else nic))
+                if slot not in current:
+                    errors.append(f"{where}: no GPU address slot for this NIC")
+                    continue
+                subnet = current[slot]
+                claims = _gpu_claims()
+            else:
+                errors.append(
+                    f"{where}: cannot bind a {role} host's {logical!r} to a "
+                    f"data-plane address (expected one of "
+                    f"{sorted(bond_slots) + sorted(gpu_by_nic or gpu_order)})")
+                continue
+            try:
+                value = _check_declared_ip(d['ip'], subnet, claims)
+            except DeclaredIpError as exc:
+                errors.append(f"{where}: {exc}")
+                continue
+            prev = per_slot.get(slot)
+            if prev and prev[0] != value:
+                errors.append(
+                    f"{where}: {value} disagrees with {prev[0]} declared on "
+                    f"{prev[1]} for the same interface")
+                continue
+            per_slot.setdefault(slot, (value, where))
+        overrides[host] = per_slot
+
+    # Final address map = allocation with declarations overlaid; any address
+    # held twice is a fault if a declaration is on either side.
+    owners = {}
+    for host, entry in devices.items():
+        ov = overrides.get(host, {})
+        held = _device_dataplane_slots(entry)
+        for slot in list(held) + [s for s in ov if s not in held]:
+            if slot in ov:
+                value, src = ov[slot]
+            else:
+                value, src = held[slot], None
+            owners.setdefault(value, []).append((host, slot, src))
+    for value, holders in owners.items():
+        if len(holders) < 2 or not any(src for _h, _s, src in holders):
+            continue
+        desc = ", ".join(
+            f"{h} {_slot_label(s)} ({src or 'allocated'})" for h, s, src in holders)
+        errors.append(f"{value} would be held by more than one interface: {desc}")
+
+    if errors:
+        raise DeclaredIpError(
+            "Host Data declares data-plane IP(s) that cannot be applied:\n  - "
+            + "\n  - ".join(errors))
+
+    for host, per_slot in overrides.items():
+        for slot, (value, _where) in per_slot.items():
+            _set_device_slot(devices[host], slot, value)
+
+
 _ROLE_ALLOC_POOL = {
     'compute': 'compute',
     'storage': 'storage',
@@ -728,8 +1024,237 @@ _ROLE_ALLOC_POOL = {
 }
 
 
-def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vlan_mode='single'):
+# ---------------------------------------------------------------------------
+# ADR-0044 GPU index origin — the single logical/physical boundary
+#
+# GPU plane and rail identifiers in a workbook are LOGICAL. Generated
+# workbooks number them from zero (`gpu_plane0`, `gpu_rail0`,
+# `gpu_rail0_plane0`); operator workbooks written before ADR-0044 number them
+# from one. Everything PHYSICAL stays one-based and is never renumbered:
+# switch hostnames (`gsl-plane1-*`), inventory groups (`gsl_plane1`),
+# group_vars filenames (`gl_plane1.yml`), loopbacks and Wire Map `Port Side`.
+#
+# So any code joining a VLAN/profile name to a switch has to ask for the
+# origin first and then translate. `validate_excel.py` imports these three
+# functions rather than re-deriving the rule, because a validator that
+# inferred a different origin would approve a workbook the parser reads as a
+# different fabric.
+# ---------------------------------------------------------------------------
+
+GPU_PLANE_VLAN_RE = re.compile(r'^gpu_plane(\d+)$')
+GPU_RAIL_VLAN_RE = re.compile(r'^gpu_rail(\d+)$')
+GPU_RAIL_PLANE_VLAN_RE = re.compile(r'^gpu_rail(\d+)_plane(\d+)$')
+
+# ADR-0044 ceilings: 16 rails per plane, 2 GPU planes per fabric.
+GPU_MAX_RAILS = 16
+GPU_MAX_PLANES = 2
+
+
+def gpu_index_origin(vlan_names) -> int:
+    """Return 0 for zero-based GPU names, otherwise legacy origin 1.
+
+    A zero anywhere in a plane, rail or rail-plane position is the marker.
+    Detection is deliberately marker-based rather than "smallest index wins":
+    a zero-based set legitimately contains `gpu_rail1_plane1` (rail 1 of
+    plane 1), so treating any non-zero index as legacy would misread every
+    ADR-0044 workbook past its first rail.
+    """
+    names = [str(name or "").strip().lower() for name in vlan_names]
+    zero_based = any(
+        re.match(r"^gpu_plane0$", name)
+        or re.match(r"^gpu_rail0(?:_plane\d+)?$", name)
+        or re.match(r"^gpu_rail\d+_plane0$", name)
+        for name in names
+    )
+    return 0 if zero_based else 1
+
+
+def physical_gpu_plane(logical_plane: int, index_origin: int) -> int:
+    """Map workbook GPU plane index to one-based physical switch plane."""
+    return int(logical_plane) - int(index_origin) + 1
+
+
+def logical_gpu_plane(physical_plane: int, index_origin: int) -> int:
+    """Inverse of physical_gpu_plane: physical switch plane -> workbook index.
+
+    Used where the physical plane is known first (a `gsl-plane2-*` host, a
+    `gl_plane2.yml` group file) and the matching VLAN row name has to be
+    reconstructed.
+    """
+    return int(physical_plane) + int(index_origin) - 1
+
+
+def select_plane_gpu_vlan(gpu_vlans, logical_plane, physical_plane):
+    """The GPU VLAN row that configures one physical switch plane, or ``{}``.
+
+    Rows are chosen by the plane they BELONG TO, never by their position in
+    the GPU row list. A per-(rail, plane) sheet has no `gpu_plane{N}` row at
+    all, so indexing that list by the physical ordinal picked
+    `gpu_rail1_plane0` for physical plane 2 and wrote logical plane 0's rail
+    onto plane 2's switches.
+
+    Preference order:
+
+    1. the plane's aggregate `gpu_plane{logical_plane}` row;
+    2. its lowest-numbered `gpu_rail{R}_plane{logical_plane}` row;
+    3. physical plane 1 only — the first row that declares no plane at all
+       (bare `gpu_rail{R}`, lowest rail first, then any unindexed GPU row).
+
+    A plane no row claims returns ``{}`` so the caller omits its GPU values;
+    guessing one is what crossed the planes.
+    """
+    def _name(row):
+        return str(row.get('name') or '').strip().lower()
+
+    aggregate = f'gpu_plane{int(logical_plane)}'
+    for row in gpu_vlans:
+        if _name(row) == aggregate:
+            return row
+
+    rails = [
+        (int(match.group(1)), row)
+        for row, match in (
+            (row, GPU_RAIL_PLANE_VLAN_RE.match(_name(row))) for row in gpu_vlans
+        )
+        if match and int(match.group(2)) == int(logical_plane)
+    ]
+    if rails:
+        return min(rails, key=lambda item: item[0])[1]
+
+    if int(physical_plane) != 1:
+        return {}
+
+    # Planeless rows: a single-plane fabric's `gpu_rail{R}` rows, or a
+    # collapsed sheet's unindexed `GPU` row. They describe physical plane 1.
+    planeless = [
+        row for row in gpu_vlans
+        if not GPU_PLANE_VLAN_RE.match(_name(row))
+        and not GPU_RAIL_PLANE_VLAN_RE.match(_name(row))
+    ]
+    bare_rails = [
+        (int(match.group(1)), row)
+        for row, match in (
+            (row, GPU_RAIL_VLAN_RE.match(_name(row))) for row in planeless
+        )
+        if match
+    ]
+    if bare_rails:
+        return min(bare_rails, key=lambda item: item[0])[1]
+    return planeless[0] if planeless else {}
+
+
+def gpu_index_errors(vlan_names, index_origin=None,
+                     max_rails=GPU_MAX_RAILS, max_planes=GPU_MAX_PLANES):
+    """Origin-inconsistent GPU VLAN names, as a list of messages.
+
+    Once `gpu_index_origin()` has picked an origin, every declared plane and
+    rail index must sit inside ``[origin, origin+max-1]`` and the declared
+    sets must be contiguous from the origin. Anything else is reported with
+    the detected origin and the offending row names, never silently
+    reinterpreted with the other origin — a half-remapped workbook would put
+    GPU subnets on the wrong physical switch plane, which is far worse than
+    refusing to parse it.
+
+    Empty list = consistent (including workbooks with no GPU rows at all).
+    """
+    names = [str(name or "").strip().lower() for name in vlan_names]
+    origin = gpu_index_origin(names) if index_origin is None else int(index_origin)
+
+    plane_names = {}   # logical plane -> [row names declaring it]
+    rail_names = {}    # (logical plane or None, logical rail) -> [row names]
+    for name in names:
+        match = GPU_RAIL_PLANE_VLAN_RE.match(name)
+        if match:
+            rail, plane = int(match.group(1)), int(match.group(2))
+            plane_names.setdefault(plane, []).append(name)
+            rail_names.setdefault((plane, rail), []).append(name)
+            continue
+        match = GPU_RAIL_VLAN_RE.match(name)
+        if match:
+            rail_names.setdefault((None, int(match.group(1))), []).append(name)
+            continue
+        match = GPU_PLANE_VLAN_RE.match(name)
+        if match:
+            plane_names.setdefault(int(match.group(1)), []).append(name)
+
+    if not plane_names and not rail_names:
+        return []
+
+    label = "zero-based" if origin == 0 else "legacy one-based"
+    errors = []
+
+    def _rows(collected):
+        return ", ".join(sorted(set(collected)))
+
+    def _in_range(index, limit):
+        return origin <= index < origin + limit
+
+    out_of_range = [name
+                    for plane, rows in plane_names.items()
+                    for name in rows
+                    if not _in_range(plane, max_planes)]
+    if out_of_range:
+        errors.append(
+            f"GPU plane index out of range for the detected {label} indexing "
+            f"(origin {origin}): logical planes must be "
+            f"{origin}–{origin + max_planes - 1}. Offending VLAN rows: "
+            f"{_rows(out_of_range)}."
+        )
+
+    out_of_range = [name
+                    for (_plane, rail), rows in rail_names.items()
+                    for name in rows
+                    if not _in_range(rail, max_rails)]
+    if out_of_range:
+        errors.append(
+            f"GPU rail index out of range for the detected {label} indexing "
+            f"(origin {origin}): logical rails must be "
+            f"{origin}–{origin + max_rails - 1}. Offending VLAN rows: "
+            f"{_rows(out_of_range)}."
+        )
+
+    # Contiguity is only meaningful for the indices that are in range; the
+    # out-of-range report above already names the rest.
+    declared_planes = sorted(p for p in plane_names if _in_range(p, max_planes))
+    if declared_planes and declared_planes != list(
+            range(origin, origin + len(declared_planes))):
+        errors.append(
+            f"GPU plane indices are not contiguous from {origin} under the "
+            f"detected {label} indexing: declared logical planes "
+            f"{declared_planes}. VLAN rows: "
+            f"{_rows(n for p in declared_planes for n in plane_names[p])}."
+        )
+
+    rails_by_plane = {}
+    for (plane, rail), rows in rail_names.items():
+        if _in_range(rail, max_rails):
+            rails_by_plane.setdefault(plane, {})[rail] = rows
+    for plane, rails in sorted(rails_by_plane.items(),
+                               key=lambda kv: -1 if kv[0] is None else kv[0]):
+        declared_rails = sorted(rails)
+        if declared_rails == list(range(origin, origin + len(declared_rails))):
+            continue
+        scope = ("single-plane per-rail mode" if plane is None
+                 else f"logical plane {plane}")
+        errors.append(
+            f"GPU rail indices are not contiguous from {origin} in {scope} "
+            f"under the detected {label} indexing: declared logical rails "
+            f"{declared_rails}. VLAN rows: "
+            f"{_rows(n for r in declared_rails for n in rails[r])}."
+        )
+
+    return errors
+
+
+def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vlan_mode='single',
+                  declared_ips=None):
     """Build the devices dict for dnsmasq DHCP reservations and server netplan config.
+
+    ``declared_ips`` is `_parse_intake_host_declarations()` output: data-plane
+    addresses the operator filled into `Host Data` (ADR-0034). They replace
+    the allocator's value for that interface; every other cell is allocated
+    exactly as before. Invalid or colliding declarations raise
+    DeclaredIpError naming the offending Host Data rows.
 
     Generates:
       - eth0_ip + mac for ALL non-switch hosts (for DHCP reservations)
@@ -756,25 +1281,36 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
         gpu_vlan_mode: 'single' (default), 'per_rail', or 'per_rail_per_plane'.
             - single: one GPU VLAN; legacy behavior.
             - per_rail: one VLAN per rail (`gpu_rail<R>` rows, `GPU Rail R`
-              Wire Map profiles). See docs/plans/2026-05-17-vlan-per-gpu.md.
+              Wire Map profiles). Superseded the next day by
+              per_rail_per_plane below (see ADR-0044).
             - per_rail_per_plane: one VLAN per (rail, plane) combination
               (`gpu_rail<R>_plane<P>` rows, `GPU Rail R Plane P` Wire Map
-              profiles). See docs/plans/2026-05-18-gpu-plane-per-rail.md.
+              profiles). See ADR-0044.
     """
     devices = {}
     node_oob_mapping = node_oob_mapping or {}
 
     # Build subnet lookup by VLAN name (lowercase), with normalized aliases
     subnet_map = {}
+    # Which origin the workbook's GPU plane/rail names are numbered from
+    # (ADR-0044 zero-based, or legacy one-based). Decided once for the whole
+    # workbook so every lookup below translates the same way.
+    gpu_origin = gpu_index_origin(v.get('name') for v in vlans)
     # Per-plane GPU subnets (dual-plane mode): collected from gpu_plane<N> rows
-    # so the compute IP allocator can pick the right subnet per NIC.
+    # so the compute IP allocator can pick the right subnet per NIC. Keyed by
+    # PHYSICAL plane ('plane1', 'plane2'), because the only consumer looks the
+    # plane up from the switch a NIC is cabled to.
     gpu_planes = {}
     # Per-rail GPU subnets (gpu_vlan_mode=per_rail): collected from gpu_rail<N>
-    # rows. One VLAN per GPU NIC. Keyed by rail index ('rail1', 'rail2', ...).
+    # rows. One VLAN per GPU NIC. Keyed by the workbook's own rail index
+    # ('rail0', 'rail1', ... zero-based; 'rail1', 'rail2', ... on a legacy
+    # sheet) — rails are matched to Wire Map profile names, never to a
+    # physical ordinal, so they are not translated.
     gpu_rails = {}
     # Per-rail-per-plane GPU subnets (gpu_vlan_mode=per_rail_per_plane):
-    # collected from gpu_rail<R>_plane<P> rows. Keyed by (rail_key, plane_key)
-    # tuple e.g. ('rail1', 'plane1'). One VLAN per (rail, plane) combination.
+    # collected from gpu_rail<R>_plane<P> rows. Keyed by the workbook's own
+    # (rail_key, plane_key) tuple e.g. ('rail0', 'plane0'); matched against
+    # "GPU Rail R Plane P" profiles, which carry the same logical indices.
     gpu_rail_planes = {}
     for vlan in vlans:
         if vlan.get('name') and vlan.get('subnet'):
@@ -790,10 +1326,14 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
             if 'support' in key:
                 subnet_map['support'] = vlan['subnet']
 
-            # Multi-plane capture: 'gpu_plane1' -> plane='plane1'
+            # Multi-plane capture. The row name carries a LOGICAL plane index
+            # ('gpu_plane0' under ADR-0044, 'gpu_plane1' on a legacy sheet);
+            # both mean the first physical GPU plane, so key on the physical
+            # plane the switches actually carry: 'gpu_plane0' -> 'plane1'.
             m = re.match(r'^gpu_plane(\d+)$', key)
             if m:
-                plane = f"plane{m.group(1)}"
+                physical_plane = physical_gpu_plane(int(m.group(1)), gpu_origin)
+                plane = f"plane{physical_plane}"
                 base = vlan['subnet'].split('/')[0].rsplit('.', 1)[0]
                 gpu_planes[plane] = {
                     'subnet': vlan['subnet'],
@@ -812,7 +1352,10 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
                     # policy routing can't pin per-NIC egress, and the
                     # resulting ARP/MAC ambiguity caused ~85% loss on the
                     # GPU VRR ping in dual-plane Air sims.
-                    'table': (vlan.get('id') or 0) + (int(m.group(1)) - 1) * 100,
+                    # The offset counts from the PHYSICAL plane, so it stays
+                    # 0/100 whichever origin the workbook uses — a logical
+                    # plane 0 fed in raw would shift the table down by 100.
+                    'table': (vlan.get('id') or 0) + (physical_plane - 1) * 100,
                 }
 
             # Per-rail capture: 'gpu_rail1' -> rail='rail1'
@@ -830,11 +1373,14 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
                     'rail_index': int(m_rail.group(1)),
                 }
 
-            # Per-rail-per-plane capture: 'gpu_rail1_plane2' -> ('rail1','plane2')
+            # Per-rail-per-plane capture: 'gpu_rail0_plane1' -> ('rail0','plane1').
+            # Keys stay logical to match the Wire Map profile names; only the
+            # PBR plane offset below needs the physical plane.
             m_rp = re.match(r'^gpu_rail(\d+)_plane(\d+)$', key)
             if m_rp:
                 rail = f"rail{m_rp.group(1)}"
                 plane = f"plane{m_rp.group(2)}"
+                rp_physical_plane = physical_gpu_plane(int(m_rp.group(2)), gpu_origin)
                 base = vlan['subnet'].split('/')[0].rsplit('.', 1)[0]
                 gpu_rail_planes[(rail, plane)] = {
                     'subnet': vlan['subnet'],
@@ -842,8 +1388,10 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
                     'vlan_id': vlan.get('id'),
                     # PBR table: vlan_id + plane_offset keeps tables unique
                     # even when operators reuse VLAN IDs across planes (like
-                    # the dual-plane VLAN 900 convention extended).
-                    'table': (vlan.get('id') or 0) + (int(m_rp.group(2)) - 1) * 100,
+                    # the dual-plane VLAN 900 convention extended). Offset
+                    # counts from the physical plane so logical plane 0 adds
+                    # 0 rather than subtracting a stride.
+                    'table': (vlan.get('id') or 0) + (rp_physical_plane - 1) * 100,
                     'rail_index': int(m_rp.group(1)),
                     'plane_index': int(m_rp.group(2)),
                 }
@@ -880,7 +1428,7 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
         # ['support'] below), so counting only the literal 'support' role
         # undercounts it — the repack guard then believes the legacy .101 base
         # fits when it does not, silently stranding exactly the nodes this
-        # change exists to address. Caught in review, MR !262.
+        # change exists to address.
         _pool = _ROLE_ALLOC_POOL.get(
             classify_host_role(_n.get('role', _n.get('name', ''))))
         if _pool:
@@ -943,8 +1491,7 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
                 # Per-rail-per-plane mode: each GPU NIC belongs to a (rail,
                 # plane) combination. Wire Map Network Profile carries both
                 # ("GPU Rail R Plane P"). Same host octet across every
-                # (rail, plane) — gpu-01 → .201 in every combination.
-                host_offset = 201 + idx
+                # (rail, plane) — gpu-01 → .50 in every combination (ADR-0062).
                 _bond = _dataplane_host_ips(subnet_map.get('cpu'), idx, 1, 201, 1,
                                             reserved=_svi_reserved,
                                             total=role_total['compute'])
@@ -966,10 +1513,16 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
                     rp_info = gpu_rail_planes.get((rail_key, plane_key))
                     if not rp_info:
                         continue
-                    net = ipaddress.ip_network(rp_info['subnet'], strict=False)
-                    if host_offset >= net.num_addresses - 1:
-                        continue
-                    ip = f"{net.network_address + host_offset}/{net.prefixlen}"
+                    # One address per node per (rail, plane); the allocator
+                    # raises rather than skipping, so a node can no longer end
+                    # up with a partial gpu_interfaces list. GpuCapacityError
+                    # subclasses ValueError, so catching ValueError also gives
+                    # a bad node index the same node-named context.
+                    try:
+                        ip = gpu_host_ips(rp_info['subnet'], idx, 1)[0]
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"{name}: GPU {rail_key}/{plane_key}: {exc}") from exc
                     gpu_interfaces.append({
                         'iface': nic,
                         # Combined key reused by template/netplan iterator
@@ -987,8 +1540,8 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
                 # Per-rail mode: each GPU NIC has its own VLAN + subnet. NIC
                 # → rail mapping comes from the Wire Map's Network Profile
                 # column ("GPU Rail N" → rail N). Same host octet on every
-                # rail (gpu-01 → .201 across all rails, gpu-02 → .202, etc.).
-                host_offset = 201 + idx
+                # rail (gpu-01 → .50 across all rails, gpu-02 → .51, etc.) per
+                # ADR-0062.
                 _bond = _dataplane_host_ips(subnet_map.get('cpu'), idx, 1, 201, 1,
                                             reserved=_svi_reserved,
                                             total=role_total['compute'])
@@ -1010,10 +1563,11 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
                     rail_info = gpu_rails.get(rail_key)
                     if not rail_info:
                         continue
-                    net = ipaddress.ip_network(rail_info['subnet'], strict=False)
-                    if host_offset >= net.num_addresses - 1:
-                        continue
-                    ip = f"{net.network_address + host_offset}/{net.prefixlen}"
+                    try:
+                        ip = gpu_host_ips(rail_info['subnet'], idx, 1)[0]
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"{name}: GPU {rail_key}: {exc}") from exc
                     gpu_interfaces.append({
                         'iface': nic,
                         # 'plane' field is reused by the template/netplan
@@ -1028,7 +1582,9 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
                     entry['gpu_interfaces'] = gpu_interfaces
             elif gpu_planes and wiremap_rows:
                 # Dual-plane: pick each GPU NIC's IP from the plane its
-                # Wire Map destination belongs to.
+                # Wire Map destination belongs to. plane_for_switch() reads
+                # the PHYSICAL ordinal out of the hostname ('gsl-plane2-01' ->
+                # 'plane2'), which is why gpu_planes above is keyed physically.
                 gpu_ifaces_in_order = iface_map.get('gpu', [])
                 # bond_ip is on the CPU /24. In dual-plane mode GPU IPs come
                 # from per-plane /20s (not the CPU /24), so bond_ip stride is
@@ -1049,13 +1605,23 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
                     if not plane or plane not in gpu_planes:
                         continue
                     plane_info = gpu_planes[plane]
-                    net = ipaddress.ip_network(plane_info['subnet'], strict=False)
                     nic_idx_in_plane = plane_seen.get(plane, 0)
-                    # 16 NIC headroom per node per plane (plenty in a /20).
-                    plane_offset = 201 + 16 * idx + nic_idx_in_plane
-                    if plane_offset >= net.num_addresses - 1:
-                        continue
-                    ip = f"{net.network_address + plane_offset}/{net.prefixlen}"
+                    # DUAL_PLANE_NICS_PER_NODE of headroom per node per plane,
+                    # allocated as one atomic block so a node cannot receive
+                    # some of its plane NICs and silently lose the rest.
+                    try:
+                        block = gpu_host_ips(plane_info['subnet'], idx,
+                                             DUAL_PLANE_NICS_PER_NODE)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"{name}: GPU plane {plane}: {exc}") from exc
+                    if nic_idx_in_plane >= len(block):
+                        raise ValueError(
+                            f"{name}: GPU plane {plane}: node has more than "
+                            f"{DUAL_PLANE_NICS_PER_NODE} NICs on one plane; "
+                            f"raise DUAL_PLANE_NICS_PER_NODE in "
+                            f"gpu_ip_allocation.py")
+                    ip = block[nic_idx_in_plane]
                     gpu_interfaces.append({
                         'iface': nic,
                         'plane': plane,
@@ -1090,16 +1656,19 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
                 if _bond:
                     entry['bond_ip'] = _bond[0]
                 # One GPU IP per GPU interface, on the GPU subnet.
-                gpu_ips = _dataplane_host_ips(
-                    subnet_map.get('gpu'), idx, gpu_count, 201, gpu_count,
-                    reserved=_svi_reserved)
-                if gpu_ips:
-                    entry['gpu_ips'] = gpu_ips
-                    # Backward compatibility
-                    if len(gpu_ips) >= 1:
-                        entry['gpu_ip1'] = gpu_ips[0]
-                    if len(gpu_ips) >= 2:
-                        entry['gpu_ip2'] = gpu_ips[1]
+                # Was `_dataplane_host_ips(..., 201, gpu_count)` with no
+                # `total=`, so its repack path never engaged: it returned None
+                # and the node was written with NO gpu_ips at all.
+                try:
+                    gpu_ips = gpu_host_ips(subnet_map.get('gpu'), idx, gpu_count)
+                except ValueError as exc:
+                    raise ValueError(f"{name}: GPU addresses: {exc}") from exc
+                # gpu_count is floored at 2 above and gpu_host_ips is atomic,
+                # so this list is never empty — no presence guard needed.
+                entry['gpu_ips'] = gpu_ips
+                # Backward compatibility
+                entry['gpu_ip1'] = gpu_ips[0]
+                entry['gpu_ip2'] = gpu_ips[1]
             role_index['compute'] += 1
 
         elif role == 'storage' and storage_base:
@@ -1123,6 +1692,21 @@ def build_devices(nodes, vlans, node_oob_mapping=None, wiremap_rows=None, gpu_vl
             role_index['support'] += 1
 
         devices[name] = entry
+
+    if declared_ips:
+        gateway_map = {}
+        for vlan in vlans:
+            if vlan.get('name') and vlan.get('subnet'):
+                key = vlan['name'].lower()
+                gateway_map[key] = vlan.get('gateway') or ''
+                if 'cpu' in key or 'in-band' in key or 'inband' in key:
+                    gateway_map['cpu'] = gateway_map[key]
+                if 'storage' in key:
+                    gateway_map['storage'] = gateway_map[key]
+                if 'support' in key:
+                    gateway_map['support'] = gateway_map[key]
+        _apply_declared_dataplane_ips(devices, declared_ips, subnet_map, gateway_map,
+                                      _svi_reserved, wired=wiremap_rows is not None)
 
     # Note: switches are NOT added to devices — they get DHCP reservations
     # from the ZTP section of the dnsmasq template (using host_vars mac_address).
@@ -1316,19 +1900,17 @@ def parse_oob_switch_configs(ws, ws_air_only=None, nodes_function_map=None):
 AIR_VIRTUAL_NODES = {"dhcp-oob", "oob-server-01", "dhcp-edge"}
 
 
-def parse_air_virtual_nodes(ws, new_format=False):
+def parse_air_virtual_nodes(ws):
     """Detect Air virtual nodes from rows with 'Air - ' network profiles.
 
-    For the old format, reads Wire Map (col 7=profile, col 2=system_role, col 11=switch_role).
-    For the new format, reads Air_Only sheet (col 5=profile, col 2=system_role, col 6=switch_role).
+    Reads the Air_Only sheet (col 5=profile, col 2=system_role, col 6=switch_role).
 
     Returns a set of virtual node names found (e.g. {'dhcp-oob', 'oob-server-01'}).
     """
     virtual_nodes = set()
-    # New Air_Only sheet: System Role=col2, Network Profile=col5, Switch Role=col6
-    # Old Wire Map sheet: System Role=col2, Network Profile=col7, Switch Role=col11
-    profile_col = 4 if new_format else 6   # 0-based
-    switch_col  = 5 if new_format else 10  # 0-based
+    # Air_Only sheet: System Role=col2, Network Profile=col5, Switch Role=col6
+    profile_col = 4   # 0-based
+    switch_col  = 5   # 0-based
 
     for i, row in enumerate(ws.iter_rows(values_only=True), 1):
         if i == 1:
@@ -1366,12 +1948,10 @@ def parse_air_settings(ws_air_only):
     return settings
 
 
-def parse_node_mgmt_mapping(ws, new_format=False):
+def parse_node_mgmt_mapping(ws):
     """Parse Wire Map eth0 rows to find node → OOB switch mappings.
 
-    Old format: detects rows where profile contains 'Air - Management'.
-    New format: detects rows where nic_port=='eth0' and switch connects to an OOB switch
-                (Air - Management profile was replaced by OOB / IPMI in the Wire Map).
+    Detects rows where nic_port=='eth0' and the switch is an OOB switch.
 
     Returns dict: {node_name: oob_switch_name}
     e.g. {'su-01-node-01': 'oob-switch-03', 'support-01': 'oob-switch-01'}
@@ -1382,7 +1962,6 @@ def parse_node_mgmt_mapping(ws, new_format=False):
         if i == 1:
             continue
         nic_port    = _wm_cell(row, col_map, 'nic_port')
-        profile     = _wm_cell(row, col_map, 'network_profile')
         switch_role = _wm_cell(row, col_map, 'switch_role')
         switch_name = _wm_cell(row, col_map, 'switch_name') or switch_role
         system_role = _wm_cell(row, col_map, 'system_role')
@@ -1396,14 +1975,8 @@ def parse_node_mgmt_mapping(ws, new_format=False):
             continue
 
         key = system_name or system_role
-        if new_format:
-            # New format: eth0 OOB connections use OOB / IPMI profile in Wire Map
-            if key:
-                mapping[key] = switch_name
-        else:
-            # Old format: only rows explicitly tagged 'Air - Management'
-            if 'Air' in profile and 'Management' in profile and key:
-                mapping[key] = switch_name
+        if key:
+            mapping[key] = switch_name
     return mapping
 
 
@@ -1551,20 +2124,11 @@ def _classify_core_profile(net_prof, sw_roles, l3_storage_profiles=None):
 
 
 def _normalize_oob_uplink_mode(settings):
-    """Return the Excel-driven OOB uplink mode, defaulting to l2 (the
-    existing/tested default for all four ERA architectures). Topology
-    generator and parser both default to 'l2' to stay in sync.
-
-    Warns once if the operator typed something other than 'l2'/'l3'."""
-    raw = (settings or {}).get('oob_uplink_mode', None)
-    if raw is None or str(raw).strip() == '':
-        return 'l2'
-    mode = str(raw).strip().lower()
-    if mode not in ('l2', 'l3'):
-        print(f"  ⚠️  Settings.oob_uplink_mode='{raw}' not in ('l2','l3') — "
-              f"falling back to l2.")
-        return 'l2'
-    return mode
+    """Return the Excel-driven OOB uplink mode ('l2' default) from a parsed
+    Settings dict. Thin wrapper over ``utils.normalize_oob_uplink_mode`` —
+    the same function the topology generator calls — so the two cannot
+    diverge. Warns if the operator typed something other than 'l2'/'l3'."""
+    return normalize_oob_uplink_mode((settings or {}).get('oob_uplink_mode'))
 
 
 def _expand_subport_names(iface_def):
@@ -1599,7 +2163,7 @@ def _supplement_vrf_config_from_excel(core_vars, vrfs, dhcp_relay_table, vlans):
     inventory — they do, because the source-inventory csl.yml carries
     them as the ERA standard policy template.
 
-    Level-2 TODO (tracked in docs/internal/TODO-audit-findings.md):
+    Level-2 TODO (tracked in GitLab issues #30-#35):
     move route_map / community_list / peer_groups generation into the
     parser too so the source inventory can be retired entirely.
     """
@@ -1777,6 +2341,11 @@ def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=Non
     # Per-rail-per-plane mode: map "GPU Rail R Plane P" profile names →
     #   per-(rail, plane) VLAN IDs. Keys are (rail_idx, plane_idx) tuples.
     # Both empty when not in the respective mode.
+    # Indices here stay LOGICAL on both sides — a VLAN row name and the Wire
+    # Map profile it pairs with are written with the same origin, so no
+    # logical→physical translation belongs in this join. (The translation is
+    # only needed where a logical index meets a physical switch ordinal; see
+    # gpu_index_origin/physical_gpu_plane above build_devices().)
     gpu_rail_vlan_ids: dict = {}
     gpu_rail_plane_vlan_ids: dict = {}
     oob_vlan_id = None
@@ -1875,9 +2444,6 @@ def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=Non
         if prof and prof in profile_config:
             return profile_config[prof]
         return {}
-
-    def _vlan_for_role(role_type):
-        return _profile_for_role(role_type).get('native')
 
     # --- Step 2: Collect Wire Map rows ---
     # node_profiles[prof][base_port] = {subports}
@@ -2218,7 +2784,7 @@ def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=Non
     # bound to a VRF as direct L3 interfaces instead of bonded into the
     # bridge. Skip the role assignment so we don't generate `bondNs0`
     # bonds + `swpNs0 vrf STORAGE` conflicting emissions.
-    # See docs/plans/2026-05-19-storage-vrf-design.md (PR-c).
+    # See ADR-0047 (PR-c).
     # ERA-44: L2 storage SERVER access ports authored core-as-system (switch on
     # side A) get the SAME L2 treatment as 'support' -- bond into the storage
     # VLAN with breakout/native/lacp from the profile the rows actually use.
@@ -2274,6 +2840,9 @@ def parse_core_port_config(ws_wiremap, ws_vlans_profiles, nodes_function_map=Non
     # or "GPU Rail R Plane P" profiles + the matching VLAN rows. The core
     # template iterates this dict and emits one `bridge domain br_default
     # access <vid>` line per (rail, plane).
+    # Entry keys keep the workbook's own rail/plane indices ('rail0_plane0'
+    # under ADR-0044) because the gl/core templates join them against
+    # gpu_rail_plane_subports, which is built from the same profile names.
     gpu_hw = _ROLE_HW.get('gpu', {})
     gpu_prof = _profile_for_role('gpu')
     rail_breakout = gpu_prof.get('breakout') or gpu_hw.get('breakout', 1)
@@ -2919,6 +3488,37 @@ def _oob_switch_svi_ip(base, net_last, idx, prefix):
     return top[j] if j < len(top) else f"{base}.{net_last + 2 + idx}"
 
 
+def oob_switch_svi_ips(base, net_last, count, prefix, skip=()):
+    """SVI addresses for ``count`` OOB switches sharing one OOB subnet, in
+    switch order, walking ``_oob_switch_svi_ip`` slots and skipping any address
+    in ``skip`` (the collapsed-core SVIs that already live on this VLAN in l2
+    mode). With an empty ``skip`` this is exactly the historical walk."""
+    skip = {str(s).split('/')[0] for s in skip}
+    out = []
+    slot = 0
+    while len(out) < count:
+        ip = _oob_switch_svi_ip(base, net_last, slot, prefix)
+        slot += 1
+        if ip in skip:
+            continue
+        out.append(ip)
+    return out
+
+
+def collapsed_core_svi_ips(settings, nodes, subnet_str, gateway=None):
+    """Core SVI addresses that the collapsed-core switches hold on the OOB VLAN
+    ``subnet_str`` in l2 uplink mode (``_svi_switch_ip`` walk: .2, .3, ...).
+
+    Empty in l3 mode (the core OOB SVI is rendered without an address) and for
+    CSL fabrics (CSL never carries the OOB VLAN), so only collapsed-core l2
+    sites see these addresses claimed against the OOB-switch SVI walk."""
+    if _normalize_oob_uplink_mode(settings) != 'l2':
+        return []
+    core_count = sum(1 for n in (nodes or [])
+                     if n.get('status') == 'Active' and n.get('category') == 'core')
+    return [_svi_switch_ip(subnet_str, gateway, i + 1) for i in range(core_count)]
+
+
 def _parse_cidr(subnet_str, *, context=""):
     """Safely parse a CIDR-style subnet string into (net_ip, prefix_int).
 
@@ -3232,7 +3832,7 @@ def find_l3_storage_profiles(ws_vlans_profiles):
     are external storage uplinks. Empty set when no such profile is
     declared — caller treats that as "no STORAGE VRF on this site."
 
-    See docs/plans/2026-05-19-storage-vrf-design.md.
+    See ADR-0047.
     """
     profiles = set()
     in_section = False
@@ -3472,8 +4072,8 @@ def get_storage_uplink_ports_per_switch(ws_wiremap, l3_storage_profiles,
     Empty dict if no rows match (any switch with zero storage uplinks
     is simply absent from the result, not present with an empty list).
 
-    See docs/plans/2026-05-19-storage-vrf-design.md (STORAGE VRF rollout
-    PR-b). Operates against the same `_build_wiremap_row_list` cascade
+    See ADR-0047 (STORAGE VRF rollout PR-b). Operates against the same
+    `_build_wiremap_row_list` cascade
     so it honors nodes_function_map fallback + disabled-host filtering.
     """
     if not l3_storage_profiles:
@@ -3521,7 +4121,7 @@ def get_bond_descriptions_per_switch(ws_wiremap, nodes_function_map=None,
     dhcp-edge) are skipped too — they don't have a meaningful bond
     description.
 
-    See docs/plans/2026-05-19-2-8-9-800-prod-feedback.md (DV4).
+    See internal production-feedback notes, item DV4.
     """
     if not known_node_names:
         return {}
@@ -4033,7 +4633,7 @@ DERIVED_ONLY_PREFIX_LISTS = frozenset({
 # 2-8-9-800 e2e cell stayed unreachable — a flat 0/8 — because a switch
 # configured via Air Node Instructions never received its management address.
 #
-# !215 removed the TEMPLATE emission under time pressure and left this
+# An earlier change removed the TEMPLATE emission and left this
 # machinery in place, so the descriptions kept being computed and written into
 # the generated inventory where nothing could ever emit them. Inert, but shaped
 # exactly like configuration — the next person to add a prefix-list emission
@@ -4374,9 +4974,15 @@ class CustomConfigError(ValueError):
     """
 
 
-# A legitimate `nv` line never needs shell metacharacters; values with spaces are
-# quoted by the templates. Rejecting these is best-effort containment, not a sandbox.
-_SHELL_METACHARACTERS = ("`", "$(", ";", "&&", "||", "|", ">", "<")
+# Custom_Config lines reach a bash script, so they are parsed against an explicit
+# grammar and re-rendered from the approved tokens (ADR-0090). Substring blocklists
+# and shlex.split() are not validation: shlex is a lexer for shell-like syntax, not a
+# shell validator. A line is `nv <verb> <token>...`, tokens separated by spaces; a
+# token is a bare word or a single-quoted literal. Anything else is refused.
+_CC_BARE = r"[A-Za-z0-9_.:/,@+=-]+"
+_CC_SINGLE = r"'[^'\x00-\x1f\x7f]*'"
+_CC_TOKEN_RE = re.compile(rf"{_CC_BARE}|{_CC_SINGLE}")
+_CC_ALLOWED_NV_VERBS = ("set", "unset")
 
 # Apply-lifecycle control (`nv config`) belongs to the tool: a mid-script apply leaves
 # the rest of the file staging against live state, and `nv config replace` can discard
@@ -4386,8 +4992,43 @@ _SHELL_METACHARACTERS = ("`", "$(", ";", "&&", "||", "|", ">", "<")
 _BLOCKED_NV_VERBS = ("config", "action")
 
 
+def _custom_config_tokens(line, where):
+    """Split `line` into argv tokens per the Custom_Config grammar, or raise."""
+    tokens, pos = [], 0
+    while pos < len(line):
+        if line[pos] == " ":
+            pos += 1
+            continue
+        match = _CC_TOKEN_RE.match(line, pos)
+        end = match.end() if match else pos
+        if match is None or (end < len(line) and line[end] != " "):
+            bad = line[end] if match else line[pos]
+            if match and (bad == "'" or re.fullmatch(_CC_BARE, bad)):
+                why = (f"has {line[pos:end + 1]!r}: tokens must be separated by a "
+                       f"space")
+            elif bad == "'":
+                why = ("has an unterminated '...' literal or one containing a "
+                       "control character")
+            elif bad == '"':
+                why = ("uses double quotes. Put values with spaces or punctuation in "
+                       "single quotes: 'Authorized use only'")
+            else:
+                why = (f"contains {bad!r}. Shell metacharacters are rejected; a "
+                       f"legitimate nv command never needs them. Put values with "
+                       f"spaces or punctuation in single quotes")
+            raise CustomConfigError(f"{where}: {line!r} {why}.")
+        token = match.group(0)
+        tokens.append(token[1:-1] if token[0] == "'" else token)
+        pos = end
+    return tokens
+
+
 def _validate_custom_config_line(line, row_no, line_no):
-    """Raise CustomConfigError unless `line` is an acceptable `nv` command."""
+    """Return the shell-safe rendering of `line`, or raise CustomConfigError.
+
+    The rendering is built from the approved tokens with shlex.quote, so bash
+    receives exactly the argv the grammar accepted; plain tokens stay unchanged.
+    """
     where = f"Custom_Config row {row_no}, line {line_no}"
     if not line.startswith("nv "):
         raise CustomConfigError(
@@ -4398,13 +5039,8 @@ def _validate_custom_config_line(line, row_no, line_no):
         raise CustomConfigError(
             f"{where}: {line!r} ends with a line continuation, which is not allowed."
         )
-    for meta in _SHELL_METACHARACTERS:
-        if meta in line:
-            raise CustomConfigError(
-                f"{where}: {line!r} contains {meta!r}. Shell metacharacters are "
-                f"rejected; a legitimate nv command never needs them."
-            )
-    verb = line.split()[1] if len(line.split()) > 1 else ""
+    tokens = _custom_config_tokens(line, where)
+    verb = tokens[1] if len(tokens) > 1 else ""
     if verb in _BLOCKED_NV_VERBS:
         raise CustomConfigError(
             f"{where}: 'nv {verb}' is not allowed. "
@@ -4414,6 +5050,12 @@ def _validate_custom_config_line(line, row_no, line_no):
                "Actions are imperative and leave no configuration state, so they "
                "cannot be verified and are not idempotent when ZTP re-runs the file.")
         )
+    if verb not in _CC_ALLOWED_NV_VERBS:
+        raise CustomConfigError(
+            f"{where}: 'nv {verb}' is not allowed. Only "
+            f"{', '.join('nv ' + v for v in _CC_ALLOWED_NV_VERBS)} are accepted."
+        )
+    return shlex.join(tokens)
 
 
 def _resolve_targets(location, row_no, switches_by_function, servers_by_function):
@@ -4475,10 +5117,10 @@ def custom_config_keypaths(lines):
     Any key path custom config writes to produces textual differences on BOTH sides of
     the comparison, so both must be suppressed:
 
-      generated:  nv set system message pre-login "Authorized use only"
-      running:    nv set system message pre-login 'Authorized use only'
+      generated:  nv set system message pre-login 'Authorized use only'
+      running:    nv set system message pre-login "Authorized use only"
 
-    NVUE re-quotes values, so the operator line reads MISSING; if the operator overrode
+    NVUE may re-quote values, so the operator line reads MISSING; if the operator overrode
     a key the tool also sets, the tool line reads MISSING too; and the running form
     reads EXTRA. A live Air run on 2026-08-17 showed all three at once.
 
@@ -4561,8 +5203,7 @@ def parse_custom_config_sheet(ws, switches_by_function, servers_by_function=None
             line = raw.strip()
             if not line:
                 continue
-            _validate_custom_config_line(line, row_no, line_no)
-            lines.append(line)
+            lines.append(_validate_custom_config_line(line, row_no, line_no))
         if not lines:
             raise CustomConfigError(
                 f"Custom_Config row {row_no}: configuration is blank after stripping."
@@ -4760,12 +5401,13 @@ def generate_vrf_loopbacks(vlans, core_num, loopback_base=None, switch_overrides
     if any(vlan.get('vrf') == 'STORAGE' for vlan in vlans):
         vrf_loopbacks['STORAGE'] = f'{lb}.{VRF_LOOPBACK_BLOCKS["STORAGE"] + core_num}/32'
 
-    if not skip_gpu:
-        for vlan in vlans:
-            if vlan['vrf'] == 'GPU' and vlan['subnet']:
-                gpu_subnet_base = vlan['subnet'].rsplit('.', 1)[0]
-                vrf_loopbacks['GPU'] = f'{gpu_subnet_base}.{4 + core_num}/32'
-                break
+    # GPU only where the switch actually runs the VRF: a csl has no GPU VRF at
+    # all (the E/W switches own it), which is what `skip_gpu` encodes. The
+    # address comes from `lb` like every other VRF above — it used to be taken
+    # from the first GPU VLAN's subnet, which collided with that subnet's own
+    # per-switch SVIs once a fabric had four cores (see VRF_LOOPBACK_BLOCKS).
+    if not skip_gpu and any(vlan.get('vrf') == 'GPU' for vlan in vlans):
+        vrf_loopbacks['GPU'] = f'{lb}.{VRF_LOOPBACK_BLOCKS["GPU"] + core_num}/32'
 
     if switch_overrides:
         loopback_vrfs = ('OOB', 'INBAND', 'EXIT', 'STORAGE') if skip_gpu else \
@@ -5010,6 +5652,204 @@ def resolve_oob_vlans(vlans, oob_nodes):
     }
 
 
+def air_ext_storage_names(nodes, wiremap_rows=None):
+    """Names of the ext-storage nodes the Air topology will contain.
+
+    The shipped intake workbooks describe ``ext-storage-*`` only on the
+    Wiremap (Storage Uplink rows, Display in Air = Yes) -- never on Host Data
+    -- so the topology generator learns them from the wire rows while a
+    Nodes-derived list is empty. Both sources are merged here so the
+    address plan seats every node the topology actually renders (ERA-142).
+    """
+    disabled = {str(n.get('name') or '').strip() for n in (nodes or [])
+                if n.get('status') == 'Disabled' and n.get('name')}
+    names = {str(n.get('name') or '').strip() for n in (nodes or [])
+             if n.get('status') != 'Disabled'
+             and n.get('category') == 'ext-storage' and n.get('name')}
+    for r in (wiremap_rows or []):
+        name = str(r.get('system_name') or '').strip()
+        if (r.get('display_in_air') and name.startswith('ext-storage-')
+                and name not in disabled):
+            names.add(name)
+    return sorted(names)
+
+
+def _deploy_in_air(settings):
+    """Deployment `deploy_in_air` as a bool (default Yes, ERA-48)."""
+    return str((settings or {}).get('deploy_in_air', 'Yes')).strip().lower() in ('yes', 'true', '1')
+
+
+# Infra hosts a physical (Deploy in Air = No) site keeps: they stand for the
+# operator's own ZTP/DHCP server and jump host. Everything else in the Air
+# infra set (oob-server-01, external-conn, Air_Only nodes) exists only in Air.
+PHYSICAL_INFRA_NODES = {'l2': {'dhcp-oob'}, 'l3': {'external-dhcp', 'utility'}}
+
+
+# Linux interface name (IFNAMSIZ 16 incl. NUL); VLAN sub-interfaces allowed.
+_IFNAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,14}$')
+
+
+def operator_ztp_nic_names(main_yml):
+    """Physical sites: the ZTP server NIC the operator named for each subnet.
+
+    The generator cannot know the real server's NICs, so physical
+    ``ztp_interfaces`` are emitted as ``eth1``... and the operator renames them
+    in ``group_vars/all/main.yml``. Regeneration (``make generate``, and step 3
+    of ``make switch-ztp-deploy``) rewrites that file, so the names already
+    there are carried forward, keyed by subnet. Returns {subnet: name}.
+    """
+    main_yml = Path(main_yml)
+    if not main_yml.is_file():
+        return {}
+    data = inventory_yaml.load(main_yml.read_text()) or {}
+    names = {}
+    for itf in data.get('ztp_interfaces') or []:
+        if not isinstance(itf, dict):
+            continue
+        name = str(itf.get('name') or '').strip()
+        network = str(itf.get('network') or '').strip()
+        if not name or not network:
+            continue
+        if not _IFNAME_RE.match(name):
+            raise SystemExit(
+                f"❌ {main_yml}: ztp_interfaces name {name!r} (network {network}) "
+                f"is not a valid Linux interface name.")
+        names[network] = name
+    return names
+
+
+def plan_infra_addresses(settings, vlans, nodes, air_settings=None,
+                         ext_storage_names=None):
+    """Decide every Air-infrastructure address on the management planes.
+
+    ERA-134 / ADR-0084. This is the ONE place that says where ``dhcp-oob``,
+    the L3 ``utility`` / ``external-dhcp`` pair and the plane gateways sit.
+    ``generate_group_vars`` (``ztp_interfaces``), the ``oob-server-01``
+    host_vars merge (``oob_server_interfaces``), ``validate_excel.py`` and
+    ``air-deploy.py`` (through the emitted ``infra_addresses``) all consume
+    this plan, so the address the simulator configures is the address the
+    inventory names and the address the gate checked.
+
+    Every address comes from ``infra_ip_allocation.allocate_infra_ips`` with
+    a ``taken`` set built from the claims that already exist on the plane:
+
+      OOB VLAN subnet -- Active Nodes-tab mgmt IPs inside it, the declared
+        Excel gateway (else ``network + 1``), the generated OOB-switch SVIs,
+        the core/CSL SVIs (``_svi_switch_ip``), the mode-appropriate reserved
+        offsets from ``oob_reserved.py``, and every infra address placed
+        earlier on the same subnet.
+      air-mgmt subnet -- the plane gateway (oob-server-01 eth1 in L2, the
+        cust-net-edge-01 bridge SVI in L3), operator-pinned switch eth0s,
+        the auto-walked switch eth0s and the reserved offsets (ext-storage
+        band etc.).
+
+    Preferred offsets are the historical fixed octets, so a /24 workbook is
+    byte-identical to before; on a smaller subnet the claimant falls through
+    to the first free host instead of landing outside the network.
+
+    ``ext_storage_names`` are the Wiremap-derived ext-storage nodes
+    (``air_ext_storage_names``); they are merged with any Nodes-tab
+    ext-storage rows so each gets an eth0 claim on the air-mgmt plane.
+
+    Returns ``{'mode', 'air_mgmt': {...}, 'oob': [{...}, ...]}`` where each
+    plane dict carries ``subnet``, ``gateway``, ``infra`` (claimant -> ip)
+    and ``dhcp_pool`` (the dnsmasq ``(start, end)`` for that plane).
+    Raises ``infra_ip_allocation.InfraCapacityError`` when a plane is full.
+    """
+    settings = settings or {}
+    nodes = nodes or []
+    air_settings = air_settings or {}
+    mode = _normalize_oob_uplink_mode(settings)
+    reserved = oob_reserved_for_mode(mode)
+
+    oob_switches = get_oob_nodes_for_inventory(nodes, settings, vlans)
+    mapping = resolve_oob_vlans(vlans, oob_switches)
+    core_count = sum(1 for n in nodes
+                     if n.get('status') == 'Active' and n.get('category') in ('core', 'csl'))
+    node_ips = [str(n.get('mgmt_ip') or '').strip().split('/')[0]
+                for n in nodes if n.get('status') == 'Active']
+
+    oob_planes = []
+    for subnet_str in mapping['subnets']:
+        parsed = _parse_cidr(subnet_str, context="OOB VLAN subnet")
+        if not parsed:
+            continue
+        vlan = next((v for v in mapping['oob_vlans'] if v.get('subnet') == subnet_str), {})
+        gateway = infra_gateway(subnet_str, vlan.get('gateway'))
+        svis = [n.get('svi_ip') for n in oob_switches
+                if (mapping['vlan_by_switch'].get(n['name']) or {}).get('subnet') == subnet_str]
+        core_svis = [_svi_switch_ip(subnet_str, vlan.get('gateway'), i + 1)
+                     for i in range(core_count)]
+        if mode == 'l3':
+            claims = [('utility', UTILITY_PREFERRED_OFFSET)]
+            if not _deploy_in_air(settings):
+                # Physical L3: real switches DHCP on this plane, so the ZTP
+                # server needs an address here (the reserved ztp_server slot).
+                claims.append(('ztp_server', ZTP_SERVER_OCTET))
+        else:
+            claims = [('dhcp-oob', DHCP_OOB_PREFERRED_OFFSET)]
+        # Reserved offsets are the plane's other fixed occupants; a claimant's
+        # own registry slot is not a claim against it.
+        other_reserved = [o for o in reserved if o not in {p for _, p in claims}]
+        taken = taken_addresses(subnet_str, node_ips, [gateway], svis, core_svis,
+                                other_reserved)
+        infra = allocate_infra_ips(subnet_str, taken, claims)
+        # The ztp_server slot is the historical pool's first address.
+        pool_offsets = ((ZTP_SERVER_OCTET + 1, DHCP_POOL_PREFERRED_OFFSETS[1])
+                        if 'ztp_server' in infra else DHCP_POOL_PREFERRED_OFFSETS)
+        oob_planes.append({
+            'subnet': subnet_str,
+            'gateway': gateway,
+            'infra': infra,
+            'dhcp_pool': dhcp_pool(subnet_str, taken | taken_addresses(subnet_str, infra.values()),
+                                   preferred=pool_offsets,
+                                   claimant=f'DHCP pool on {subnet_str}'),
+        })
+
+    air_mgmt_subnet = air_settings.get('air_mgmt_subnet', '172.20.0.0/24')
+    if not _parse_cidr(air_mgmt_subnet, context="Air_Only.air_mgmt_subnet"):
+        air_mgmt_subnet = '172.20.0.0/24'
+    categories = categorize_nodes(nodes, settings, vlans)
+    switch_eth0 = air_mgmt_switch_eth0_plan(
+        _host_vars_processing_order(categories), air_mgmt_subnet, settings).values()
+    if mode == 'l3':
+        # The on-link default gateway is the cust-net-edge-01 bridge SVI
+        # (historically .254); L2's gateway is oob-server-01 eth1 (network+1).
+        gw_label = 'air-mgmt gateway (cust-net-edge-01 SVI)'
+        claims = [(gw_label, AIR_MGMT_SVI_OCTET),
+                  ('external-dhcp', EXTERNAL_DHCP_PREFERRED_OFFSET),
+                  ('utility', UTILITY_AIR_MGMT_PREFERRED_OFFSET)]
+    else:
+        gw_label = 'air-mgmt gateway (oob-server-01 eth1)'
+        claims = [(gw_label, 1),
+                  ('dhcp-oob', EXTERNAL_DHCP_PREFERRED_OFFSET)]
+    # ext-storage eth0s are claimants too (historically .79 + idx); the
+    # topology node name is the Excel Name, which is how air-deploy looks
+    # them up in ``infra_addresses``.
+    ext_storage = sorted(set(air_ext_storage_names(nodes))
+                         | set(ext_storage_names or []))
+    claims += [(name, EXT_STORAGE_FIRST_OCTET + idx)
+               for idx, name in enumerate(ext_storage)]
+    # The reserved offsets hold the plane's OTHER fixed occupants (the unused
+    # part of the ext-storage band, the .1 hole-punch in L3, the .254 SVI in
+    # L2). A claimant's own preferred offset is not a claim against it.
+    _preferred = {pref for _, pref in claims}
+    air_reserved = [o for o in AIR_MGMT_RESERVED_OCTETS if o not in _preferred]
+    air_taken = taken_addresses(air_mgmt_subnet, switch_eth0, air_reserved)
+    air_infra = allocate_infra_ips(air_mgmt_subnet, air_taken, claims)
+    air_pool = dhcp_pool(
+        air_mgmt_subnet,
+        air_taken | taken_addresses(air_mgmt_subnet, air_infra.values()),
+        claimant=f'DHCP pool on {air_mgmt_subnet}')
+    air_plane = {
+        'subnet': air_mgmt_subnet,
+        'gateway': air_infra.pop(gw_label),
+        'infra': air_infra,
+        'dhcp_pool': air_pool,
+    }
+    return {'mode': mode, 'air_mgmt': air_plane, 'oob': oob_planes}
+
+
 def get_oob_nodes_for_inventory(nodes, settings, vlans):
     """
     Return OOB switch nodes for inventory, derived from the oob-switch rows
@@ -5033,7 +5873,14 @@ def get_oob_nodes_for_inventory(nodes, settings, vlans):
     mapping = resolve_oob_vlans(vlans, result)
     # Group switches by their resolved OOB subnet so shared-subnet switches get
     # sequential .2/.3/.4 SVIs while distinct-subnet switches each get .2.
-    per_subnet_index = {}
+    # In l2 mode the collapsed-core switches already hold the first host
+    # addresses of the same VLAN as their own SVIs, so the walk skips those.
+    per_subnet_members = {}
+    for node in result:
+        vlan = mapping['vlan_by_switch'].get(node['name'])
+        if vlan and vlan.get('subnet'):
+            per_subnet_members.setdefault(vlan['subnet'], []).append(node['name'])
+    per_subnet_svis = {}
     for node in result:
         vlan = mapping['vlan_by_switch'].get(node['name'])
         if not vlan or not vlan.get('subnet'):
@@ -5047,9 +5894,12 @@ def get_oob_nodes_for_inventory(nodes, settings, vlans):
             net_last = int(net_ip.rsplit('.', 1)[1])
         except (ValueError, IndexError):
             net_last = 0
-        idx = per_subnet_index.get(vlan['subnet'], 0)
-        per_subnet_index[vlan['subnet']] = idx + 1
-        node['svi_ip'] = _oob_switch_svi_ip(base, net_last, idx, prefix)
+        if vlan['subnet'] not in per_subnet_svis:
+            per_subnet_svis[vlan['subnet']] = iter(oob_switch_svi_ips(
+                base, net_last, len(per_subnet_members[vlan['subnet']]), prefix,
+                skip=collapsed_core_svi_ips(settings, nodes, vlan['subnet'],
+                                            vlan.get('gateway'))))
+        node['svi_ip'] = next(per_subnet_svis[vlan['subnet']])
         gw = (vlan.get('gateway') or '').split('/')[0].strip()
         node['gateway'] = gw or f"{base}.{net_last + 1}"
         node['prefix'] = prefix
@@ -5360,6 +6210,13 @@ def generate_hosts_file(settings, nodes, output_dir, air_virtual_nodes=None, vla
         "",
     ])
     
+    # INI inventory values are templated like YAML ones but cannot carry !unsafe.
+    for line_no, line in enumerate(lines, start=1):
+        if has_jinja_marker(line):
+            raise ValueError(
+                f"hosts inventory line {line_no} would contain a Jinja template marker "
+                f"({{{{, {{% or {{#}}); workbook text must not reach the inventory as "
+                f"a template (ADR-0090). Fix the workbook cell that supplies {line!r}.")
     output_file = output_dir / "hosts"
     with open(output_file, 'w') as f:
         f.write('\n'.join(lines))
@@ -5500,16 +6357,11 @@ def _assert_no_duplicate_loopbacks(claims):
     raise ValueError("\n".join(lines))
 
 
-def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_directives=None, oob_switch_configs=None, vrfs=None, air_settings=None, gsl_port_configs=None, loopback_overrides=None, wiremap_rows=None, physical_wiremap_rows=None, storage_uplink_ports=None, bond_descriptions_per_switch=None, per_switch_network_roles=None, per_switch_direct_interfaces=None, acl_directives=None, storage_uplink_hw=None, group_port_blocks=None,
-                       gpu_profile_hw=None, custom_config=None):
-    """Generate host_vars YAML files for each node. OOB count comes from the Active oob-switch rows on the Nodes tab. prefix_list_directives is the full {'lists': {...}, 'suppress': set()} dict from the Excel 'Prefix lists' sheet; generate_prefix_lists applies it scoped to overridable lists only. oob_switch_configs derived from Wire Map. gsl_port_configs (per-host dict from parse_gsl_port_config) controls which GSL ports are bridged/broken-out."""
-    host_vars_dir = output_dir / "host_vars"
-    host_vars_dir.mkdir(exist_ok=True)
-    generated_files = []
-    # ip -> {(hostname, slot)} — checked once every host is built (ERA-97).
-    loopback_claims = {}
-    categories = categorize_nodes(nodes, settings, vlans)
-    nodes_to_process = (
+def _host_vars_processing_order(categories):
+    """The node order ``generate_host_vars`` walks -- also the order the
+    air-mgmt switch eth0 walk consumes octets in, so it is shared with
+    ``plan_infra_addresses`` rather than restated there."""
+    return (
         categories['core']
         + categories['oob']
         + categories.get('cl', [])
@@ -5520,6 +6372,94 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_dir
         + categories['gpu_nodes']
         + categories['storage'] + categories['support']
     )
+
+
+def air_mgmt_switch_eth0_plan(nodes_to_process, air_mgmt_subnet, settings):
+    """switch name -> eth0 address on the air-mgmt plane, for Air deploys.
+
+    Switch eth0 mgmt IPs live in the air-mgmt /24. Historically assigned
+    ``.{200+idx}`` starting at .201, which silently OVERFLOWED past .255 once
+    there were >~53 switches (maxscale 2-4-5-800 = 71, 2-8-9-800 SU32 = 76):
+    NVUE rejects the invalid octet (e.g. ``172.20.0.260/24``), the deferred
+    apply aborts, and the switch never configures -> unreachable. So: keep
+    the .201 base for archs that fit (byte-identical small/default output),
+    but repack from .2 when .201+N would overflow; skip the IPs the
+    air-deploy L3 trio + cust-net-edge reserve on this plane.
+
+    Operator-pinned switch eth0 addresses: a brownfield operator often knows
+    the real management addresses their switches already answer on, and wants
+    the sim to reproduce them rather than accept our .201+ walk. A switch
+    whose Nodes-tab mgmt IP sits INSIDE air_mgmt_subnet is therefore honoured
+    verbatim; the auto-assign walk then fills the remaining switches around
+    those pins so a pin can never be handed out twice. A mgmt IP OUTSIDE the
+    subnet is rejected by validate-excel (it would be unreachable) rather
+    than silently overridden here.
+
+    Returns an empty dict when Deploy in Air = No (ERA-48): switches then
+    keep their real Nodes-tab mgmt IP and nothing is walked.
+    """
+    deploy_in_air = str((settings or {}).get('deploy_in_air', 'Yes')).strip().lower() in ('yes', 'true', '1')
+    if not deploy_in_air:
+        return {}
+    plan = {}
+    pinned_octets = set()
+    try:
+        air_net = ipaddress.IPv4Network(str(air_mgmt_subnet).strip(), strict=False)
+    except ValueError:
+        air_net = None
+    switches = [n for n in nodes_to_process if is_switch(n['role'])]
+    if air_net is not None:
+        for n in switches:
+            raw = str(n.get('mgmt_ip') or '').strip().split('/')[0]
+            if not raw:
+                continue
+            try:
+                addr = ipaddress.IPv4Address(raw)
+            except ValueError:
+                continue  # malformed IP already reported by validate-excel
+            if addr in air_net:
+                plan[n['name'] or n['role']] = str(addr)
+                pinned_octets.add(int(addr) - int(air_net.network_address))
+
+    # Only the UNPINNED switches consume auto-assigned offsets, so the .201-vs-.2
+    # repack decision counts those -- not every switch. Offsets are relative to
+    # the network address and bounded by its last usable host, so a /25 or /26
+    # air-mgmt subnet walks .2+ inside the network instead of emitting
+    # <base>.201 outside it (ERA-134).
+    n_unpinned = sum(1 for n in switches if (n['name'] or n['role']) not in plan)
+    if air_net is None:
+        air_net = ipaddress.IPv4Network('172.20.0.0/24')
+    last_usable = int(air_net.broadcast_address) - int(air_net.network_address) - 1
+    offset = 201 if (201 + n_unpinned) <= min(254, last_usable) else 2
+    for n in switches:
+        topo_name = n['name'] or n['role']
+        if topo_name in plan:
+            continue
+        while offset in AIR_MGMT_RESERVED_OCTETS or offset in pinned_octets:
+            offset += 1
+        if offset > last_usable:
+            raise ValueError(
+                f"air_mgmt subnet {air_mgmt_subnet} too small for "
+                f"{n_unpinned} switches (ran past the last usable host "
+                f"{air_net.network_address + last_usable}). Widen the subnet."
+            )
+        plan[topo_name] = str(air_net.network_address + offset)
+        offset += 1
+    return plan
+
+
+def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_directives=None, oob_switch_configs=None, vrfs=None, air_settings=None, gsl_port_configs=None, loopback_overrides=None, wiremap_rows=None, physical_wiremap_rows=None, storage_uplink_ports=None, bond_descriptions_per_switch=None, per_switch_network_roles=None, per_switch_direct_interfaces=None, acl_directives=None, storage_uplink_hw=None, group_port_blocks=None,
+                       gpu_profile_hw=None, custom_config=None):
+    """Generate host_vars YAML files for each node. OOB count comes from the Active oob-switch rows on the Nodes tab. prefix_list_directives is the full {'lists': {...}, 'suppress': set()} dict from the Excel 'Prefix lists' sheet; generate_prefix_lists applies it scoped to overridable lists only. oob_switch_configs derived from Wire Map. gsl_port_configs (per-host dict from parse_gsl_port_config) controls which GSL ports are bridged/broken-out."""
+    host_vars_dir = output_dir / "host_vars"
+    host_vars_dir.mkdir(exist_ok=True)
+    generated_files = []
+    # (path, hostname, host_vars) buffered until the loopback guard has run.
+    pending_host_vars = []
+    # ip -> {(hostname, slot)} — checked once every host is built (ERA-97).
+    loopback_claims = {}
+    categories = categorize_nodes(nodes, settings, vlans)
+    nodes_to_process = _host_vars_processing_order(categories)
     loopback_base = str(settings.get('loopback_base') or LOOPBACK_BASE).strip()
 
     # Air management subnet for switch eth0 IPs
@@ -5532,51 +6472,9 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_dir
     # inventory must then use each switch's real Nodes-tab mgmt IP, NOT an
     # auto-assigned air-mgmt (172.20.0.x) IP the local network can't reach.
     deploy_in_air = str(settings.get('deploy_in_air', 'Yes')).strip().lower() in ('yes', 'true', '1')
-    # Switch eth0 mgmt IPs live in the air-mgmt /24. Historically assigned
-    # `.{200+idx}` starting at .201, which silently OVERFLOWS past .255 once
-    # there are >~53 switches (maxscale 2-4-5-800 = 71, 2-8-9-800 SU32 = 76):
-    # NVUE rejects the invalid octet (e.g. `172.20.0.260/24`), the deferred
-    # apply aborts, and the switch never configures → unreachable.
-    # Fix: keep the .201 base for archs that fit (byte-identical small/default
-    # output), but repack from .2 when .201+N would overflow; skip the IPs the
-    # air-deploy L3 trio + cust-net-edge reserve on this /24.
-    _AIR_MGMT_RESERVED = AIR_MGMT_RESERVED_OCTETS  # canonical set: scripts/oob_reserved.py
-
-    # Operator-pinned switch eth0 addresses. A brownfield operator often knows
-    # the real management addresses their switches already answer on, and wants
-    # the sim to reproduce them rather than accept our .201+ walk. A switch
-    # whose Nodes-tab mgmt IP sits INSIDE air_mgmt_subnet is therefore honoured
-    # verbatim; the auto-assign walk then fills the remaining switches around
-    # those pins so a pin can never be handed out twice. A mgmt IP OUTSIDE the
-    # subnet is rejected by validate-excel (it would be unreachable) rather
-    # than silently overridden here.
-    _pinned_ips = {}
-    _pinned_octets = set()
-    try:
-        _air_net = ipaddress.IPv4Network(str(air_mgmt_subnet).strip(), strict=False)
-    except ValueError:
-        _air_net = None
-    if _air_net is not None:
-        for _n in nodes_to_process:
-            if not is_switch(_n['role']):
-                continue
-            _raw = str(_n.get('mgmt_ip') or '').strip().split('/')[0]
-            if not _raw:
-                continue
-            try:
-                _addr = ipaddress.IPv4Address(_raw)
-            except ValueError:
-                continue  # malformed IP already reported by validate-excel
-            if _addr in _air_net:
-                _pinned_ips[_n['name'] or _n['role']] = str(_addr)
-                _pinned_octets.add(int(_addr) - int(_air_net.network_address))
-
-    # Only the UNPINNED switches consume auto-assigned octets, so the .201-vs-.2
-    # repack decision counts those — not every switch.
-    _n_switches = sum(1 for _n in nodes_to_process
-                      if is_switch(_n['role'])
-                      and (_n['name'] or _n['role']) not in _pinned_ips)
-    _switch_octet = 201 if (201 + _n_switches) <= 254 else 2
+    # Switch eth0 addresses on the air-mgmt plane (pins + auto walk). Shared
+    # with plan_infra_addresses so the infra allocator sees the same claims.
+    _switch_eth0 = air_mgmt_switch_eth0_plan(nodes_to_process, air_mgmt_subnet, settings)
 
     for node in nodes_to_process:
         role = node['role']
@@ -5594,28 +6492,21 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_dir
         # Auto-assign air-mgmt IPs (.200+ for switches) and eth0 MACs.
         if is_switch(role):
             topo_name = node['name'] or role
-            host_vars['mac_address'] = generate_mac(topo_name, 'eth0')
             if deploy_in_air:
+                # Air builds the switch VMs from the topology, which carries
+                # these generated eth0 MACs, so DHCP must match them.
+                host_vars['mac_address'] = generate_mac(topo_name, 'eth0')
                 host_vars['ip_assignment_mode'] = 'dhcp'
-                if topo_name in _pinned_ips:
-                    # Operator pinned this switch on the air-mgmt plane.
-                    host_vars['ansible_host'] = _pinned_ips[topo_name]
-                else:
-                    while (_switch_octet in _AIR_MGMT_RESERVED
-                           or _switch_octet in _pinned_octets):
-                        _switch_octet += 1
-                    if _switch_octet > 254:
-                        raise ValueError(
-                            f"air_mgmt subnet {air_mgmt_subnet} too small for "
-                            f"{_n_switches} switches (ran past .254). Widen the subnet."
-                        )
-                    host_vars['ansible_host'] = f"{air_mgmt_base}.{_switch_octet}"
-                    _switch_octet += 1
+                host_vars['ansible_host'] = _switch_eth0[topo_name]
             else:
                 # ERA-48: Deploy in Air = No -> local push to real hardware.
                 # Keep the real Nodes-tab mgmt IP (already set on host_vars) and
-                # mark the switch statically addressed instead of Air-DHCP.
+                # mark the switch statically addressed instead of Air-DHCP. A
+                # real switch is known only by its Switch Data "ZTP MAC Address".
                 host_vars['ip_assignment_mode'] = 'static'
+                ztp_mac = str(node.get('mac_address') or '').strip().lower()
+                if ztp_mac:
+                    host_vars['mac_address'] = ztp_mac
             # Control-plane ACLs (ADR-0030): tool-owned defaults (universal
             # dos/whitelist bindings + spine-only whitelist rule) plus the
             # optional 'ACLs' sheet override/add/suppress. Set for every switch
@@ -5777,7 +6668,7 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_dir
             #     consumes in PR-c for the L3 port-VRF binding line)
             #   - vrf_config_extra: the STORAGE VRF block (peer-group,
             #     neighbors, BGP) appended on top of group_vars vrf_config
-            # See docs/plans/2026-05-19-storage-vrf-design.md.
+            # See ADR-0047.
             # Per-bond descriptions naming the connected node hostname.
             sw_bond_descs = (bond_descriptions_per_switch or {}).get(host_name, {})
             if sw_bond_descs:
@@ -5997,6 +6888,7 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_dir
             # gpu_rail_subports and emits one SVI + bridge-access line per
             # rail that this GSL switch physically owns.
             gpu_mode = str(settings.get('gpu_vlan_mode', 'single')).strip().lower()
+            gpu_origin = gpu_index_origin(vlan.get('name') for vlan in vlans)
             if gpu_mode == 'per_rail':
                 rails = {}
                 for v in vlans:
@@ -6036,6 +6928,10 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_dir
             # fallback but the template skips it when gpu_rail_planes exists.
             elif gpu_mode == 'per_rail_per_plane':
                 rail_planes = {}
+                # The row's plane index is LOGICAL; plane_num is the switch's
+                # PHYSICAL plane. Comparing them raw put ADR-0044's logical
+                # plane 1 rails on physical plane 1 and left physical plane 2
+                # with no SVIs at all.
                 for v in vlans:
                     vname = (v.get('name') or '').lower()
                     m_rp = re.match(r'^gpu_rail(\d+)_plane(\d+)$', vname)
@@ -6043,7 +6939,7 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_dir
                         continue
                     rail_idx = int(m_rp.group(1))
                     p_idx = int(m_rp.group(2))
-                    if p_idx != plane_num:
+                    if physical_gpu_plane(p_idx, gpu_origin) != plane_num:
                         continue  # other plane's rail — not on this switch
                     subnet = v.get('subnet')
                     vlan_id = v.get('id')
@@ -6297,15 +7193,27 @@ def generate_host_vars(nodes, vlans, output_dir, arch, settings, prefix_list_dir
         _grp = group_port_blocks if node.get('category') in ('core', 'csl', 'cl') else None
         assert_valid_8x_breakout(inv_hostname, host_vars, _grp)
         _record_loopback_claims(loopback_claims, inv_hostname, host_vars)
-        output_file = host_vars_dir / f"{inv_hostname}.yml"
+        # Buffered, not written yet — see the assertion below.
+        pending_host_vars.append(
+            (host_vars_dir / f"{inv_hostname}.yml", inv_hostname, host_vars))
+
+    # Assert BEFORE anything reaches disk. The guard used to run after the
+    # loop had already written every file, so a loopback collision raised
+    # ValueError over a half-built inventory — generation was not atomic, and
+    # an operator scripting on the output directory rather than the exit
+    # status could act on it (GitLab #74).
+    #
+    # `host_vars` is rebound per iteration and nothing in the loop reads a
+    # file back, so buffering the dicts and writing afterwards changes when
+    # the writes happen and nothing else.
+    _assert_no_duplicate_loopbacks(loopback_claims)
+
+    for output_file, inv_hostname, host_vars in pending_host_vars:
         with open(output_file, 'w') as f:
             f.write("---\n")
             f.write(f"# Host variables for {inv_hostname} (Generated from Excel)\n")
-            yaml.dump(host_vars, f, default_flow_style=False, sort_keys=False)
-        
+            inventory_yaml.dump(host_vars, f, default_flow_style=False, sort_keys=False)
         generated_files.append(output_file)
-
-    _assert_no_duplicate_loopbacks(loopback_claims)
 
     return generated_files
 
@@ -6333,8 +7241,13 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
                         node_oob_mapping=None, versions=None, wiremap_rows=None,
                         air_settings=None, dhcp_relay_table=None,
                         loopback_overrides=None, route_policy_directives=None,
-                        community_list_directives=None, plane_breakout=None):
+                        community_list_directives=None, plane_breakout=None,
+                        declared_ips=None, site=None):
     """Generate group_vars YAML files.
+
+    site: the resolved SITE the inventory is generated for (command-line /
+    .era-context). Written to ``common.site``; the workbook ``site_name`` cell
+    is only a fallback when no site is supplied.
 
     route_policy_directives / community_list_directives:
     optional {route_map_id/community_list_id: rule_list} dicts from the
@@ -6451,15 +7364,14 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
     # Empty → templates emit no `nv set system message ...` line and leave
     # any existing banner on the switch alone. Multi-line content is
     # preserved verbatim. Templates substitute {hostname}/{site}/{arch}
-    # per-switch at render time. See
-    # docs/plans/2026-05-26-switch-login-messages-design.md.
+    # per-switch at render time. See ADR-0070.
     common['pre_login_message'] = str(settings.get('pre_login_message') or '')
     common['post_login_message'] = str(settings.get('post_login_message') or '')
 
     # Site + arch into common so templates can substitute them into the
     # banner placeholders. `architecture` is the Settings field name;
     # default to the `arch` function argument when missing.
-    common['site'] = str(settings.get('site_name') or 'default').strip()
+    common['site'] = str(site or settings.get('site_name') or 'default').strip()
     common['arch'] = str(settings.get('architecture') or arch).strip()
 
     all_vars['common'] = common
@@ -6472,7 +7384,7 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
         'enabled': ldap_enabled,
         'domain': settings.get('ldap_domain', 'example.com'),
         'organization': settings.get('ldap_organization', 'Example Org'),
-        'admin_password': '{{ ldap_admin_password }}',
+        'admin_password': AnsibleExpr('{{ ldap_admin_password }}'),
         'base_dn': settings.get('ldap_base_dn', ''),
         'root_dn': settings.get('ldap_root_dn', ''),
         'servers': [{'ip': ip, 'priority': i + 1} for i, ip in enumerate(ldap_server_ips)],
@@ -6480,8 +7392,8 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
 
     # LDAP users (default placeholder accounts)
     all_vars['ldap']['users'] = [
-        {'firstname': 'John', 'lastname': 'Doe', 'username': 'jdoe', 'password': '{{ ldap_user_default_password }}'},
-        {'firstname': 'Alice', 'lastname': 'Smith', 'username': 'asmith', 'password': '{{ ldap_user_default_password }}'},
+        {'firstname': 'John', 'lastname': 'Doe', 'username': 'jdoe', 'password': AnsibleExpr('{{ ldap_user_default_password }}')},
+        {'firstname': 'Alice', 'lastname': 'Smith', 'username': 'asmith', 'password': AnsibleExpr('{{ ldap_user_default_password }}')},
     ]
 
     # Status page toggle (for Air HTTP service + nginx basic auth)
@@ -6493,12 +7405,12 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
     #   single             — one GPU VLAN (default; legacy behavior)
     #   per_rail           — one VLAN per rail; gpu_rail<N> VLAN rows
     #   per_rail_per_plane — one VLAN per (rail, plane); gpu_rail<R>_plane<P> rows
-    # See docs/plans/2026-05-18-gpu-plane-per-rail.md.
+    # See ADR-0044.
     gpu_vlan_mode = str(settings.get('gpu_vlan_mode', 'single')).strip().lower()
     if gpu_vlan_mode not in ('single', 'per_rail', 'per_rail_per_plane'):
         gpu_vlan_mode = 'single'
     devices = build_devices(nodes or [], vlans, node_oob_mapping, wiremap_rows,
-                            gpu_vlan_mode=gpu_vlan_mode)
+                            gpu_vlan_mode=gpu_vlan_mode, declared_ips=declared_ips)
     if devices:
         all_vars['host_dhcp'] = True
         all_vars['devices'] = devices
@@ -6518,7 +7430,7 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
 
     # Mode-aware Ansible target hosts. L2 default uses the dhcp-oob trio;
     # L3 uses the external-conn / external-dhcp / utility Ubuntu trio per
-    # docs/plans/2026-05-20-l3-oob-air-topology.md.
+    # ADR-0067.
     _mode = _normalize_oob_uplink_mode(settings)
     if _mode == 'l3':
         all_vars['ztp_server_host'] = 'external-dhcp'
@@ -6534,14 +7446,15 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
 
     # Generate ztp_interfaces from Air Management Subnet (for switch ZTP on air-oob-switch)
     air_settings = air_settings or {}
-    air_mgmt_subnet = air_settings.get('air_mgmt_subnet', '172.20.0.0/24')
-    _parsed_air = _parse_cidr(air_mgmt_subnet, context="Air_Only.air_mgmt_subnet")
-    if not _parsed_air:
-        # Fall back to default if the operator entered garbage.
-        air_mgmt_subnet = '172.20.0.0/24'
-        _parsed_air = _parse_cidr(air_mgmt_subnet)
-    _air_ip, air_mgmt_prefix = _parsed_air
-    air_mgmt_base = _air_ip.rsplit('.', 1)[0]  # e.g., "172.20.0"
+    # ERA-134 / ADR-0084: every infrastructure address below comes from the
+    # allocator plan, never from `network + <fixed octet>` arithmetic. On a
+    # /24 the plan reproduces the historical .77/.78/.1/.254 exactly; on a
+    # smaller subnet it seats each claimant on the first free host instead of
+    # emitting an address outside the network (100.82.254.128/26 -> .206).
+    infra_plan = plan_infra_addresses(
+        settings, vlans, nodes or [], air_settings,
+        ext_storage_names=air_ext_storage_names(nodes, wiremap_rows))
+    air_mgmt_subnet = infra_plan['air_mgmt']['subnet']
     all_vars['air_mgmt_subnet'] = air_mgmt_subnet
 
     # Build ztp_interfaces: eth1 (air-mgmt for switch ZTP) + ethN per OOB VLAN subnet.
@@ -6549,41 +7462,65 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
     # bridge) — server-side DHCP on VLAN 200 is hosted by utility, separately.
     # Its DHCP gateway is the cust-net-edge-01 bridge SVI (.254); external-conn
     # sits on separate routed EXIT egress legs, not on this management subnet.
-    air_mgmt_gateway = (
-        f"{air_mgmt_base}.254" if _mode == 'l3' else f"{air_mgmt_base}.1"
-    )
-    ztp_ifaces = [{
+    _air_infra = infra_plan['air_mgmt']['infra']
+    _physical = not _deploy_in_air(settings)
+    ztp_ifaces = [] if _physical else [{
         'name': 'eth1',
-        'ip': f"{air_mgmt_base}.77",
+        'ip': _air_infra['external-dhcp' if _mode == 'l3' else 'dhcp-oob'],
         'network': air_mgmt_subnet,
-        'gateway': air_mgmt_gateway,
+        'gateway': infra_plan['air_mgmt']['gateway'],
         'purpose': 'air-mgmt',
         'dnsmasq_listen': True,
+        'dhcp_range_start': infra_plan['air_mgmt']['dhcp_pool'][0],
+        'dhcp_range_end': infra_plan['air_mgmt']['dhcp_pool'][1],
     }]
     # OOB VLAN subnets (used for per-VLAN ZTP interfaces below, L2 only, and
     # for the nginx allow-list further down regardless of mode).
     oob_subnets_list = resolve_oob_vlans(vlans, get_oob_nodes_for_inventory(nodes or [], settings, vlans))['subnets']
-    if _mode != 'l3':
-        # Per-VLAN interfaces from OOB VLAN subnets (L2 only — see comment above).
-        for i, subnet_str in enumerate(oob_subnets_list):
-            parsed = _parse_cidr(subnet_str, context=f"oob_vlan_subnets[{i}]")
-            if not parsed:
-                continue
-            net_ip, prefix = parsed
-            base = net_ip.rsplit('.', 1)[0]
-            try:
-                net_last = int(net_ip.rsplit('.', 1)[1])
-            except (ValueError, IndexError):
-                continue
+    if _physical:
+        # Physical ZTP: real switches DHCP on the OOB VLAN subnet(s), in either
+        # mode, from the operator's ZTP server. There is no air-mgmt leg, so
+        # interface names start at eth1 until the operator renames them to the
+        # server's NICs; a rename is kept across regeneration.
+        _ztp_claimant = 'ztp_server' if _mode == 'l3' else 'dhcp-oob'
+        _nic_names = operator_ztp_nic_names(group_vars_dir / "all" / "main.yml")
+        for i, plane in enumerate(infra_plan['oob']):
             ztp_ifaces.append({
-                'name': f'eth{2 + i}',
-                'ip': f"{base}.{net_last + 78}",
-                'network': subnet_str,
-                'gateway': f"{base}.{net_last + 1}",
+                'name': _nic_names.get(plane['subnet'], f'eth{1 + i}'),
+                'ip': plane['infra'][_ztp_claimant],
+                'network': plane['subnet'],
+                'gateway': plane['gateway'],
                 'purpose': f'mgmt-subnet-{i + 1}',
                 'dnsmasq_listen': True,
+                'dhcp_range_start': plane['dhcp_pool'][0],
+                'dhcp_range_end': plane['dhcp_pool'][1],
+            })
+    elif _mode != 'l3':
+        # Per-VLAN interfaces from OOB VLAN subnets (L2 only — see comment above).
+        for i, plane in enumerate(infra_plan['oob']):
+            ztp_ifaces.append({
+                'name': f'eth{2 + i}',
+                'ip': plane['infra']['dhcp-oob'],
+                'network': plane['subnet'],
+                'gateway': plane['gateway'],
+                'purpose': f'mgmt-subnet-{i + 1}',
+                'dnsmasq_listen': True,
+                'dhcp_range_start': plane['dhcp_pool'][0],
+                'dhcp_range_end': plane['dhcp_pool'][1],
             })
     all_vars['ztp_interfaces'] = ztp_ifaces
+    if _physical and ztp_ifaces:
+        all_vars['ztp_server_ip'] = ztp_ifaces[0]['ip']
+    # Consumed by air-deploy.py (L3 trio netplan, bridge SVI) and
+    # validate_excel.py so the simulator, the inventory and the gate all name
+    # the same addresses. Keyed by plane; claimant -> address.
+    all_vars['infra_addresses'] = {
+        'air_mgmt': {'subnet': air_mgmt_subnet,
+                     'gateway': infra_plan['air_mgmt']['gateway'],
+                     **_air_infra},
+        'oob': [{'subnet': p['subnet'], 'gateway': p['gateway'], **p['infra']}
+                for p in infra_plan['oob']],
+    }
 
     # SEC (scan finding #0): the nginx ZTP vhost restricts /scripts/, /configs/,
     # and /authorized_keys to the OOB management subnet(s) switches actually
@@ -6592,7 +7529,7 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
     # subnet(s) (e.g. 192.168.200.0/24). Emit the union so the allow-list
     # always matches the real ZTP source subnet — a mismatch makes nginx 403
     # every ztp.sh fetch.
-    ztp_allow_subnets = [air_mgmt_subnet]
+    ztp_allow_subnets = [] if _physical else [air_mgmt_subnet]
     for subnet_str in oob_subnets_list:
         subnet_str = subnet_str.strip()
         if subnet_str and _parse_cidr(subnet_str) and subnet_str not in ztp_allow_subnets:
@@ -6605,7 +7542,7 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
     # needs (a) to listen on eth2 (the customer-DC-side leg) and (b) a
     # dhcp-range per client VLAN subnet so dnsmasq has a pool to offer
     # from when relayed DISCOVERs arrive with giaddr in those subnets.
-    # See docs/plans/2026-05-27-l3-oob-exit-dhcp-relay.md.
+    # See ADR-0007.
     if _mode == 'l3' and dhcp_relay_table:
         has_exit_row = any(
             r['vrf'].upper() == 'EXIT' for r in dhcp_relay_table
@@ -6652,7 +7589,7 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
         f.write("# ============================================================================\n")
         f.write("# Global Variables - Applied to All Switches\n")
         f.write("# ============================================================================\n")
-        yaml.dump(all_vars, f, default_flow_style=False, sort_keys=False)
+        inventory_yaml.dump(all_vars, f, default_flow_style=False, sort_keys=False)
     generated_files.append(all_file)
 
     # Remove stale flat all.yml if it exists (avoid Ansible double-loading)
@@ -6818,7 +7755,7 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
     with open(core_file, 'w') as f:
         f.write("---\n")
         f.write(f"# Core Switch Configuration (Generated from Excel + Source Inventory - {arch})\n\n")
-        yaml.dump(core_vars, f, default_flow_style=False, sort_keys=False)
+        inventory_yaml.dump(core_vars, f, default_flow_style=False, sort_keys=False)
     generated_files.append(core_file)
 
     active_nodes_for_group_vars = [
@@ -6856,7 +7793,7 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
         with open(csl_file, 'w') as f:
             f.write("---\n")
             f.write(f"# CSL Switch Configuration (Generated from Excel + Source Inventory - {arch})\n\n")
-            yaml.dump(csl_vars, f, default_flow_style=False, sort_keys=False)
+            inventory_yaml.dump(csl_vars, f, default_flow_style=False, sort_keys=False)
         generated_files.append(csl_file)
 
     # cl.yml — split-role (non-converged) CPU/Storage leaf. Same vars as
@@ -6870,7 +7807,7 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
         with open(cl_file, 'w') as f:
             f.write("---\n")
             f.write(f"# CL Switch Configuration (Generated from Excel + Source Inventory - {arch})\n\n")
-            yaml.dump(cl_vars, f, default_flow_style=False, sort_keys=False)
+            inventory_yaml.dump(cl_vars, f, default_flow_style=False, sort_keys=False)
         generated_files.append(cl_file)
 
     # GPU leaf plane group_vars — GENERATED from Excel (replaces the former
@@ -6884,18 +7821,18 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
     # was SHADOWED by per-host Wire-Map data or dead — dropped.
     gpu_vlans = [v for v in vlans if str(v.get('vrf') or '').strip().upper() == 'GPU']
     gpu_vrf = vrfs.get('GPU') or {}
+    gpu_origin = gpu_index_origin(v.get('name') for v in vlans)
     for plane_num in sorted(gsl_planes_present):
         # OUTPUT filename must match the inventory group the leaves land in
-        # ([gl_plane{N}] split-role vs legacy [gsl_plane{N}] collapsed).
+        # ([gl_plane{N}] split-role vs legacy [gsl_plane{N}] collapsed), so it
+        # stays one-based and PHYSICAL regardless of the workbook's origin.
         split_role = f'gl-plane{plane_num}' in group_var_categories
         plane_file = f"gl_plane{plane_num}.yml" if split_role else f"gsl_plane{plane_num}.yml"
-        preferred = next(
-            (
-                v for v in gpu_vlans
-                if str(v.get('name') or '').strip().lower() == f'gpu_plane{plane_num}'
-            ),
-            gpu_vlans[plane_num - 1] if len(gpu_vlans) >= plane_num else (gpu_vlans[0] if gpu_vlans else {}),
-        )
+        # ...but the VLAN row that configures this physical plane is named
+        # with the workbook's LOGICAL index: physical plane 1 is 'gpu_plane0'
+        # under ADR-0044 and 'gpu_plane1' on a legacy sheet.
+        logical_plane = logical_gpu_plane(plane_num, gpu_origin)
+        preferred = select_plane_gpu_vlan(gpu_vlans, logical_plane, plane_num)
         subnet = preferred.get('subnet') or ('192.168.0.0/20' if plane_num == 1 else '192.168.16.0/20')
         try:
             net = ipaddress.ip_network(subnet, strict=False)
@@ -6947,7 +7884,7 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
         with open(dst, 'w') as f:
             f.write("---\n")
             f.write(f"# GPU Plane {plane_num} Configuration (Generated from Excel - {arch})\n\n")
-            yaml.dump(plane_vars, f, default_flow_style=False, sort_keys=False)
+            inventory_yaml.dump(plane_vars, f, default_flow_style=False, sort_keys=False)
         generated_files.append(dst)
 
     # Spine group_vars — GENERATED from Excel (replaces the former verbatim
@@ -6967,7 +7904,7 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
                 _isl_bo = _breakout_token((plane_breakout or {}).get('isl'))
                 if _isl_bo:
                     _spine_vars['isl_breakout'] = _isl_bo
-                yaml.dump(_spine_vars, f, default_flow_style=False, sort_keys=False)
+                inventory_yaml.dump(_spine_vars, f, default_flow_style=False, sort_keys=False)
             generated_files.append(dst)
     if 'cs' in group_var_categories:
         dst = group_vars_dir / "cs.yml"
@@ -7015,10 +7952,12 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
             print(f"    Merged {merged_oob} variables from inventory_defaults (oob/{arch})")
         with open(oob_file, 'w') as f:
             f.write("---\n")
+            # REUSE-IgnoreStart
             f.write("# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n")
             f.write("# SPDX-License-Identifier: MIT\n")
+            # REUSE-IgnoreEnd
             f.write(f"# OOB Switch Configuration (Generated from Excel + Source Inventory - {arch})\n\n")
-            yaml.dump(oob_vars, f, default_flow_style=False, sort_keys=False)
+            inventory_yaml.dump(oob_vars, f, default_flow_style=False, sort_keys=False)
         generated_files.append(oob_file)
     else:
         # Old format (versions is None): write oob defaults from the single-home
@@ -7027,10 +7966,12 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
         if legacy_oob and not oob_file.exists():
             with open(oob_file, 'w') as f:
                 f.write("---\n")
+                # REUSE-IgnoreStart
                 f.write("# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n")
                 f.write("# SPDX-License-Identifier: MIT\n")
+                # REUSE-IgnoreEnd
                 f.write(f"# OOB Switch Configuration (inventory_defaults - {arch})\n\n")
-                yaml.dump(legacy_oob, f, default_flow_style=False, sort_keys=False)
+                inventory_yaml.dump(legacy_oob, f, default_flow_style=False, sort_keys=False)
             generated_files.append(oob_file)
 
     # Emit switches.yml / servers.yml from the single-home constants
@@ -7058,13 +7999,320 @@ def generate_group_vars(settings, vlans, vrfs, output_dir, arch, nodes=None, por
     return generated_files
 
 
-def process_excel_template(excel_path, output_dir):
+# --- Intake-form parsing (ADR-0064, ERA-109 Phase 0) -----------------------
+#
+# An intake-form workbook carries the same information as a legacy one,
+# reshaped: Switch Data + Host Data replace Nodes, and Deployment replaces
+# Settings' *declared* fields — the rest are now derived from the data
+# itself (the intake-form design's "Derived vs declared" split). Phase 0
+# only wires up the two settings intake_derive can already compute
+# (gpu_planes, convergence); the remaining DERIVED_SETTINGS
+# entries (ns_tiers, ew_tiers, loopback_base, num_physical_ports,
+# disabled_ports, gpu_vlan_mode, oob_uplink_mode, ztp_server, netq_ip,
+# ldap_servers, architecture, site_name) have no derivation function yet and
+# are intentionally left absent here rather than guessed at — each already
+# has its own fallback default where it is consumed below, which is the
+# right place for that logic to live, not a second copy here.
+
+def is_intake_form(wb):
+    """True when the workbook is in the intake form format.
+
+    Thin alias for `intake_to_legacy.is_intake_workbook`, which owns the
+    rule; kept because this name is used throughout the parser.
+    """
+    return intake_to_legacy.is_intake_workbook(wb)
+
+
+# Deployment mixes real settings with the Cumulus per-role versions (role
+# name -> version string) and the Air image block (version string -> Air
+# image, plus the Air management subnet) in one flat dict — read_deployment
+# documents this and leaves the split to the caller.
+_INTAKE_VERSION_ROLES = {'core', 'oob', 'csl', 'gsl'}
+_INTAKE_VERSION_KEY_RE = re.compile(r'^\d+\.\d+\.\d+$')
+
+
+def _intake_wiremap_links(ws):
+    """Read Wiremap's System Name (A)/(Z) columns into intake_derive's
+    `links` shape: [{'system_name_a': ..., 'system_name_z': ...}, ...].
+
+    Both columns are required. A missing/renamed column must raise rather
+    than silently produce an empty (or half-empty) `links` list: an empty
+    `links` list itself now raises inside derive_gpu_planes()/
+    derive_convergence() (they no longer default to 1/'full'), so this
+    check is defense in depth at the column-lookup boundary that feeds
+    them, catching the specific, actionable case of a renamed/missing
+    column before it ever reaches the less specific "links is empty"
+    raise -- intake_derive's own design rule is that ambiguity raises,
+    not defaults.
+    """
+    cols = _intake_column_map(ws)
+    missing = [name for name in ('system name (a)', 'system name (z)')
+               if name not in cols]
+    if missing:
+        raise DerivationError(
+            f"Wiremap sheet '{ws.title}' is missing required column(s): "
+            f"{', '.join(missing)}. GPU-plane and convergence derivation "
+            "depend on these columns to identify links.")
+    a_col = cols['system name (a)']
+    z_col = cols['system name (z)']
+    start = _intake_header_row(ws) + 1
+    links = []
+    for r in range(start, ws.max_row + 1):
+        name_a = ws.cell(r, a_col).value
+        if not name_a:
+            continue
+        name_z = ws.cell(r, z_col).value
+        links.append({'system_name_a': name_a, 'system_name_z': name_z})
+    return links
+
+
+def _parse_intake_settings(wb):
+    """Build (settings, versions) from an intake-form workbook, shaped like
+    parse_settings()/parse_versions()'s legacy output."""
+    deployment = _intake_read_deployment(wb['Deployment'])
+
+    # read_deployment()'s contract is a flat dict routed by NAME, not by
+    # section or position (see its own docstring) — so six names/patterns
+    # are reserved rather than free-form settings: `core`, `oob`, `csl`,
+    # `gsl` are filed as Cumulus versions; any key matching
+    # _INTAKE_VERSION_KEY_RE (an Air image map row, keyed by version
+    # string) and the literal `Air Management Subnet` are Air environment
+    # data and are dropped entirely. A real Deployment setting whose name
+    # collides with one of these six is silently misfiled or dropped
+    # rather than becoming a setting. Accepted risk, not fixed here: the
+    # collision requires a name from a six-word reserved vocabulary we
+    # control, in a 17-key sheet we define — far lower likelihood and
+    # blast radius than the Wiremap ambiguity fixed elsewhere in this
+    # module, which raises. The assert just below catches the shape this
+    # collision would produce (a version-role count that isn't 4).
+    settings = {}
+    versions = {}
+    for key, value in deployment.items():
+        key_clean = str(key).strip()
+        if key_clean in _INTAKE_VERSION_ROLES:
+            versions[key_clean] = value
+        elif _INTAKE_VERSION_KEY_RE.match(key_clean) or key_clean == 'Air Management Subnet':
+            continue  # Air image map / Air mgmt subnet — not a setting
+        else:
+            norm_key = key_clean.lower().replace(' ', '_').replace('-', '_')
+            settings[norm_key] = value
+
+    # Routing is shape-based (by name), not position-based, so a
+    # Deployment sheet missing one of the four Cumulus role versions is
+    # indistinguishable, at this point, from one where a real setting
+    # collided with a reserved name and got misfiled as a version. Assert
+    # the count rather than staying silent -- cheap, and it turns a
+    # malformed Deployment sheet into an immediate, specific failure
+    # instead of a confusing one downstream.
+    if len(versions) != len(_INTAKE_VERSION_ROLES):
+        raise ValueError(
+            f"Deployment sheet has {len(versions)} Cumulus version "
+            f"row(s) {sorted(versions)}, expected exactly "
+            f"{sorted(_INTAKE_VERSION_ROLES)}. A missing role version, or "
+            "a real setting whose name collides with a reserved key "
+            "(core/oob/csl/gsl), would both produce this.")
+
+    links = _intake_wiremap_links(wb['Wiremap'])
+    for key, derived_value in (('gpu_planes', derive_gpu_planes(links)),
+                                ('convergence', derive_convergence(links))):
+        # ADR-0064: a derived value always wins over a declared one. These
+        # are the only 2 settings intake_derive can produce today (see
+        # intake_derive.DERIVABLE_SETTINGS) -- Phase 1 grows this to 14,
+        # so a silent override here is a much bigger blind spot later
+        # than it looks now. Log it rather than silently discarding
+        # whatever the user typed into Deployment.
+        declared_value = settings.get(key)
+        if declared_value is not None and str(declared_value) != str(derived_value):
+            print(f"  ⚠️  derived {key}={derived_value!r} overrides "
+                  f"declared {key}={declared_value!r} in Deployment "
+                  "(ADR-0064: derived values win)")
+        settings[key] = derived_value
+
+    return settings, versions
+
+
+# Switch Data / Host Data carry the same logical fields as legacy Nodes
+# under different physical column names (Switch Data's are the intake
+# template's own; Host Data's are the ERA extension columns). Values below are
+# normalised (intake_reader._norm: lowercased, whitespace-collapsed)
+# header text.
+_INTAKE_SWITCH_FIELD_MAP = {
+    'role': 'function', 'name': 'name', 'mac_address': 'ztp mac address',
+    'mgmt_ip': 'mgmt ip', 'gateway': 'mgmt gateway', 'prefix': 'prefix',
+    'ztp': 'ztp', 'enabled': 'enabled', 'oob_vlan': 'oob vlan',
+}
+_INTAKE_HOST_FIELD_MAP = {
+    'role': 'function', 'name': 'system name', 'mac_address': 'mac address',
+    'mgmt_ip': 'ip', 'gateway': 'gateway', 'prefix': 'prefix',
+    'ztp': 'ztp', 'enabled': 'enabled', 'oob_vlan': 'oob vlan',
+}
+
+
+def _read_intake_node_rows(ws, field_map):
+    """Read Switch Data or Host Data into node dicts shaped like
+    parse_nodes()'s per-row output. Mirrors parse_nodes()'s status/oob_vlan
+    rules exactly, on the physical columns `field_map` names."""
+    cols = _intake_column_map(ws)
+    start = _intake_header_row(ws) + 1
+    nodes = []
+    # `Host Data` is one row per INTERFACE in the intake template, and the
+    # completed workbook (`<arch>-complete.xlsx`) writes it that way -- one
+    # row per resolved address. A node is still ONE node, so take its first
+    # row and skip the rest; without this a host's mgmt IP is whichever
+    # interface happened to sort last, which is how the completed workbook
+    # first failed to round-trip.
+    #
+    # The row that IS the node is the management row (`Logical Interface`
+    # eth0 or blank); the grouping rule lives in intake_layout.host_row_groups
+    # so the parser, the legacy `Nodes` view and the declared-IP reader
+    # (_parse_intake_host_declarations) all agree on it. A host whose every row is a data-plane interface has no
+    # management row and is refused here rather than having a bond address
+    # promoted to eth0.
+    logical_col = cols.get('logical interface')
+    mgmt_rows = None
+    if logical_col is not None:
+        groups = intake_host_row_groups(ws)
+        orphans = sorted(n for n, g in groups.items() if g['mgmt'] is None)
+        if orphans:
+            raise ValueError(
+                f"[{ws.title}] host(s) {orphans} have data-plane interface rows "
+                f"but no management row (Logical Interface eth0 or blank). Add "
+                f"the eth0 row carrying the management IP.")
+        mgmt_rows = {g['mgmt'] for g in groups.values()}
+    seen_names = set()
+    for r in range(start, ws.max_row + 1):
+        def cell(field):
+            col = cols.get(field_map.get(field))
+            return ws.cell(r, col).value if col else None
+
+        role = cell('role')
+        if not role:
+            continue
+
+        _name_key = str(cell('name') or role).strip()
+        if _name_key in seen_names:
+            continue
+        if mgmt_rows is not None and cell('name') and r not in mgmt_rows:
+            continue
+        seen_names.add(_name_key)
+
+        # `or 'Yes'` would turn a numeric 0 into 'Yes' -- 0 is falsy, so a
+        # node explicitly marked Enabled=0 would come back Active. openpyxl
+        # returns real ints for numeric cells (the oob_vlan handling below
+        # already accounts for that), so only None/'' may default.
+        _enabled_raw = cell('enabled')
+        if _enabled_raw is None or _enabled_raw == '':
+            _enabled_raw = 'Yes'
+        enabled_val = str(_enabled_raw).strip().lower()
+        is_active = enabled_val in ('yes', 'true', '1', '')
+        is_air_documentary = (enabled_val == 'air')
+        if is_active:
+            status = 'Active'
+        elif is_air_documentary:
+            status = 'Air'
+        else:
+            status = 'Disabled'
+
+        name_val = cell('name') or role
+        node = {
+            'role': str(role).strip(),
+            'name': name_val,
+            'category': canonical_category(role, name_val),
+            'index': extract_role_index(name_val),
+            'status': status,
+            'mac_address': cell('mac_address') or '',
+            'mgmt_ip': cell('mgmt_ip') or '',
+            'prefix': cell('prefix') or 24,
+            'gateway': cell('gateway') or '',
+            'ztp': cell('ztp') or '',
+        }
+        oob_vlan_raw = cell('oob_vlan')
+        if oob_vlan_raw is None or str(oob_vlan_raw).strip() == '':
+            node['oob_vlan'] = ''
+        elif isinstance(oob_vlan_raw, float) and oob_vlan_raw.is_integer():
+            node['oob_vlan'] = str(int(oob_vlan_raw))
+        else:
+            node['oob_vlan'] = str(oob_vlan_raw).strip()
+        nodes.append(node)
+    return nodes
+
+
+def _parse_intake_host_declarations(wb):
+    """Declared data-plane addresses from `Host Data` (ADR-0034, ERA-43).
+
+    ``{system_name: [{'row', 'logical', 'nic', 'physical', 'profile', 'ip'}]}``
+    for every non-management row whose `IP` cell is filled. Hosts with no
+    such row are absent, so the blank form yields ``{}`` and the allocator
+    runs exactly as before.
+    """
+    if 'Host Data' not in wb.sheetnames:
+        return {}
+    return {name: g['declared']
+            for name, g in intake_host_row_groups(wb['Host Data']).items()
+            if g['declared']}
+
+
+def _intake_air_block(wb):
+    """Recover the Air image map and management subnet from `Deployment`.
+
+    `convert_workbook` folds the legacy `Air_Only` sheet into `Deployment`:
+    version-shaped keys ("5.18.0" -> "cumulus-vx-5.18.0") plus the Air
+    management subnet. `_parse_intake_settings` skips both because they are
+    not settings; `intake_to_legacy` needs them to rebuild `Air_Only`.
+
+    Returns (list of (version, image) in sheet order, subnet or None).
+    """
+    if 'Deployment' not in wb.sheetnames:
+        return [], None
+    deployment = _intake_read_deployment(wb["Deployment"])
+    images = [(k, v) for k, v in deployment.items()
+              if _INTAKE_VERSION_KEY_RE.match(str(k).strip())]
+    return images, deployment.get('Air Management Subnet')
+
+
+def _parse_intake_nodes(wb):
+    """Build the combined node list from Switch Data + Host Data, shaped
+    like parse_nodes()'s legacy output (same keys, same status/index/
+    oob_vlan rules — see _read_intake_node_rows)."""
+    nodes = (_read_intake_node_rows(wb['Switch Data'], _INTAKE_SWITCH_FIELD_MAP)
+             + _read_intake_node_rows(wb['Host Data'], _INTAKE_HOST_FIELD_MAP))
+
+    # Second pass: assign index by order-among-same-category for nodes whose
+    # Name had no trailing digits. The counting loop below is the same code
+    # as parse_nodes()'s own second pass, duplicated (rather than shared) so
+    # the legacy path stays completely untouched — but the traversal order
+    # it counts over is NOT the same: this walks Switch Data then Host Data
+    # as two concatenated blocks, where parse_nodes() walks the Nodes
+    # sheet's single interleaved row order. That only matters for a
+    # category split across both blocks, and today none is — Switch Data's
+    # Function values and Host Data's are disjoint vocabularies (switch
+    # roles vs. host/server roles) — so per-category numbering still comes
+    # out in each sheet's own row order either way. A category that ever
+    # appeared in both sheets would number differently here than in
+    # parse_nodes().
+    per_category_seq = {}
+    for n in nodes:
+        cat = n.get('category')
+        if cat is None:
+            continue
+        per_category_seq.setdefault(cat, 0)
+        per_category_seq[cat] += 1
+        if n['index'] is None:
+            n['index'] = per_category_seq[cat]
+
+    return nodes
+
+
+def process_excel_template(excel_path, output_dir, site=None):
     """Process an Excel template and generate inventory files.
 
     Args:
         excel_path: Path to the Excel workbook.
         output_dir: Final output directory (e.g. output/<arch>/<site>/inventory/).
                     Files are written directly here — no subdirectories are created.
+        site: Resolved SITE name (command-line > .era-context). Recorded as
+              ``common.site`` so rendered banners name the site actually
+              generated, not whatever the workbook's ``site_name`` cell says.
     """
     # Start each generation run with a clean MAC collision registry so repeated
     # in-process runs (tests, batch invocations) can't accumulate stale state
@@ -7074,24 +8322,39 @@ def process_excel_template(excel_path, output_dir):
 
     wb = load_workbook_safe(excel_path, data_only=True)
 
+    # ADR-0064 D1: the intake form is the only input format, and the legacy
+    # read path is deleted rather than kept behind a branch. A legacy workbook
+    # is converted once, explicitly, not parsed.
+    if not is_intake_form(wb):
+        raise SystemExit(
+            f"❌ {excel_path}: this is a legacy-format workbook. The intake form "
+            f"is the only input format (ADR-0064). Convert it once with "
+            f"`make convert-workbook EXCEL={excel_path}`, then generate from the "
+            f"converted workbook.")
+
     # R4-05: pre-check required sheets so direct callers (not via
     # `make generate`'s validate gate) get a friendly error instead of
     # an uncaught `KeyError: 'Worksheet X does not exist.'` traceback.
-    required_sheets = ('Settings', 'Nodes', 'VLANs & Profiles')
-    missing = [s for s in required_sheets if s not in wb.sheetnames]
+    # The legacy-shaped views are built further down, after the parse, so
+    # they cannot be checked for here.
+    missing = [s for s in REQUIRED_INTAKE_SHEETS if s not in wb.sheetnames]
     if missing:
         raise SystemExit(
             f"❌ {excel_path}: required sheets missing: {', '.join(missing)}. "
             f"Run `python3 scripts/validate_excel.py {excel_path}` for details, "
             f"or use `make generate` which gates on validation.")
 
-    # Detect format: new format has Air_Only sheet
-    new_format = 'Air_Only' in wb.sheetnames
-
     # Parse sheets
-    settings = parse_settings(wb['Settings'])
-    versions = parse_versions(wb['Settings']) if new_format else {}
-    nodes = parse_nodes(wb['Nodes'])
+    settings, versions = _parse_intake_settings(wb)
+    nodes = _parse_intake_nodes(wb)
+    # Everything below reads four legacy-shaped sheets directly (VLANs &
+    # Profiles x8, Air_Only x3, Wire Map, Loopbacks & ASNs). Build them in
+    # memory from the intake sheets that already carry the same data, so the
+    # rest of the pipeline runs unchanged rather than being re-established at
+    # thirteen separate call sites. These are views over the intake form, not
+    # a second input format.
+    version_images, air_subnet = _intake_air_block(wb)
+    intake_to_legacy.add_legacy_views(wb, version_images, air_subnet)
     # Single source of truth for "what is this host" — used by Wire Map / Air_Only
     # row parsing to resolve a row's Function when its own cell is blank. See
     # _build_wiremap_row_list for the cascading lookup.
@@ -7189,7 +8452,7 @@ def process_excel_template(excel_path, output_dir):
             nodes_function_map=nodes_function_map,
             oob_uplink_mode=_normalize_oob_uplink_mode(settings),
         )
-        node_oob_mapping = parse_node_mgmt_mapping(ws_wm, new_format=new_format)
+        node_oob_mapping = parse_node_mgmt_mapping(ws_wm)
         # Build two Wire Map views. Topology and server configuration use only
         # active nodes; switch port configuration must retain every physical
         # row, including disabled scale-out nodes whose ports stay provisioned.
@@ -7203,8 +8466,7 @@ def process_excel_template(excel_path, output_dir):
                                                 disabled_names=disabled_names)
         # STORAGE VRF (PR-b): find any L3 STORAGE Port Profiles, then scan
         # Wire Map for rows using them. Empty result = no STORAGE on this
-        # site, defaults stay unchanged. See
-        # docs/plans/2026-05-19-storage-vrf-design.md.
+        # site, defaults stay unchanged. See ADR-0047.
         l3_storage_profiles = find_l3_storage_profiles(wb['VLANs & Profiles'])
         storage_uplink_hw = find_storage_uplink_hw(wb['VLANs & Profiles'])
         # Same idea for the GPU profile: the per-switch rail builder used
@@ -7231,22 +8493,19 @@ def process_excel_template(excel_path, output_dir):
             nodes_function_map=nodes_function_map,
             disabled_names=disabled_names,
             known_node_names=known_node_names_set)
-        if new_format:
-            # New format: Air virtual nodes come from dedicated Air_Only sheet
-            air_virtual_nodes = parse_air_virtual_nodes(wb['Air_Only'], new_format=True)
-            # Mode-aware default Air infra nodes (always injected by the
-            # topology generator). L2: flat-bridge trio. L3: Ubuntu trio
-            # per docs/plans/2026-05-20-l3-oob-air-topology.md.
-            if _normalize_oob_uplink_mode(settings) == 'l3':
-                air_virtual_nodes |= {'external-conn', 'external-dhcp', 'utility'}
-            else:
-                air_virtual_nodes |= {'dhcp-oob', 'oob-server-01'}
-            # Air settings (Air Management Subnet, etc.)
-            air_settings = parse_air_settings(wb['Air_Only'])
+        # Air virtual nodes come from the dedicated Air_Only view
+        air_virtual_nodes = parse_air_virtual_nodes(wb['Air_Only'])
+        # Mode-aware default Air infra nodes (always injected by the
+        # topology generator). L2: flat-bridge trio. L3: Ubuntu trio
+        # per ADR-0067.
+        if _normalize_oob_uplink_mode(settings) == 'l3':
+            air_virtual_nodes |= {'external-conn', 'external-dhcp', 'utility'}
         else:
-            # Old format: Air virtual nodes are tagged rows in Wire Map
-            air_virtual_nodes = parse_air_virtual_nodes(ws_wm, new_format=False)
-            air_settings = {}
+            air_virtual_nodes |= {'dhcp-oob', 'oob-server-01'}
+        if not _deploy_in_air(settings):
+            air_virtual_nodes = set(PHYSICAL_INFRA_NODES[_normalize_oob_uplink_mode(settings)])
+        # Air settings (Air Management Subnet, etc.)
+        air_settings = parse_air_settings(wb['Air_Only'])
     else:
         oob_switch_configs = {}
         port_config = None
@@ -7254,7 +8513,6 @@ def process_excel_template(excel_path, output_dir):
         per_switch_network_roles = {}
         per_switch_direct_interfaces = {}
 
-    print(f"  Format: {'new (Air_Only sheet)' if new_format else 'legacy'}")
     print(f"  Settings: {len(settings)} items")
     if versions:
         print(f"  Versions: {versions}")
@@ -7284,6 +8542,22 @@ def process_excel_template(excel_path, output_dir):
 
     # Get architecture name
     arch = settings.get('architecture', Path(excel_path).stem)
+
+    # Declared data-plane IPs (ADR-0034) are proven applicable BEFORE any file
+    # is written: build_devices runs once here purely as the gate, and again
+    # inside generate_group_vars for the real output. A failing sheet must
+    # leave output/ exactly as it was.
+    declared_ips = _parse_intake_host_declarations(wb)
+    if declared_ips:
+        _gate_mode = str(settings.get('gpu_vlan_mode', 'single')).strip().lower()
+        if _gate_mode not in ('single', 'per_rail', 'per_rail_per_plane'):
+            _gate_mode = 'single'
+        build_devices(nodes, vlans, node_oob_mapping, wiremap_rows,
+                      gpu_vlan_mode=_gate_mode, declared_ips=declared_ips)
+        print(f"  Declared data-plane IPs: "
+              f"{sum(len(v) for v in declared_ips.values())} Host Data row(s) "
+              f"across {len(declared_ips)} host(s)")
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate files
@@ -7316,7 +8590,6 @@ def process_excel_template(excel_path, output_dir):
     if not _parsed_air2:
         _air_mgmt = '172.20.0.0/24'
         _parsed_air2 = _parse_cidr(_air_mgmt)
-    _air_base = _parsed_air2[0].rsplit('.', 1)[0]
     _air_prefix = _parsed_air2[1]
 
     _connection_keys = {'ansible_host', 'ansible_port', 'ansible_user'}
@@ -7324,14 +8597,12 @@ def process_excel_template(excel_path, output_dir):
         dst = host_vars_dir / f"{vnode}.yml"
         # Source Air vnode host_vars from the single-home consolidated
         # defaults instead of the per-arch seed inventories/<arch>/host_vars/.
-        src_vars = air_vnode_host_vars(arch, vnode)
-        if src_vars is None:
-            continue
+        src_vars = require_air_vnode_host_vars(arch, vnode)
         # Load existing output (may have real SSH details from air-deploy)
         existing = {}
         if dst.exists():
             with open(dst) as f:
-                existing = yaml.safe_load(f) or {}
+                existing = inventory_yaml.load(f) or {}
         # Merge: source vars as base, preserve existing connection keys
         merged = {**src_vars}
         for key in _connection_keys:
@@ -7340,33 +8611,32 @@ def process_excel_template(excel_path, output_dir):
 
         # oob-server-01: eth1 (air-mgmt gateway) + ethN per OOB VLAN subnet
         if 'oob-server' in vnode:
-            _mgmt_list = resolve_oob_vlans(
-                vlans, get_oob_nodes_for_inventory(nodes, settings, vlans)
-            )['subnets']
+            # Same plan generate_group_vars used for ztp_interfaces, so the
+            # gateway dhcp-oob points at is the one oob-server-01 configures
+            # (declared Excel gateway, else network + 1).
+            _plan = plan_infra_addresses(
+                settings, vlans, nodes, air_settings,
+                ext_storage_names=air_ext_storage_names(nodes, wiremap_rows))
             oob_ifaces = [{
                 'name': 'eth1',
-                'ip': f"{_air_base}.1",
+                'ip': _plan['air_mgmt']['gateway'],
                 'netmask': _air_prefix,
                 'network': _air_mgmt,
                 'purpose': 'Air Management Gateway',
             }]
-            for i, subnet_str in enumerate(_mgmt_list):
-                net_ip, prefix = subnet_str.split('/')
-                prefix = int(prefix)
-                base = net_ip.rsplit('.', 1)[0]
-                net_last = int(net_ip.rsplit('.', 1)[1])
+            for i, plane in enumerate(_plan['oob']):
                 oob_ifaces.append({
                     'name': f'eth{2 + i}',
-                    'ip': f"{base}.{net_last + 1}",
-                    'netmask': prefix,
-                    'network': subnet_str,
+                    'ip': plane['gateway'],
+                    'netmask': int(plane['subnet'].split('/')[1]),
+                    'network': plane['subnet'],
                     'purpose': f'OOB Mgmt Subnet {i + 1} Gateway',
                 })
             merged['oob_server_interfaces'] = oob_ifaces
 
         with open(dst, 'w') as f:
             f.write("---\n")
-            yaml.dump(merged, f, default_flow_style=False, sort_keys=False)
+            inventory_yaml.dump(merged, f, default_flow_style=False, sort_keys=False)
         host_vars_files.append(dst)
 
     # Sweep stale Air-virtual-node host_vars from the OTHER mode. If an
@@ -7375,9 +8645,8 @@ def process_excel_template(excel_path, output_dir):
     # utility) would otherwise persist with stale IPs and confuse audits.
     L2_INFRA_NAMES = {'dhcp-oob', 'oob-server-01'}
     L3_INFRA_NAMES = {'external-conn', 'external-dhcp', 'utility'}
-    other_mode_files = (L3_INFRA_NAMES if 'dhcp-oob' in air_virtual_nodes
-                        else L2_INFRA_NAMES if 'utility' in air_virtual_nodes
-                        else set())
+    other_mode_files = ((L2_INFRA_NAMES | L3_INFRA_NAMES) - air_virtual_nodes
+                        if air_virtual_nodes else set())
     swept = 0
     for stale in other_mode_files:
         stale_path = host_vars_dir / f"{stale}.yml"
@@ -7396,7 +8665,8 @@ def process_excel_template(excel_path, output_dir):
         loopback_overrides=loopback_overrides,
         route_policy_directives=route_policy_directives,
         community_list_directives=community_list_directives,
-        plane_breakout={'gpu': gpu_profile_hw, 'isl': isl_profile_hw})
+        plane_breakout={'gpu': gpu_profile_hw, 'isl': isl_profile_hw},
+        declared_ips=declared_ips, site=site)
     print(f"  Generated: {len(group_vars_files)} group_vars files")
 
     # Loopback visibility (#5): print assignments so users know what IPs get configured
@@ -7473,7 +8743,7 @@ def main():
         if not args.skip_validate:
             _run_validator(excel_path)
         output_dir = output_base / args.arch / args.site / "inventory"
-        process_excel_template(excel_path, output_dir)
+        process_excel_template(excel_path, output_dir, site=args.site)
         print(f"\n✅ Inventory written to: {output_dir.relative_to(base_dir)}/")
     else:
         # Discover and process all default templates
@@ -7486,7 +8756,7 @@ def main():
             if not args.skip_validate:
                 _run_validator(template)
             output_dir = output_base / arch / "default" / "inventory"
-            process_excel_template(template, output_dir)
+            process_excel_template(template, output_dir, site="default")
         print("\n✅ Inventories written to: output/<arch>/default/inventory/")
 
     print("=" * 60)

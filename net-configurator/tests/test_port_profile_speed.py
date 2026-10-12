@@ -3,7 +3,7 @@
 """
 ERA-55 — the Port Profiles `Speed` column is read and reaches the inventory.
 
-Column H of the `Port Profiles` block (inside `VLANs & Profiles`) has been
+The `Speed` column of the `Port Profiles` block has been
 authored in every shipped workbook since the column existed, and was never
 read: the parser took column 7 (LACP Bypass) then jumped to column 9
 (Breakout). Nothing downstream could see it.
@@ -25,6 +25,9 @@ import openpyxl
 import pytest
 import yaml
 
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
+
 REPO = Path(__file__).resolve().parent.parent
 PARSER = REPO / "scripts" / "excel_parser.py"
 ARCHS = ["2-4-3-200", "2-4-5-800", "2-8-5-200",
@@ -38,16 +41,10 @@ _ROLE_KEYS = ("isl_interfaces", "oob_uplink_interfaces", "edge_interfaces",
 def _profile_rows(arch):
     """Yield (profile_name, speed, breakout, lanes) from a shipped workbook."""
     xl = REPO / "input" / arch / "default" / f"{arch}.xlsx"
-    ws = openpyxl.load_workbook(xl, data_only=True)["VLANs & Profiles"]
-    hdr = next((r for r in range(1, 60)
-                if str(ws.cell(r, 1).value).strip() == "Profile"), None)
-    assert hdr, f"{arch}: no Port Profiles header row found"
-    for r in range(hdr + 1, hdr + 20):
-        name = ws.cell(r, 1).value
-        if not name:
-            break
-        yield (str(name).strip(), ws.cell(r, 8).value,
-               ws.cell(r, 9).value, ws.cell(r, 10).value)
+    wb = openpyxl.load_workbook(xl, data_only=True)
+    for row in workbook_access.port_profile_rows(wb):
+        yield (str(row["profile"]).strip(), row["speed"],
+               row["breakout"], row["lanes"])
 
 
 def _core_vars(arch):
@@ -93,13 +90,8 @@ def test_unrecognised_speed_is_rejected_not_propagated(tmp_path):
     try:
         shutil.copy2(REPO / "input" / arch / "default" / f"{arch}.xlsx", dst)
         wb = openpyxl.load_workbook(dst)
-        ws = wb["VLANs & Profiles"]
-        hdr = next(r for r in range(1, 60)
-                   if str(ws.cell(r, 1).value).strip() == "Profile")
-        for r in range(hdr + 1, hdr + 20):
-            if str(ws.cell(r, 1).value or "").strip() == "ISL":
-                ws.cell(r, 8).value = "very-fast"
-                break
+        ws, cols, r = workbook_access.port_profile_row(wb, "ISL")
+        ws.cell(r, cols["speed"]).value = "very-fast"
         wb.save(dst)
         p = subprocess.run(
             [sys.executable, str(PARSER), "--arch", arch, "--site", site,

@@ -138,6 +138,12 @@ make validate-servers ARCH=2-8-5-200
 make validate-ping-matrix ARCH=2-8-5-200
 ```
 
+Exits non-zero if any server did not report (results could not be fetched
+from the jump, or the server never finished its script) or if any same-VRF
+ping failed / any cross-VRF ping unexpectedly passed. Results are collected
+from the jump in batches of `collect_batch_size` (default 32, a play var)
+concurrent SSH sessions, so a large arch cannot starve the tail of the loop.
+
 #### `push-switch-configs.yml` — Push Configs to Switches
 
 **Purpose**: Push and apply generated NVUE CLI configs to core and OOB switches.
@@ -218,12 +224,13 @@ For existing configured switches or manual control:
 # 1. Generate configurations
 make generate ARCH=2-8-5-200
 
-# 2. Copy config to switch
-scp output/2-8-5-200/default/configs/core-01-config.sh cumulus@core-01:/tmp/
+# 2. Copy config to switch, created owner-only (it can hold the LDAP bind password)
+ssh cumulus@core-01 'umask 077; cat > core-01-config.sh' \
+  < output/2-8-5-200/default/configs/core-01-config.sh
 
-# 3. SSH to switch and apply
+# 3. SSH to switch, apply, and remove the copy
 ssh cumulus@core-01
-bash /tmp/core-01-config.sh
+bash core-01-config.sh; rm -f core-01-config.sh
 ```
 
 ---

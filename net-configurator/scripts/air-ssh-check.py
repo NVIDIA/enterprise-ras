@@ -34,8 +34,9 @@ if _SCRIPT_DIR not in sys.path:
 import yaml
 from rich.console import Console
 
-from airlib.env import load_air_config, _read_vault_file
+from airlib.env import load_air_config
 from airlib.errors import AirError, AirSSHError
+from secrets_loader import SecretsError, load_secrets, resolve_secret
 from airlib.ssh import (
     check_key_access,
     check_password_access,
@@ -48,6 +49,7 @@ from airlib.ssh import (
     key_needs_passphrase,
     verify_key_in_authorized_keys,
 )
+from utils import read_topology_oob_uplink_mode
 
 console = Console()
 
@@ -55,8 +57,7 @@ console = Console()
 # L2 mode: the classic ERA jump trio (oob-server-01 = jump, dhcp-oob = ZTP+DHCP).
 # L3 mode: the three Ubuntu nodes from the L3 OOB design doc — utility (in-OOB-
 # VRF jump + DHCP relay endpoint), external-conn (simulated ISP egress),
-# external-dhcp (DHCP server for the OOB VRF). See
-# docs/plans/2026-05-20-l3-oob-air-topology.md.
+# external-dhcp (DHCP server for the OOB VRF). See ADR-0067.
 JUMP_HOSTS_L2 = ["oob-server-01", "dhcp-oob"]
 JUMP_HOSTS_L3 = ["utility", "external-conn", "external-dhcp"]
 
@@ -71,15 +72,7 @@ def _detect_oob_mode(project_root: Path, arch: str, site: str) -> str:
     """Return 'l2' or 'l3' for this site by reading the generated topology."""
     topo = (project_root / "output" / arch / site / "topology"
             / f"{arch}-topology.json")
-    if not topo.exists():
-        return "l2"
-    try:
-        import json
-        with open(topo) as f:
-            mode = str(json.load(f).get("_oob_uplink_mode", "l2")).strip().lower()
-        return mode or "l2"
-    except (OSError, ValueError):
-        return "l2"
+    return read_topology_oob_uplink_mode(topo)
 
 
 # Fallback password (matches inventories/<arch>/group_vars/all/secrets.yml default)
@@ -92,13 +85,17 @@ def _load_server_password(project_root: Path, arch: str, site: str) -> str:
         project_root / "output" / arch / site / "inventory" / "group_vars" / "all" / "secrets.yml",
         project_root / "inventories" / arch / "group_vars" / "all" / "secrets.yml",
     ]:
+        if not secrets_path.exists():
+            continue
         try:
-            secrets = _read_vault_file(secrets_path)
-            pw = str(secrets.get("server_ansible_password", ""))
+            secrets = load_secrets(secrets_path, project_root)
+            pw = resolve_secret(
+                secrets, "server_ansible_password", default="", path=secrets_path
+            )
             if pw and pw != "CHANGE_ME":
                 return pw
-        except AirError:
-            continue
+        except SecretsError as exc:
+            raise AirError(str(exc)) from exc
     return DEFAULT_SERVER_PASSWORD
 
 

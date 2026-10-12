@@ -22,6 +22,27 @@ here for reference only.
     jinja2              BSD-3-Clause
     pexpect             ISC
 
+Development and test dependencies, declared in tests/requirements.txt and
+installed by `make setup` alongside requirements.txt (not needed to run the
+tool; listed for reference only):
+
+    pytest              MIT
+    pytest-cov          MIT
+    pytest-xdist        MIT
+    pyyaml              MIT
+    ruamel.yaml         MIT
+    openpyxl            MIT
+    httpx               BSD-3-Clause
+    flake8              MIT
+    yamllint            GPL-3.0-or-later
+
+Optional, macOS only: README.md suggests `pip install certifi` to fix SSL
+certificate errors when reaching NVIDIA Air.
+
+    certifi             MPL-2.0
+
 Ansible and ansible-core are GPL-licensed and are invoked as separate
 executables at runtime; this project ships playbooks, roles, and templates
 consumed by them, and does not link against or incorporate their source.
+yamllint (GPL-3.0-or-later) is likewise only run as a separate command, by
+`make lint`; nothing here imports it.

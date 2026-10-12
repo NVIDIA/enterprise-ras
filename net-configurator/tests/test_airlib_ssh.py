@@ -17,7 +17,6 @@ import shlex
 import sys
 from pathlib import Path
 
-import pytest
 
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:

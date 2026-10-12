@@ -31,38 +31,38 @@ common:
   support_gateway: 172.16.179.1
   support_vlan: 400
   support_vrf: INBAND
-  gpu_rail1_plane1_network: 192.168.1.0/24
-  gpu_rail1_plane1_gateway: 192.168.1.1
-  gpu_rail1_plane1_vlan: 901
+  gpu_rail0_plane0_network: 192.168.0.0/24
+  gpu_rail0_plane0_gateway: 192.168.0.1
+  gpu_rail0_plane0_vlan: 900
+  gpu_rail0_plane0_vrf: GPU
+  gpu_rail1_plane0_network: 192.168.1.0/24
+  gpu_rail1_plane0_gateway: 192.168.1.1
+  gpu_rail1_plane0_vlan: 901
+  gpu_rail1_plane0_vrf: GPU
+  gpu_rail2_plane0_network: 192.168.2.0/24
+  gpu_rail2_plane0_gateway: 192.168.2.1
+  gpu_rail2_plane0_vlan: 902
+  gpu_rail2_plane0_vrf: GPU
+  gpu_rail3_plane0_network: 192.168.3.0/24
+  gpu_rail3_plane0_gateway: 192.168.3.1
+  gpu_rail3_plane0_vlan: 903
+  gpu_rail3_plane0_vrf: GPU
+  gpu_rail0_plane1_network: 192.168.20.0/24
+  gpu_rail0_plane1_gateway: 192.168.20.1
+  gpu_rail0_plane1_vlan: 920
+  gpu_rail0_plane1_vrf: GPU
+  gpu_rail1_plane1_network: 192.168.21.0/24
+  gpu_rail1_plane1_gateway: 192.168.21.1
+  gpu_rail1_plane1_vlan: 921
   gpu_rail1_plane1_vrf: GPU
-  gpu_rail2_plane1_network: 192.168.2.0/24
-  gpu_rail2_plane1_gateway: 192.168.2.1
-  gpu_rail2_plane1_vlan: 902
+  gpu_rail2_plane1_network: 192.168.22.0/24
+  gpu_rail2_plane1_gateway: 192.168.22.1
+  gpu_rail2_plane1_vlan: 922
   gpu_rail2_plane1_vrf: GPU
-  gpu_rail3_plane1_network: 192.168.3.0/24
-  gpu_rail3_plane1_gateway: 192.168.3.1
-  gpu_rail3_plane1_vlan: 903
+  gpu_rail3_plane1_network: 192.168.23.0/24
+  gpu_rail3_plane1_gateway: 192.168.23.1
+  gpu_rail3_plane1_vlan: 923
   gpu_rail3_plane1_vrf: GPU
-  gpu_rail4_plane1_network: 192.168.4.0/24
-  gpu_rail4_plane1_gateway: 192.168.4.1
-  gpu_rail4_plane1_vlan: 904
-  gpu_rail4_plane1_vrf: GPU
-  gpu_rail1_plane2_network: 192.168.21.0/24
-  gpu_rail1_plane2_gateway: 192.168.21.1
-  gpu_rail1_plane2_vlan: 921
-  gpu_rail1_plane2_vrf: GPU
-  gpu_rail2_plane2_network: 192.168.22.0/24
-  gpu_rail2_plane2_gateway: 192.168.22.1
-  gpu_rail2_plane2_vlan: 922
-  gpu_rail2_plane2_vrf: GPU
-  gpu_rail3_plane2_network: 192.168.23.0/24
-  gpu_rail3_plane2_gateway: 192.168.23.1
-  gpu_rail3_plane2_vlan: 923
-  gpu_rail3_plane2_vrf: GPU
-  gpu_rail4_plane2_network: 192.168.24.0/24
-  gpu_rail4_plane2_gateway: 192.168.24.1
-  gpu_rail4_plane2_vlan: 924
-  gpu_rail4_plane2_vrf: GPU
   pre_login_message: '##############################################################################
 
     #      You are accessing an Information System (IS) that is provided for authorized
@@ -95,7 +95,7 @@ ldap:
     lastname: Smith
     username: asmith
     password: '{{ ldap_user_default_password }}'
-status_page_enabled: true
+status_page_enabled: false
 host_dhcp: true
 devices:
   csl-01:
@@ -176,61 +176,61 @@ devices:
     bond_ip: 172.16.178.201/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.50/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.50/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.50/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.201/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.201/24
+      ip: 192.168.21.50/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.50/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.201/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.201/24
+      ip: 192.168.22.50/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.50/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.201/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.201/24
+      ip: 192.168.23.50/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.201/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.201/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-02:
     eth0_ip: 192.168.200.29
     mac: 48:b0:2d:7a:db:6b
@@ -253,61 +253,61 @@ devices:
     bond_ip: 172.16.178.202/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.51/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.51/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.51/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.202/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.202/24
+      ip: 192.168.21.51/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.51/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.202/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.202/24
+      ip: 192.168.22.51/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.51/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.202/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.202/24
+      ip: 192.168.23.51/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.202/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.202/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-03:
     eth0_ip: 192.168.200.30
     mac: 48:b0:2d:f5:bd:25
@@ -330,61 +330,61 @@ devices:
     bond_ip: 172.16.178.203/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.52/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.52/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.52/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.203/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.203/24
+      ip: 192.168.21.52/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.52/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.203/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.203/24
+      ip: 192.168.22.52/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.52/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.203/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.203/24
+      ip: 192.168.23.52/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.203/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.203/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-04:
     eth0_ip: 192.168.200.31
     mac: 48:b0:2d:fc:01:bf
@@ -407,61 +407,61 @@ devices:
     bond_ip: 172.16.178.204/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.53/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.53/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.53/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.204/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.204/24
+      ip: 192.168.21.53/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.53/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.204/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.204/24
+      ip: 192.168.22.53/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.53/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.204/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.204/24
+      ip: 192.168.23.53/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.204/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.204/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-05:
     eth0_ip: 192.168.200.32
     mac: 48:b0:2d:aa:2e:fe
@@ -484,61 +484,61 @@ devices:
     bond_ip: 172.16.178.205/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.54/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.54/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.54/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.205/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.205/24
+      ip: 192.168.21.54/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.54/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.205/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.205/24
+      ip: 192.168.22.54/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.54/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.205/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.205/24
+      ip: 192.168.23.54/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.205/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.205/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-06:
     eth0_ip: 192.168.200.33
     mac: 48:b0:2d:5a:9e:11
@@ -561,61 +561,61 @@ devices:
     bond_ip: 172.16.178.206/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.55/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.55/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.55/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.206/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.206/24
+      ip: 192.168.21.55/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.55/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.206/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.206/24
+      ip: 192.168.22.55/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.55/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.206/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.206/24
+      ip: 192.168.23.55/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.206/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.206/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-07:
     eth0_ip: 192.168.200.34
     mac: 48:b0:2d:89:37:b5
@@ -638,61 +638,61 @@ devices:
     bond_ip: 172.16.178.207/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.56/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.56/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.56/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.207/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.207/24
+      ip: 192.168.21.56/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.56/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.207/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.207/24
+      ip: 192.168.22.56/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.56/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.207/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.207/24
+      ip: 192.168.23.56/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.207/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.207/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-08:
     eth0_ip: 192.168.200.35
     mac: 48:b0:2d:88:eb:ac
@@ -715,61 +715,61 @@ devices:
     bond_ip: 172.16.178.208/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.57/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.57/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.57/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.208/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.208/24
+      ip: 192.168.21.57/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.57/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.208/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.208/24
+      ip: 192.168.22.57/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.57/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.208/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.208/24
+      ip: 192.168.23.57/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.208/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.208/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-09:
     eth0_ip: 192.168.200.36
     mac: 48:b0:2d:12:a9:21
@@ -792,61 +792,61 @@ devices:
     bond_ip: 172.16.178.209/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.58/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.58/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.58/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.209/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.209/24
+      ip: 192.168.21.58/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.58/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.209/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.209/24
+      ip: 192.168.22.58/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.58/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.209/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.209/24
+      ip: 192.168.23.58/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.209/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.209/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-10:
     eth0_ip: 192.168.200.37
     mac: 48:b0:2d:a3:4d:f0
@@ -869,61 +869,61 @@ devices:
     bond_ip: 172.16.178.210/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.59/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.59/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.59/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.210/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.210/24
+      ip: 192.168.21.59/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.59/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.210/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.210/24
+      ip: 192.168.22.59/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.59/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.210/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.210/24
+      ip: 192.168.23.59/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.210/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.210/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-11:
     eth0_ip: 192.168.200.38
     mac: 48:b0:2d:d4:4a:6b
@@ -946,61 +946,61 @@ devices:
     bond_ip: 172.16.178.211/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.60/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.60/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.60/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.211/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.211/24
+      ip: 192.168.21.60/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.60/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.211/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.211/24
+      ip: 192.168.22.60/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.60/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.211/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.211/24
+      ip: 192.168.23.60/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.211/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.211/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-12:
     eth0_ip: 192.168.200.39
     mac: 48:b0:2d:ac:0c:c4
@@ -1023,61 +1023,61 @@ devices:
     bond_ip: 172.16.178.212/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.61/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.61/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.61/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.212/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.212/24
+      ip: 192.168.21.61/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.61/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.212/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.212/24
+      ip: 192.168.22.61/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.61/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.212/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.212/24
+      ip: 192.168.23.61/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.212/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.212/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-13:
     eth0_ip: 192.168.200.40
     mac: 48:b0:2d:ef:0b:4d
@@ -1100,61 +1100,61 @@ devices:
     bond_ip: 172.16.178.213/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.62/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.62/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.62/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.213/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.213/24
+      ip: 192.168.21.62/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.62/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.213/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.213/24
+      ip: 192.168.22.62/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.62/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.213/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.213/24
+      ip: 192.168.23.62/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.213/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.213/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-14:
     eth0_ip: 192.168.200.41
     mac: 48:b0:2d:65:bf:0c
@@ -1177,61 +1177,61 @@ devices:
     bond_ip: 172.16.178.214/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.63/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.63/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.63/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.214/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.214/24
+      ip: 192.168.21.63/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.63/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.214/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.214/24
+      ip: 192.168.22.63/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.63/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.214/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.214/24
+      ip: 192.168.23.63/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.214/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.214/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-15:
     eth0_ip: 192.168.200.42
     mac: 48:b0:2d:66:fc:5d
@@ -1254,61 +1254,61 @@ devices:
     bond_ip: 172.16.178.215/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.64/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.64/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.64/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.215/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.215/24
+      ip: 192.168.21.64/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.64/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.215/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.215/24
+      ip: 192.168.22.64/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.64/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.215/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.215/24
+      ip: 192.168.23.64/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.215/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.215/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-16:
     eth0_ip: 192.168.200.43
     mac: 48:b0:2d:10:c2:6d
@@ -1331,61 +1331,61 @@ devices:
     bond_ip: 172.16.178.216/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.65/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.65/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.65/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.216/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.216/24
+      ip: 192.168.21.65/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.65/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.216/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.216/24
+      ip: 192.168.22.65/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.65/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.216/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.216/24
+      ip: 192.168.23.65/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.216/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.216/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-17:
     eth0_ip: 192.168.200.44
     mac: 48:b0:2d:18:15:83
@@ -1408,61 +1408,61 @@ devices:
     bond_ip: 172.16.178.217/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.66/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.66/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.66/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.217/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.217/24
+      ip: 192.168.21.66/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.66/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.217/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.217/24
+      ip: 192.168.22.66/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.66/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.217/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.217/24
+      ip: 192.168.23.66/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.217/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.217/24
-      gateway: 192.168.24.1
-      table: 1024
   su-01-node-18:
     eth0_ip: 192.168.200.45
     mac: 48:b0:2d:f7:e7:a8
@@ -1485,61 +1485,61 @@ devices:
     bond_ip: 172.16.178.218/24
     gpu_interfaces:
     - iface: eth3
+      plane: rail0_plane0
+      rail: rail0
+      rail_plane: plane0
+      ip: 192.168.0.67/24
+      gateway: 192.168.0.1
+      table: 900
+    - iface: eth4
+      plane: rail0_plane1
+      rail: rail0
+      rail_plane: plane1
+      ip: 192.168.20.67/24
+      gateway: 192.168.20.1
+      table: 1020
+    - iface: eth5
+      plane: rail1_plane0
+      rail: rail1
+      rail_plane: plane0
+      ip: 192.168.1.67/24
+      gateway: 192.168.1.1
+      table: 901
+    - iface: eth6
       plane: rail1_plane1
       rail: rail1
       rail_plane: plane1
-      ip: 192.168.1.218/24
-      gateway: 192.168.1.1
-      table: 901
-    - iface: eth4
-      plane: rail1_plane2
-      rail: rail1
-      rail_plane: plane2
-      ip: 192.168.21.218/24
+      ip: 192.168.21.67/24
       gateway: 192.168.21.1
       table: 1021
-    - iface: eth5
+    - iface: eth7
+      plane: rail2_plane0
+      rail: rail2
+      rail_plane: plane0
+      ip: 192.168.2.67/24
+      gateway: 192.168.2.1
+      table: 902
+    - iface: eth8
       plane: rail2_plane1
       rail: rail2
       rail_plane: plane1
-      ip: 192.168.2.218/24
-      gateway: 192.168.2.1
-      table: 902
-    - iface: eth6
-      plane: rail2_plane2
-      rail: rail2
-      rail_plane: plane2
-      ip: 192.168.22.218/24
+      ip: 192.168.22.67/24
       gateway: 192.168.22.1
       table: 1022
-    - iface: eth7
+    - iface: eth9
+      plane: rail3_plane0
+      rail: rail3
+      rail_plane: plane0
+      ip: 192.168.3.67/24
+      gateway: 192.168.3.1
+      table: 903
+    - iface: eth10
       plane: rail3_plane1
       rail: rail3
       rail_plane: plane1
-      ip: 192.168.3.218/24
-      gateway: 192.168.3.1
-      table: 903
-    - iface: eth8
-      plane: rail3_plane2
-      rail: rail3
-      rail_plane: plane2
-      ip: 192.168.23.218/24
+      ip: 192.168.23.67/24
       gateway: 192.168.23.1
       table: 1023
-    - iface: eth9
-      plane: rail4_plane1
-      rail: rail4
-      rail_plane: plane1
-      ip: 192.168.4.218/24
-      gateway: 192.168.4.1
-      table: 904
-    - iface: eth10
-      plane: rail4_plane2
-      rail: rail4
-      rail_plane: plane2
-      ip: 192.168.24.218/24
-      gateway: 192.168.24.1
-      table: 1024
   support-01:
     eth0_ip: 192.168.200.46
     mac: 48:b0:2d:be:40:ad
@@ -1722,6 +1722,20 @@ ztp_interfaces:
   gateway: 172.20.0.254
   purpose: air-mgmt
   dnsmasq_listen: true
+  dhcp_range_start: 172.20.0.100
+  dhcp_range_end: 172.20.0.200
+infra_addresses:
+  air_mgmt:
+    subnet: 172.20.0.0/24
+    gateway: 172.20.0.254
+    external-dhcp: 172.20.0.77
+    utility: 172.20.0.78
+    ext-storage-01: 172.20.0.79
+    ext-storage-02: 172.20.0.80
+  oob:
+  - subnet: 192.168.200.0/24
+    gateway: 192.168.200.1
+    utility: 192.168.200.78
 ztp_allow_subnets:
 - 172.20.0.0/24
 - 192.168.200.0/24
@@ -1735,11 +1749,6 @@ ztp_server_ip: 169.254.0.2
 configure_ztp_ips: true
 configure_dhcp: true
 dhcp_domain_name: era.local
-dhcp_range_start: 192.168.1.100
-dhcp_range_end: 192.168.1.200
-dhcp_lease_time: 12h
-dhcp_gateway: 192.168.1.1
-dnsmasq_interface: ens3
 ztp_enable_topology: false
 ztp_enable_monitoring: false
 ztp_monitoring_config: '# Add your monitoring configuration here

@@ -3,10 +3,8 @@
 """
 Integration tests for the complete config generation workflow.
 """
-import pytest
 import subprocess
 import yaml
-from pathlib import Path
 
 # Collapsed-core archs use the standard [core] group + core.yml + core-01/02.yml
 # host_vars. Dedicated-GPU archs (2-8-9-400-SP, 2-8-9-800) use csl/gsl instead,

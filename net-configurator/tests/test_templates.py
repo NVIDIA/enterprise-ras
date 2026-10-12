@@ -9,8 +9,7 @@ that verify templates produce correct NVUE commands when given mock variables.
 import re
 import shlex
 import pytest
-from jinja2 import Environment, FileSystemLoader, StrictUndefined, Undefined
-from pathlib import Path
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 
 # ---------------------------------------------------------------------------
@@ -271,9 +270,9 @@ class TestSpineCLITemplate:
     downlink to the leaves below it is always eBGP (W-ECMP only works over
     eBGP per NVIDIA Cumulus Linux docs). But W-ECMP is compute-spine (cs)
     only by design, confirmed by the retired legacy-template equivalence
-    fixtures further down this file: CS_CTX has weighted_ecmp=True, GS_CTX
-    (GPU spine) has weighted_ecmp=False. cs vs gs is distinguished by
-    whether `plane` is defined (GS_CTX sets it, CS_CTX doesn't).
+    fixtures (commit bb499d7): the cs context had weighted_ecmp=True, the gs
+    (GPU spine) context weighted_ecmp=False. cs vs gs is distinguished by
+    whether `plane` is defined (gs sets it, cs doesn't).
 
     Uses the same 'multipaths' WEIGHTED_ECMP route-map as every other
     W-ECMP peer-group in the fabric, not a separate 'cumulative' variant --
@@ -1428,50 +1427,3 @@ class TestLoginBannerOOB:
         env = _make_rendering_env(oob_cli_template.parent)
         output = env.get_template(oob_cli_template.name).render(**oob_vars_with_banner)
         assert "nv set system message" not in output
-
-
-# ---------------------------------------------------------------------------
-# Task 1.2: merged spine template equivalence (csl_spine + gsl_spine → spine)
-#
-# The merged data-driven spine template must render byte-identically (for the
-# `nv ` command lines) to each legacy template, gated by the roce_traffic_pool
-# / weighted_ecmp group_vars flags.
-# ---------------------------------------------------------------------------
-
-import pathlib, jinja2
-
-ROLES = pathlib.Path("roles")
-
-def _render(tmpl_path, ctx):
-    env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(ROLES)),
-                             trim_blocks=False, lstrip_blocks=False)
-    env.globals["ansible_date_time"] = {"iso8601": "FIXED"}
-    return env.get_template(tmpl_path).render(**ctx)
-
-CS_CTX = dict(hostname="cs-01", lo_ip="172.16.1.2/32", asn=4200100002,
-              overlay_peers=["172.16.1.3/32"], isl_leaf_ports="swp61-62",
-              isl_core_ports="swp4", smn_ports="swp1-2", smn_subports=["swp1s0"],
-              weighted_ecmp=True, roce_traffic_pool=False, ntp_servers=["10.0.0.1"])
-GS_CTX = dict(hostname="gs-plane1-01", lo_ip="10.1.1.5/32", asn=4200101100,
-              overlay_peers=["10.1.1.6/32"], isl_ports="swp57-58,swp61-62",
-              plane=1, weighted_ecmp=False, roce_traffic_pool=True,
-              ntp_servers=["10.0.0.1"])
-
-def _nv(s):
-    return [l for l in s.splitlines() if l.startswith("nv ")]
-
-# Equivalence to the legacy csl_spine/gsl_spine templates was proven in commit
-# bb499d7 (Task 1.2) and is enforced going forward by the make-generate byte-diff
-# gate. The legacy template dirs were removed once that gate passed, so these
-# two comparison tests are retired (kept skipped as a pointer to the proof).
-@pytest.mark.skip(reason="legacy spine templates removed after byte-diff gate passed; equivalence locked in commit bb499d7")
-def test_merged_spine_matches_legacy_csl_spine():
-    new = _render("spine/templates/spine_nvue_cli.j2", CS_CTX)
-    old = _render("csl-spine/templates/csl_spine_nvue_cli.j2", CS_CTX)
-    assert _nv(new) == _nv(old)
-
-@pytest.mark.skip(reason="legacy spine templates removed after byte-diff gate passed; equivalence locked in commit bb499d7")
-def test_merged_spine_matches_legacy_gsl_spine():
-    new = _render("spine/templates/spine_nvue_cli.j2", GS_CTX)
-    old = _render("gsl-spine/templates/gsl_spine_nvue_cli.j2", GS_CTX)
-    assert _nv(new) == _nv(old)

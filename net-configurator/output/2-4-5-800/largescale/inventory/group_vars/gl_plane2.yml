@@ -7,7 +7,7 @@ gpu_vrf_name: GPU
 gpu_evpn_vlan: 3003
 gpu_evpn_vni: 5003
 asn: 4200101002
-vlan900_vrr: 192.168.16.1/20
-gpu_subnet: 192.168.16.0/20
+vlan900_vrr: 192.168.20.1/24
+gpu_subnet: 192.168.20.0/24
 gpu_breakout: 2x
 isl_breakout: 2x

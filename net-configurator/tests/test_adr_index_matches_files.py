@@ -12,7 +12,9 @@ landed — and the drift is invisible because nothing compares the two.
 The status *values* are deliberately not constrained here: an ADR may legitimately
 read "Accepted (partially superseded by 0004)" or "Proposed — blocked by ERA-53".
 What is pinned is the first word — Proposed / Accepted / Superseded — which is
-the part the index summarises and the part a reader acts on.
+the part the index summarises and the part a reader acts on. Since ADR-0063 the
+index summarises it further, as a single letter (P/A/S/D); this test decodes
+the letter back to the word before comparing, so the invariant still holds.
 
 Internal-only: `internal-docs/` never ships public (ADR-0027), so this test is a
 no-op in a public tree.
@@ -24,14 +26,25 @@ import pytest
 
 ADR_DIR = Path(__file__).resolve().parents[2] / "internal-docs" / "adr"
 
-pytestmark = pytest.mark.skipif(
-    not ADR_DIR.is_dir(), reason="internal-docs/adr absent (public tree)"
-)
+pytestmark = pytest.mark.internal_only("internal-docs/adr")
 
 
 def _first_word(status: str) -> str:
     m = re.match(r"\s*([A-Za-z]+)", status)
     return m.group(1).lower() if m else ""
+
+
+# The README index (topic-grouped since ADR-0063) summarizes status as a
+# single letter — P/A/S/D — per the legend at the top of the "Index by
+# topic" section, not the full word the ADR file itself uses. Decode before
+# comparing so this test's invariant (index truthfully reflects the file)
+# survives the shorthand.
+_LETTER_TO_WORD = {
+    "p": "proposed",
+    "a": "accepted",
+    "s": "superseded",
+    "d": "declined",
+}
 
 
 # Numbered files in adr/ that are NOT decision records and so carry no status.
@@ -68,7 +81,9 @@ def _index_statuses() -> dict[str, str]:
         if not m:
             continue
         cells = [c.strip() for c in ln.strip().strip("|").split("|")]
-        out[m.group(1)] = _first_word(cells[-1])
+        status_cell = cells[-1]
+        letter = status_cell.strip().lower()
+        out[m.group(1)] = _LETTER_TO_WORD.get(letter, _first_word(status_cell))
     return out
 
 
@@ -92,3 +107,16 @@ def test_the_check_is_not_vacuous():
     files = _file_statuses()
     assert len(files) >= 50, f"only {len(files)} ADRs parsed — has the layout changed?"
     assert len(_index_statuses()) >= 50, "index rows did not parse"
+
+
+def test_adr_rows_belong_to_a_contiguous_markdown_table():
+    block = []
+    for line in (ADR_DIR / "README.md").read_text().splitlines():
+        if not line.startswith("|"):
+            block = []
+            continue
+        block.append(line)
+        if re.match(r"\|\s*\[\d{4}\]", line):
+            assert len(block) >= 3, f"Orphaned ADR row: {line}"
+            assert block[0].split("|")[1].strip() == "ADR", block[0]
+            assert re.fullmatch(r"[| :\-]+", block[1]), block[1]

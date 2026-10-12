@@ -8,8 +8,9 @@ Step-by-step instructions for deploying ERA switch configurations in NVIDIA Air 
 ## Prerequisites
 
 - This repository cloned to your local machine
-- Ansible installed locally (`pip install ansible`)
-- Python 3 with openpyxl, httpx, rich (`pip install openpyxl httpx rich`)
+- Python 3.12+ with the pinned dependencies installed: `make setup`, or
+  `python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt`
+  (Ansible and every Python library the tool uses, at the versions it is tested with)
 - An SSH key pair (see Step 3 below)
 
 ---
@@ -197,7 +198,7 @@ This tests API connectivity, authentication, and budget, and prints the fingerpr
 make import EXCEL=/path/to/your-config.xlsx
 ```
 
-The import script reads `architecture` and `site_name` from the Settings tab, then copies the file to `input/<arch>/<site>/<arch>.xlsx` and sets `.era-context` so subsequent commands work without parameters.
+The import script reads `architecture` and `site_name` from the Deployment sheet, then copies the file to `input/<arch>/<site>/<arch>.xlsx` and sets `.era-context` so subsequent commands work without parameters.
 
 > **Note**: If `site_name` is set in the Excel (e.g., `acme-lab`), the file goes to `input/<arch>/acme-lab/`. If `site_name` is empty, it defaults to `default`. You can override with `make import EXCEL=... SITE=my-name`.
 
@@ -210,9 +211,22 @@ make generate
 This runs five steps:
 1. Excel → Ansible inventory (`output/<arch>/<site>/inventory/`)
 2. Inventory → NVUE CLI switch config scripts (`output/<arch>/<site>/configs/`)
-3. Excel Wire Map → Air topology JSON (`output/<arch>/<site>/topology/`)
+3. Excel Wiremap → Air topology JSON (`output/<arch>/<site>/topology/`)
 4. Node Instruction scripts for the manual-fallback / NOZTP path (`output/<arch>/<site>/topology/node-instructions/`)
 5. Cross-check that netplan and topology eth-numbering agree
+
+Before step 1 it validates the workbook and the switch passwords in
+`secrets.yml`. Two things can stop or pause you here:
+
+- **`switch_password` / `switch_ansible_password` fail the ERA switch-password
+  policy** (e.g. still `CHANGE_ME`): `generate` and every `air-deploy*`
+  target stop — a hardened switch would refuse the password during ZTP and
+  keep the factory one. Edit the generated `secrets.yml` (see
+  [SECRETS_AND_VAULT.md](SECRETS_AND_VAULT.md)). Server-side defaults are fine.
+- **An SU whose GPU/CPU links are all `Display in Air = No`**: a warning per
+  SU, and in a terminal a prompt to set those rows to `Yes` (the workbook is
+  backed up first). Pass `AIR_DISPLAY_FIX=yes` to accept without a prompt, or
+  answer `n` if the OOB-only sim is what you want.
 
 ### Step 10: Deploy to Air
 
@@ -243,7 +257,7 @@ make air-full-deploy
 ```
 
 `make air-deploy` will:
-1. Import the topology JSON into Air and create a simulation
+1. Check that every image the topology names exists on the Air instance, then import the topology JSON and create a simulation
 2. Install your SSH key on all nodes (ZTP for Cumulus switches, cloud-init for Ubuntu servers)
 3. Start the simulation and wait for it to boot (~2-10 minutes)
 4. Create SSH services on the jump hosts
@@ -346,8 +360,13 @@ in the repo. Use whichever matches your target:
 | Ready-to-use sample (largescale) | `input/largescale-{ARCH}.xlsx` |
 
 Replace `{ARCH}` with one of: `2-4-3-200`, `2-4-5-400`, `2-8-5-200`,
-`2-8-9-400`, `2-4-5-800`, `2-8-9-800`, `2-8-9-400-SP`. (When you import to a named site,
-the working copy lands at `input/{ARCH}/{SITE}/{ARCH}.xlsx`.)
+`2-8-5-400`, `2-8-9-400`, `2-4-5-800`, `2-8-9-800`, `2-8-9-400-SP`.
+All eight passed the October 7–9, 2026 Air campaign at default and largescale
+on Cumulus Linux 5.18.3; see [ARCH_SUPPORT_MATRIX](ARCH_SUPPORT_MATRIX.md)
+for modes and limits. For `2-8-5-400`, these are SU 3 and SU 8; the
+intermediate SU 4 GSL stage was not a campaign cell.
+When you import to a named site, the working copy lands
+at `input/{ARCH}/{SITE}/{ARCH}.xlsx`.
 
 ### 1.2 Fill Out the Excel
 
@@ -355,9 +374,10 @@ Key tabs:
 
 | Tab | What to fill in |
 |---|---|
-| **Settings** | `site_name`, BGP ASN, management subnets, LDAP on/off |
-| **VLANs & Profiles** | VLAN IDs, names, port profiles, port speeds |
-| **Wire Map** | Server-to-switch cabling (per node) |
+| **Deployment** | `site_name`, `architecture`, `deploy_in_air`, LDAP on/off, Cumulus versions |
+| **Switch Data** / **Host Data** | Switch and server hostnames, management IPs, ZTP MACs, per-switch ASN / loopback overrides |
+| **Network Data** | VLAN IDs, names, subnets, VRFs, port profiles, port speeds |
+| **Wiremap** | Server-to-switch cabling (per node), `Display in Air` |
 
 ### 1.3 Import the Excel
 
@@ -365,7 +385,7 @@ Key tabs:
 make import EXCEL=/path/to/your-config.xlsx
 ```
 
-This reads `architecture` and `site_name` from the Settings tab, creates `input/<arch>/<site>/`, copies the file there, and writes `.era-context` so all subsequent `make` commands work without parameters.
+This reads `architecture` and `site_name` from the Deployment sheet, creates `input/<arch>/<site>/`, copies the file there, and writes `.era-context` so all subsequent `make` commands work without parameters.
 
 > **Tip**: You can also drop the file directly in `input/` as a staging area — it's gitignored at that level.
 
@@ -462,6 +482,36 @@ ansible_user: ubuntu
 ansible_password: "{{ server_ansible_password }}"
 ```
 
+### 4.2a Where the infrastructure addresses come from
+
+`dhcp-oob`, `oob-server-01`/`utility`, the L3 `external-dhcp` foot, the plane
+gateways, switch `eth0`s and ext-storage `eth0`s are placed by `make import`
+from the free addresses inside the declared OOB VLAN subnet and
+`Air Management Subnet` (ADR-0084), and recorded in
+`output/<arch>/<site>/inventory/group_vars/all/main.yml`:
+
+```yaml
+infra_addresses:            # L3 OOB shown; L2 has dhcp-oob instead of the trio
+  air_mgmt:
+    subnet: 172.20.0.0/24
+    gateway: 172.20.0.254
+    external-dhcp: 172.20.0.77
+    utility: 172.20.0.78
+  oob:
+  - subnet: 192.168.200.0/24
+    gateway: 192.168.200.1
+    utility: 192.168.200.78
+```
+
+`make air-deploy` reads this block; do not hand-edit it. On the default `/24`s
+the values are the historical ones. On a smaller subnet the infrastructure
+takes the first free host instead, and `make validate-excel` fails the import
+if the subnet cannot fit its hosts plus the infrastructure. The dnsmasq ZTP
+pool follows the same rule: each `ztp_interfaces` entry carries
+`dhcp_range_start` / `dhcp_range_end` (`.100`–`.200` on a `/24`; otherwise
+the longest free run of hosts inside the subnet), and switch `eth0` boot
+commands use the `air_mgmt_subnet` prefix length rather than a fixed `/24`.
+
 ### 4.3 Verify Secrets
 
 Check `output/<arch>/<site>/inventory/group_vars/all/secrets.yml`:
@@ -473,7 +523,13 @@ switch_ansible_password: "Cumu1usLinux!"
 switch_password: "Cumu1usLinux!"
 ```
 
-Update any passwords that differ from your environment.
+Update any passwords that differ from your environment. `switch_ansible_password`
+and `switch_password` must pass the ERA switch-password policy (Cumulus
+password-security rules: ≥ 8 chars, lower/upper/digit/special, not `cumulus`)
+— `make generate` and the deploy targets check this and stop otherwise;
+`python3 scripts/check_secrets.py --arch <arch>` checks by hand and
+`SECRETS_PASSWORD_POLICY=placeholder` relaxes it for unhardened switches (see
+[SECRETS_AND_VAULT.md](SECRETS_AND_VAULT.md)).
 
 ---
 
@@ -699,8 +755,8 @@ outside the scope of the ERA reference architecture.
 | Node | What It Represents | Why It Exists |
 |---|---|---|
 | **air-oob-switch** | The customer's existing OOB management infrastructure (top-of-rack switches, management LAN, etc.) | ERA does not specify what OOB infrastructure the customer uses — it could be an existing campus network, a separate management switch stack, or a direct connection. In Air, we need *something* to provide L2 connectivity between OOB switches, the ZTP server, and switch management ports. `air-oob-switch` fills that role as a simple VLAN-aware bridge. **It is not a device you buy.** |
-| **dhcp-oob** | A DHCP/ZTP server that provisions switches on first boot | Runs dnsmasq (DHCP) and nginx (config file hosting). In production, this could be any server or VM on the customer's OOB network. In Air, it is auto-created as an Ubuntu node. |
-| **oob-server-01** (legacy L2; `utility` in L3 OOB) | The management gateway / jump host for the OOB network | Provides routing between OOB subnets, acts as the SSH entry point into the simulation, and hosts the ZTP status page. In production, this is typically an existing management server. |
+| **dhcp-oob** (legacy L2; `external-dhcp` in L3 OOB) | A DHCP/ZTP server that provisions switches on first boot | Runs dnsmasq (DHCP) and nginx (config file hosting). In production, this could be any server or VM on the customer's OOB network. In Air, it is auto-created as an Ubuntu node. |
+| **oob-server-01** (legacy L2; in L3 OOB the routing/NAT role is `external-conn` and the jump / status-page role is `utility`) | The management gateway / jump host for the OOB network | Provides routing between OOB subnets, acts as the SSH entry point into the simulation, and hosts the ZTP status page. In production, this is typically an existing management server. |
 
 ### What `air-oob-switch` actually does
 
@@ -817,8 +873,10 @@ cd enterprise-ras/net-configurator
 
 ```bash
 sudo apt update
-sudo apt install -y ansible python3-pip
-pip3 install openpyxl jinja2
+sudo apt install -y python3.12 python3.12-venv
+python3.12 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt   # pinned ansible-core and libraries
 ```
 
 ### 4. Run Deployment
@@ -832,6 +890,29 @@ make switch-ztp-deploy
 ---
 
 ## Troubleshooting
+
+### Image Does Not Exist on This Air Instance
+
+**Symptom**: `make air-deploy` stops at `Checking Air images...` with
+`N image(s) in the topology do not exist on https://api.…`. It exits 1, and
+no simulation is created.
+
+`air-deploy` reads the Air image catalog (`GET /api/v3/images/`) before
+import. It checks that every node's `os` (Cumulus and `generic/ubuntu2204`
+alike) is in it. Without this check, Air would accept the import and then mark
+the simulation `INVALID` with no nodes and no reason. Each missing name is
+listed with the nodes that use it, plus any catalog image with the same
+version. Different Air instances can name the same release differently.
+
+**Fix**: deploy to an Air instance that has the image, or have it added
+there. The name comes from the workbook's Cumulus version and is never
+substituted automatically.
+
+If the check reports `Air refused the API key reading the image catalog
+(HTTP 401/403)`, the key is the problem, not the image. Re-run
+`make air-setup` with a key for the Air instance in `air_url`. Any other
+catalog failure (`Could not read the Air image catalog: …`) is an Air API
+error and exits 3.
 
 ### Cannot Connect to Air Services
 
@@ -868,7 +949,10 @@ ansible oob-server -i output/<arch>/<site>/inventory/hosts -m ping -vvv
 **Debug on switch**:
 ```bash
 cat /var/log/autoprovision        # ZTP log
-ping 192.168.200.252              # Test connectivity to ZTP server
+ping <dhcp-oob OOB IP>            # Test connectivity to ZTP server -- the address is
+                                  # infra_addresses.oob[].dhcp-oob in the
+                                  # inventory's group_vars/all/main.yml (192.168.200.78
+                                  # on the default /24; first free host on a smaller subnet)
 sudo dhclient -v eth0             # Test DHCP
 ```
 
@@ -902,11 +986,15 @@ If you still get password prompts, verify `oob-server-01.yml` has the correct Ai
 **Check**:
 ```bash
 # On dhcp-oob — verify configs were deployed
-ls -la /var/www/html/ztp/configs/
+ls -la /var/www/ztp/configs/
 
 # Test download manually
-curl http://localhost/ztp/configs/core-01-config.sh
+curl http://localhost/configs/core-01-config.sh
 ```
+
+### Full-scale ping validation
+
+`make validate-ping-matrix ARCH=2-4-5-800 SITE=largescale` streams each probe script over SSH standard input, so the shipped SU8 topology does not exceed command-line size limits. A failed transfer or a server without results fails validation. Cross-VRF probes are isolation checks: their expected failure is separate from an unexpected same-VRF connectivity failure. Preserve the report and resolve missing results before accepting a deployment.
 
 ---
 

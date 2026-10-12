@@ -13,10 +13,8 @@ C2: a down peer whose VRF is STORAGE must be a non-gating WARN (emit a separate
 VRF keeps today's behavior (a down numbered / link-up peer still FAILs `bgp`).
 """
 import subprocess
-import textwrap
 from pathlib import Path
 
-import pytest
 
 _PROBE = Path(__file__).resolve().parent.parent / "scripts" / "switch_health_probe.sh"
 

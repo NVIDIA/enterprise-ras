@@ -7,7 +7,8 @@ Usage:
 
     python3 scripts/_check_ldap_enabled.py <arch> <site>
 
-Opens ``input/<arch>/<site>/<arch>.xlsx``, scans the Settings sheet,
+Opens ``input/<arch>/<site>/<arch>.xlsx`` and reads Deployment through
+the compatibility adapter's in-memory Settings view,
 and prints ``1`` to stdout if the ``ldap_enabled`` row is set to a
 truthy value. Prints nothing and exits 0 in every other case —
 including missing file, malformed sheet, or ``ldap_enabled`` absent —
@@ -28,8 +29,9 @@ tampered with.
 import re
 import sys
 from pathlib import Path
+import intake_to_legacy  # noqa: E402
+from _valid_archs import VALID_ARCHS  # noqa: E402
 
-VALID_ARCHS = {"2-4-3-200", "2-4-5-400", "2-4-5-800", "2-8-5-200", "2-8-9-400", "2-8-9-800", "2-8-9-400-SP"}
 SITE_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]*$")
 
 
@@ -51,12 +53,12 @@ def main() -> int:
         return 0  # no Excel yet (common early in the pipeline)
 
     try:
-        import openpyxl
+        import openpyxl  # noqa: F401  (probe: optional dependency)
     except ImportError:
         return 0
 
     try:
-        wb = openpyxl.load_workbook(path, data_only=True)
+        wb = intake_to_legacy.load_workbook(path, data_only=True)
     except Exception:
         return 0
 

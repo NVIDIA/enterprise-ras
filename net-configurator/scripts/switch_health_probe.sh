@@ -5,13 +5,15 @@
 # Switch operational-health probe (Tier 1) — READ ONLY.
 #
 # Runs ON a Cumulus Linux switch. Intended to be streamed over SSH:
-#     sshpass -e ssh ... cumulus@<switch> "bash -s -- '<sudo_pw>'" < switch_health_probe.sh
+#     { printf 'IFS= read -r PW\n%s\n' "$SSHPASS"; cat switch_health_probe.sh; } |
+#         sshpass -e ssh ... cumulus@<switch> 'bash -s'
 #
 # Emits one line per check to stdout:
 #     CHECK|<name>|<PASS|FAIL|WARN|INFO>|<detail>
 #
 # It changes nothing on the switch. FRR/NVUE commands need root, so the sudo
-# password is passed as $1 and used via `sudo -S`. This probe is the standalone,
+# password arrives on stdin ahead of this script (read into PW by the prepended
+# line — never an argument, which `ps` would show) and is used via `sudo -S`. This probe is the standalone,
 # not-yet-wired-into-validate-all Tier-1 check set:
 #   apply       — config applied cleanly (no pending diff) + core daemons up
 #   bgp         — every configured BGP neighbor (all VRFs/AFs) is Established
@@ -20,7 +22,7 @@
 #   intf        — proto_down / oper-state inventory (informational here:
 #                 server-edge MH bonds are legitimately down in switches-only)
 
-PW="${1:-}"
+PW="${PW:-}"
 S() { echo "$PW" | sudo -S -p '' "$@" 2>/dev/null; }
 
 # Capture the running config once (commands form) — reused by evpn_es/evpn_vni
@@ -51,9 +53,23 @@ else
 fi
 
 # ---- bgp: all neighbors Established across every VRF/AF ----------------------
+# Expected neighbors = what THIS switch's config declares. An L2-uplink OOB
+# switch (oob_uplink_mode=l2) is a pure bridge with no `router bgp neighbor`
+# at all, so 0 sessions is correct there; a switch whose config declares
+# neighbors must have them Established (ERA-141).
+# An empty capture (nv config show failed) must not read as "0 configured":
+# EXP_BGP stays empty and neighbors are required, the historical behaviour.
+if [ -s "$CFG" ]; then
+  # unique (vrf, neighbor) pairs -- NVUE emits several lines per neighbor
+  exp_bgp=$(grep -oE '(vrf [^ ]+ )?router bgp neighbor [^ ]+' "$CFG" 2>/dev/null | sort -u | wc -l); exp_bgp=${exp_bgp:-0}
+else
+  exp_bgp=""
+fi
 S vtysh -c 'show bgp vrf all summary json' > /tmp/_sh_bgp.json 2>/dev/null
-python3 - <<'PY'
+EXP_BGP="$exp_bgp" python3 - <<'PY'
 import json, os
+_exp_raw = os.environ.get('EXP_BGP') or None
+exp_bgp = int(_exp_raw or 0) if _exp_raw is not None else None
 def _link_up(nbr):
     # Unnumbered BGP peer name == its interface. A down peer whose interface is
     # missing or carrier-down has no cabled peer (spare uplink / uninstantiated
@@ -66,7 +82,10 @@ def _link_up(nbr):
 try:
     d = json.load(open('/tmp/_sh_bgp.json'))
 except Exception as e:
-    print("CHECK|bgp|FAIL|cannot parse 'show bgp vrf all summary json': %s" % e)
+    if exp_bgp == 0:
+        print("CHECK|bgp|PASS|no BGP neighbors configured (L2 OOB switch); summary unavailable: %s" % e)
+    else:
+        print("CHECK|bgp|FAIL|cannot parse 'show bgp vrf all summary json': %s" % e)
     raise SystemExit
 total = 0; up = 0; down = []; storage_down = []
 # {vrfName: {ipv4Unicast:{peers:{nbr:{state}}}, l2VpnEvpn:{peers:{...}}, ...}}
@@ -106,8 +125,11 @@ for vrf, vd in (d or {}).items():
                 continue
             total += 1
             down.append("%s/%s/%s=%s" % (vrf, af, nbr, st))
-if total == 0:
-    print("CHECK|bgp|FAIL|no BGP neighbors found")
+if total == 0 and exp_bgp == 0:
+    print("CHECK|bgp|PASS|no BGP neighbors configured (L2 OOB switch)")
+elif total == 0:
+    print("CHECK|bgp|FAIL|no BGP neighbors found%s"
+          % ("" if exp_bgp is None else " (%d configured)" % exp_bgp))
 elif not down:
     print("CHECK|bgp|PASS|neighbors=%d established=%d" % (total, up))
 else:

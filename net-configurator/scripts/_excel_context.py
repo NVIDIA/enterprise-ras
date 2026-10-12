@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
-"""Read arch and site directly from an Excel file's Settings tab.
+"""Read arch and site from the intake workbook's Deployment sheet.
+
+The compatibility adapter exposes those settings through an in-memory
+Settings view; users do not need to add a Settings tab.
 
 Prints shell-safe assignments identical to _era_context.py so the
 Makefile deploy target can use the same eval pattern:
@@ -18,14 +21,16 @@ import re
 import shlex
 import sys
 from pathlib import Path
+import intake_to_legacy  # noqa: E402
 
 try:
-    import openpyxl
+    import openpyxl  # noqa: F401  (probe: optional dependency)
 except ImportError:
     sys.stderr.write("_excel_context: openpyxl not installed\n")
     sys.exit(1)
 
-VALID_ARCHS = {"2-4-3-200", "2-4-5-400", "2-4-5-800", "2-8-5-200", "2-8-9-400", "2-8-9-800", "2-8-9-400-SP"}
+from _valid_archs import VALID_ARCHS  # noqa: E402
+
 SITE_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]*$")
 
 
@@ -43,7 +48,7 @@ def main() -> int:
         die(f"file not found: {path}")
 
     try:
-        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        wb = intake_to_legacy.load_workbook(path, data_only=True)
     except Exception as exc:
         die(f"cannot open {path}: {exc}")
 

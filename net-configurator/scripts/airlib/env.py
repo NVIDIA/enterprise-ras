@@ -136,9 +136,8 @@ def load_air_config(
     Returns dict with keys: base_url, username, api_key, ssh_key_path, org.
 
     ``org`` is the NGC organization id sent as the ``nv-ngc-org`` header. It is
-    OPTIONAL — empty/unset means no header (the current air-inside gateway
-    accepts bearer-only requests); set it to future-proof for a gateway that
-    requires the org.
+    OPTIONAL — empty/unset means no header. Set it when the selected
+    gateway requires an organization id.
 
     Precedence (higher wins):
     1. Shell environment variables (AIR_BASE_URL, AIR_API_KEY, AIR_USERNAME, AIR_SSH_KEY_PATH, AIR_NGC_ORG)
@@ -174,6 +173,15 @@ def load_air_config(
         val = os.environ.get(env_key)
         if val:
             config[config_key] = val.rstrip("/") if config_key == "base_url" else val
+
+    base_url = config.get("base_url", "")
+    if base_url and not base_url.startswith("https://"):
+        raise AirConfigError(
+            f"Air URL {base_url!r} is not https://. Every Air API call carries the\n"
+            "  NGC API key as a bearer token, so a plain http:// URL would send it in\n"
+            "  cleartext. Run `make air-setup` to pick an Air instance, or export an\n"
+            "  https:// AIR_BASE_URL."
+        )
 
     config.setdefault("username", "")
     config.setdefault("ssh_key_path", "~/.ssh/id_ed25519")

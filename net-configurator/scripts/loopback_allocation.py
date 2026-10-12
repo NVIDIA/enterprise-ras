@@ -23,8 +23,8 @@ N/S fabric, within `<loopback_base>.0/24`:
     .11  - .60   N/S leaf loopbacks   (VTEP + global router-id)
     .61  - .100  N/S spine loopbacks
     .101 - .150  OOB-switch loopbacks
-    .151 - .214  per-VRF loopbacks    (VRF_LOOPBACK_BLOCKS)
-    .215 - .254  spare
+    .151 - .230  per-VRF loopbacks    (VRF_LOOPBACK_BLOCKS)
+    .231 - .254  spare
 
 E/W plane, within `10.<plane>.1.0/24` — note the plane is the SECOND octet, not
 the third. Every role on a plane used to invent its own offset, which stayed
@@ -45,6 +45,19 @@ VRF_LOOPBACK_BLOCKS = {
     'INBAND':  166,
     'EXIT':    182,
     'STORAGE': 198,
+    # GPU was the last VRF still on the pre-re-space scheme, and the only one
+    # that took its loopback from a TENANT subnet: `<gpu-vlan-subnet>.4 + n`,
+    # i.e. inside rail 0. That put two independent allocators in one /24 —
+    # per-switch SVIs counting up from .2, and these loopbacks from .5 — so a
+    # fabric with four cores gave core-04 an SVI of .5 and core-01 a loopback
+    # of .5. The same duplicate-/32 failure the .151+ re-space fixed for the
+    # other four VRFs, left behind on the one VRF the re-space skipped.
+    #
+    # A core is an N/S switch, so its GPU loopback belongs in the N/S pool
+    # beside its OOB/INBAND/EXIT/STORAGE ones. E/W switches are unaffected —
+    # they draw from their own plane pool (PLANE_LOOPBACK_BLOCKS below), which
+    # already did this correctly.
+    'GPU':     214,
 }
 
 # --- E/W ---------------------------------------------------------------------

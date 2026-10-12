@@ -21,6 +21,8 @@
 {%- endmacro -%}
 {% set gpu_on_core = (convergence | default('full')) != 'dedicated_gpu' %}
 #!/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for {{ hostname }}
 # Generated: {{ ansible_date_time.iso8601 }}
 # Format: NVUE CLI commands (Simplified with Pure Jinja2)
@@ -72,7 +74,7 @@ nv set evpn multihoming state enabled
 {% set _ = all_iface_defs.append(edge_interfaces) %}
 {% endif %}
 {# PR-c: STORAGE VRF uplinks (e.g. swp63 → external storage) need
-   breakout config too. See docs/plans/2026-05-19-storage-vrf-design.md #}
+   breakout config too. See ADR-0047 #}
 {% if storage_interfaces is defined and storage_interfaces.breakout is defined %}
 {% set _ = all_iface_defs.append(storage_interfaces) %}
 {% endif %}
@@ -286,6 +288,20 @@ nv set interface {{ role_bonds | join(',') }} bridge domain br_default untagged 
 {% if role.lacp_bypass | default(false) %}
 nv set interface {{ role_bonds | join(',') }} bond lacp-bypass enabled
 {% endif %}
+{# N/S host-facing bonds (cpu, support, custom server profiles) are STP edge
+   ports with BPDU guard (ADR-0046). Not host-facing and therefore excluded:
+   isl (skipped by the outer loop), oob (L2 uplink bond to the OOB switch, a
+   BPDU-speaking peer), storage (out of ADR-0046 scope).
+   GPU/edge/storage-uplink are direct (non-bonded) interfaces emitted elsewhere.
+   A BPDU on a guarded bond protodowns it; recover with
+     nv action clear interface <bond> bridge domain br_default stp bpduguardviolation
+   Emitted only when the bond is a br_default member (has a VLAN), so the stp
+   keys never implicitly enrol a bond in the bridge. #}
+{% set _stp_excluded = ['isl', 'oob', 'storage'] %}
+{% if role_name not in _stp_excluded and ((role.vlan is defined and role.vlan is not none) or (role.vlan_untagged is defined and role.vlan_untagged is not none)) %}
+nv set interface {{ role_bonds | join(',') }} bridge domain br_default stp admin-edge enabled
+nv set interface {{ role_bonds | join(',') }} bridge domain br_default stp bpdu-guard enabled
+{% endif %}
 {% endif %}
 
 {% endif %}{# end if role_name != 'isl' #}
@@ -388,7 +404,7 @@ nv set interface {{ oob_uplink_ifs }} description oob_uplink
    Subports come pre-resolved from the parser as a comma-joinable list of
    swpNsM strings; the parser only populates storage_interfaces.subports
    when the Wire Map has L3 Storage Uplink rows.
-   See docs/plans/2026-05-19-storage-vrf-design.md #}
+   See ADR-0047 #}
 {% if storage_interfaces is defined and storage_interfaces.subports is defined and storage_interfaces.subports | length > 0 %}
 {% set storage_ifs = storage_interfaces.subports | join(',') %}
 # STORAGE role - L3 external uplinks
@@ -520,6 +536,12 @@ nv set router bgp state enabled
 nv set router bgp autonomous-system {{ bgp_asn }}
 nv set router bgp router-id {{ router_id }}
 
+{# BGP graceful restart (ERA-66, ADR-0045): full mode, 180s timers on every role #}
+nv set router bgp graceful-restart mode full
+nv set router bgp graceful-restart restart-time 180
+nv set router bgp graceful-restart path-selection-deferral-time 180
+nv set router bgp graceful-restart stale-routes-time 180
+
 {# BFD profiles: default (300ms) for direct links, overlay (1000ms) for multihop #}
 nv set router bfd state enabled
 {# ADR-0043: BFD profiles are named for the ROLE they serve, never `default`.
@@ -570,7 +592,7 @@ nv set router policy prefix-list {{ pl.id | quote }} rule {{ rule.id | quote }} 
    descriptions (`permit_lo_ip`, `enable_w_ecmp_adjustment`, `set_ipv6_gua`)
    are all route-map rule actions, and NO OEM reference config carries a
    description on a prefix-list or community-list rule — zero occurrences
-   across every reference in release/REFERENCES/.
+   across every OEM reference config.
 
    So ADR-0043's "every route-map rule and prefix-list entry gets a
    description" was written from a precedent that did not extend that far.
@@ -632,7 +654,7 @@ nv set router vrr state enabled
    per-VRF emission loop handles both. Entry in vrf_config_extra has
    the same shape as a vrf_config entry plus an implicit `table_auto`
    for L3-neighbor VRFs.
-   See docs/plans/2026-05-19-storage-vrf-design.md #}
+   See ADR-0047 #}
 {% set _all_vrfs = (vrf_config | default([])) + (vrf_config_extra | default([])) %}
 {% if _all_vrfs | length > 0 %}
 {% for vrf in _all_vrfs %}
@@ -689,6 +711,9 @@ nv set vrf {{ vrf.id }} router bgp address-family l2vpn-evpn state {{ 'enabled' 
    VRFs, so the override was YAGNI.) #}
 nv set vrf {{ vrf.id }} router bgp autonomous-system {{ bgp_asn }}
 nv set vrf {{ vrf.id }} router bgp state enabled
+{# Service-VRF multipath mirrors the default VRF (ERA-66, ADR-0045) #}
+nv set vrf {{ vrf.id }} router bgp path-selection multipath aspath-ignore enabled
+nv set vrf {{ vrf.id }} router bgp address-family ipv4-unicast multipaths ebgp 128
 
 {# VRF BGP Neighbors #}
 {% if vrf.bgp is defined and vrf.bgp.neighbors is defined %}
@@ -776,7 +801,7 @@ nv set vrf {{ vrf.id }} router bgp route-import
         loopback declared
    Matches the customer golden config pattern:
      vrf STORAGE router bgp router-id <STORAGE loopback IP>
-   See docs/plans/2026-05-19-storage-vrf-design.md. #}
+   See ADR-0047. #}
 {% if vrf.router_id is defined %}
 nv set vrf {{ vrf.id }} router bgp router-id {{ vrf.router_id }}
 {% elif vrf_loopbacks is defined and vrf_loopbacks[vrf.id] is defined %}
@@ -1066,7 +1091,7 @@ nv set system hostname {{ hostname }}
    Placeholder substitution happens per-switch; single quotes in the
    operator's text are escaped via the bash-standard '\'' (close-
    escape-reopen) pattern so the rendered .sh stays safe to apply.
-   See docs/plans/2026-05-26-switch-login-messages-design.md. #}
+   See ADR-0070. #}
 {% if common is defined and common.get('pre_login_message') %}
 nv set system message pre-login '{{ common.get('pre_login_message') | replace('{hostname}', hostname) | replace('{site}', common.get('site', 'default')) | replace('{arch}', common.get('arch', '')) | replace("'", "'\\''") }}'
 {% endif %}
@@ -1115,7 +1140,7 @@ nv set system wjh state enabled
 # apply` is issued by the consumer (push-switch-configs.yml / ztp.sh), so these
 # are the final lines staged before that apply.
 #============================================================================
-{% for line in custom_config %}
-{{ line }}
+{% set _cc_word = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.:/,@+=- " %}{% set _cc_ctrl = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x7f" %}{% for line in custom_config %}{% set _cc_parts = line.split("'") if line is string else [] %}{% set _cc_ok = line is string and ((line ~ " ").startswith("nv set ") or (line ~ " ").startswith("nv unset ")) and (_cc_parts | length) is odd and (_cc_parts[0::2] | join | list | reject("in", _cc_word) | list | length) == 0 and (_cc_parts[1::2] | join | list | select("in", _cc_ctrl) | list | length) == 0 %}
+{{ line if _cc_ok else ''.custom_config_line_in_host_vars_is_outside_the_nv_set_unset_grammar_ADR_0090__fix_the_Custom_Config_sheet_and_rerun_make_generate() }}
 {% endfor %}
 {% endif %}

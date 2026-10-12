@@ -28,7 +28,6 @@ from utils import generate_mac, classify_node, is_switch, is_valid_hostname
 from excel_parser import (
     classify_host_role,
     ports_to_range_string,
-    ROLE_HOST_BASE,
     _sanitize_scalar,
     _svi_switch_ip,
     _svi_gateway_ip,
@@ -43,14 +42,11 @@ try:
         _natural_key,
         normalize_nvue_line,
     )
-    HAS_COMPARE = True
-except ImportError:
-    HAS_COMPARE = False
+except ImportError:  # public tree: requires_compare deselects every user
+    pass
 
-requires_compare = pytest.mark.skipif(
-    not HAS_COMPARE,
-    reason="compare_excel_inventory_and_configs.py not present (internal-only script)",
-)
+requires_compare = pytest.mark.internal_only(
+    "release/qa-scripts/compare_excel_inventory_and_configs.py")
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +356,7 @@ class TestNaturalKey:
 # does not start at .0 or whose gateway is not .1, the old code emitted SVI +
 # VRR addresses OUTSIDE the declared subnet. The fix derives per-switch host
 # IPs from ipaddress.ip_network().hosts() and uses the Excel gateway as VRR.
-# (docs/internal/BLOCKING-FIXES.md Open #1)
+# (internal blocking-fixes tracking, item #1)
 # ---------------------------------------------------------------------------
 
 class TestSviAddressing:

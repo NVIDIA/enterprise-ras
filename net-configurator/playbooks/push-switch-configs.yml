@@ -151,18 +151,34 @@
   gather_facts: false
   vars:
     config_output_dir: "../exported-configurations-cli"
-    remote_config_path: "/tmp/{{ hostname }}-config.sh"
 
   tasks:
-    - name: Copy config script to switch
-      copy:
-        src: "{{ config_output_dir }}/{{ hostname }}-config.sh"
-        dest: "{{ remote_config_path }}"
-        mode: '0755'
-
+    # The rendered script can carry secrets (the LDAP bind password when LDAP
+    # is on), so it is staged in a private mktemp file (mode 0600, random name)
+    # and removed once it has run, whether or not it succeeded.
     - name: Run config script (stage NVUE changes)
-      shell: bash {{ remote_config_path }}
-      changed_when: true
+      block:
+        - name: Create private file for the config script
+          ansible.builtin.tempfile:
+            state: file
+            suffix: "-config.sh"
+          register: _remote_config
+
+        - name: Copy config script to switch
+          copy:
+            src: "{{ config_output_dir }}/{{ hostname }}-config.sh"
+            dest: "{{ _remote_config.path }}"
+            mode: '0600'
+
+        - name: Run the private copy of the config script
+          shell: bash {{ _remote_config.path | quote }}
+          changed_when: true
+      always:
+        - name: Remove config script from switch
+          ansible.builtin.file:
+            path: "{{ _remote_config.path }}"
+            state: absent
+          when: _remote_config.path is defined
 
     # LAST nv set before apply. Must follow the generated script: that
     # script sets `aaa user cumulus` role/name with no password, which

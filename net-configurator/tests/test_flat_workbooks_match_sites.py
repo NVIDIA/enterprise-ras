@@ -99,3 +99,28 @@ def test_check_reports_clean():
     """The aggregate the promotion gate calls agrees with the tests above."""
     problems = fwp.check(INPUT)
     assert problems == [], "\n".join(problems)
+
+
+def test_a_converted_intake_workbook_is_not_reported_as_an_orphan(tmp_path):
+    """`make convert-workbook` output must not break this check.
+
+    The converter writes `<name>.intake.xlsx` beside its source, so one can
+    legitimately sit at the top of `input/`. It is not a flat workbook and
+    has no site directory to match. Before this was excluded, converting any
+    workbook made the check report a phantom orphan -- which is exactly how
+    it was found: a user converted a sample and the suite went red on a file
+    that was doing nothing wrong.
+    """
+    (tmp_path / "2-8-9-800" / "default").mkdir(parents=True)
+    (tmp_path / "2-8-9-800" / "default" / "2-8-9-800.xlsx").touch()
+    (tmp_path / "sample-2-4-3-200.intake.xlsx").touch()
+    (tmp_path / "max-2-4-3-200.xlsx").touch()
+
+    archs = fwp.discover_archs(tmp_path)
+    names = [n for _p, _a, n in fwp.discover_flat_workbooks(tmp_path)]
+    assert not any(str(n).endswith(".intake.xlsx") for n in names), (
+        f"intake workbook treated as a flat workbook: {names}")
+
+    problems = fwp.orphan_problems(tmp_path, archs)
+    assert not any("intake" in p for p in problems), (
+        f"converted workbook reported as an orphan: {problems}")

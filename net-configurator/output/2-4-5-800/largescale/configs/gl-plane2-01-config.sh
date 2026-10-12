@@ -2,13 +2,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for gl-plane2-01
-# Generated: 2026-09-02T02:44:01Z
+# Generated: 2026-09-18T13:10:42Z
 # Format: NVUE CLI commands (GSL - GPU Spine/Leaf, plane 2)
 #============================================================================
 # Bridge and VLAN
 #============================================================================
 nv set bridge domain br_default type vlan-aware
 nv set bridge domain br_default vlan 920 vni 4920
+nv set bridge domain br_default vlan 921 vni 4921
+nv set bridge domain br_default vlan 922 vni 4922
+nv set bridge domain br_default vlan 923 vni 4923
 
 #============================================================================
 # EVPN
@@ -30,14 +33,12 @@ nv set interface swp1,swp2,swp3,swp4,swp5,swp6,swp7,swp8,swp9,swp10,swp11,swp12,
 
 nv set interface swp37,swp38,swp39,swp40,swp41,swp42,swp43,swp44,swp45,swp46,swp47,swp48,swp49,swp50,swp51,swp52,swp53,swp54,swp55,swp56,swp57,swp58,swp59,swp60,swp61,swp62,swp63,swp64,swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1,swp25s0,swp25s1,swp26s0,swp26s1,swp27s0,swp27s1,swp28s0,swp28s1,swp29s0,swp29s1,swp30s0,swp30s1,swp31s0,swp31s1,swp32s0,swp32s1,swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1 type swp
 
-# GPU access ports -> VLAN 920 (untagged / access)
+# GPU access ports per (rail, plane) - gpu_vlan_mode = per_rail_per_plane
 nv set interface swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1 bridge domain br_default access 920
-
-# vlan920 SVI (GPU VRF + VRR)
-# 5.16 NVUE: SVI uses ipv4/ipv6 sub-objects; vrf is set without "ip" prefix.
-nv set interface vlan920 ipv4 address 192.168.16.2/20
+# vlan920 SVI (rail rail0_plane1)
+nv set interface vlan920 ipv4 address 192.168.20.2/24
 nv set interface vlan920 vrf GPU
-nv set interface vlan920 ipv4 vrr address 192.168.16.1/20
+nv set interface vlan920 ipv4 vrr address 192.168.20.1/24
 nv set interface vlan920 ipv4 vrr state enabled
 nv set interface vlan920 ipv4 vrr vrr-state up
 nv set interface vlan920 type svi
@@ -69,6 +70,10 @@ nv set interface swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,
 nv set router bgp autonomous-system 4200102101
 nv set router bgp state enabled
 nv set router bgp router-id 10.2.1.1
+nv set router bgp graceful-restart mode full
+nv set router bgp graceful-restart restart-time 180
+nv set router bgp graceful-restart path-selection-deferral-time 180
+nv set router bgp graceful-restart stale-routes-time 180
 nv set router policy route-map LOOPBACK_BGP rule 10 action permit
 nv set router policy route-map LOOPBACK_BGP rule 10 description permit_loopback_interface_routes
 nv set router policy route-map LOOPBACK_BGP rule 10 match interface lo
@@ -89,6 +94,7 @@ nv set system ntp server 3.cumulusnetworks.pool.ntp.org association-type server
 #============================================================================
 # AAA - local user 'cumulus' (password set via ZTP)
 #============================================================================
+nv set system aaa authentication order local
 nv set system aaa class nvapply action allow
 nv set system aaa class nvapply command-path / permission all
 nv set system aaa class nvshow action allow
@@ -140,6 +146,8 @@ nv set vrf GPU router bgp address-family ipv4-unicast route-export to-evpn state
 nv set vrf GPU router bgp address-family l2vpn-evpn state enabled
 nv set vrf GPU router bgp autonomous-system 4200102101
 nv set vrf GPU router bgp state enabled
+nv set vrf GPU router bgp path-selection multipath aspath-ignore enabled
+nv set vrf GPU router bgp address-family ipv4-unicast multipaths ebgp 128
 nv set vrf GPU router bgp router-id 10.2.1.1
 nv set vrf GPU table auto
 

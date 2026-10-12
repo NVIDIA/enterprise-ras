@@ -26,7 +26,7 @@
           ╚══════════════════════════════════════════════════════════════════════╝
 
           Mode: Via OOB Server ({{ inventory_hostname }})
-          Switches: core-01, core-02
+          Switches: {{ groups['switches'] | default([]) | join(', ') }}
           Service: nslcd@mgmt
 
     - name: Ensure sshpass is installed
@@ -35,11 +35,12 @@
         state: present
       become: true
 
-    - name: Get list of converged-fabric switches from inventory
+    - name: Get list of LDAP-configured switches from inventory
       set_fact:
-        # core (collapsed) and csl (dedicated_gpu) both run LDAP-aware AAA;
-        # gsl switches do too but use the same merge as a safety fallback.
-        core_switches: "{{ (groups['core'] | default([])) + (groups['csl'] | default([])) + (groups['gsl'] | default([])) }}"
+        # Every switch role renders the LDAP AAA block (ADR-0087), so every
+        # member of the 'switches' parent group (core/csl/gsl/gl/gs/oob/...)
+        # needs nslcd@mgmt restarted.
+        ldap_switches: "{{ groups['switches'] | default([]) }}"
       delegate_to: localhost
       run_once: true
 
@@ -90,7 +91,7 @@
           echo "⚠ Service not found - LDAP not installed yet"
           echo "NOT_FOUND"
         fi
-      loop: "{{ core_switches }}"
+      loop: "{{ ldap_switches }}"
       register: restart_results
       changed_when: false
       failed_when: false

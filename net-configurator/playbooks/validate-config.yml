@@ -78,7 +78,7 @@
       # emitted between @@@SW@@@<name> markers and reshaped into the original
       # running_configs contract below, so the compare task is unchanged.
       shell: |
-        export SSHPASS='{{ switch_password }}'
+        IFS= read -r SSHPASS; export SSHPASS
         OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
         WORK=$(mktemp -d /tmp/cfgv.XXXXXX)
         {% for item in switch_list %}
@@ -94,6 +94,8 @@
         cat "$WORK/{{ item }}.out" 2>/dev/null
         {% endfor %}
         rm -rf "$WORK"
+      args:
+        stdin: "{{ switch_password }}"
       register: cfg_fanout
       changed_when: false
       no_log: true
@@ -253,8 +255,7 @@
         #   nv set system lldp tlv egress-policy dcbx-ets-config enable on
         #   nv set system lldp tlv egress-policy dcbx-ets-recomm enable on
         #   nv set system lldp tlv egress-policy dcbx-pfc enable on
-        # Verified against real 5.18.0 captures in internal-docs/
-        # validation-evidence/2026-08-11-cumulus-518-running-configs/.
+        # Verified against real 5.18.0 running-config captures.
         # Built up in chunks so no single line exceeds the 360-char lint limit.
         # Each chunk is single-quoted (regex metacharacters stay literal) and
         # appended via "${var}"'...' so the embedded spaces are not word-split.

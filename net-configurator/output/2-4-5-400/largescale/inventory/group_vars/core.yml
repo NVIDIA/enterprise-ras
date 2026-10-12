@@ -5,7 +5,7 @@ timezone: Etc/Zulu
 mh_mac: 44:38:39:FF:00:AA
 anycast_mac: 44:38:39:ff:00:ff
 bgp_asn: 4260394788
-cumulus_target_version: 5.18.0
+cumulus_target_version: 5.18.3
 ntp_servers:
 - 0.cumulusnetworks.pool.ntp.org
 - 1.cumulusnetworks.pool.ntp.org
@@ -16,11 +16,17 @@ vlans:
 - 300
 - 400
 - 900
+- 901
+- 902
+- 903
 vnis:
   200: 4200
   300: 4300
   400: 4400
   900: 4900
+  901: 4901
+  902: 4902
+  903: 4903
 vrf_vnis:
   OOB: 5001
   INBAND: 5002

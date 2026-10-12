@@ -20,6 +20,9 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
+
 REPO = Path(__file__).resolve().parent.parent
 VALIDATE = REPO / "scripts" / "validate_excel.py"
 # 2-8-9-400 ships oob_uplink_mode=L3 and is the arch the maxscale bug hit.
@@ -35,47 +38,18 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _norm(s):
-    return str(s).strip().lower().replace(" ", "_").replace("-", "_")
-
-
-def _set_setting(ws, key, value):
-    """Set a Settings key, modifying an existing row or inserting among the
-    real settings (row 2). Appending would land inside the trailing VERSIONS
-    sub-section, which validate_settings skips."""
-    for row in ws.iter_rows():
-        if row[0].value and _norm(row[0].value) == key:
-            ws.cell(row[0].row, 2).value = value
-            return
-    ws.insert_rows(2)
-    ws.cell(2, 1).value = key
-    ws.cell(2, 2).value = value
-
-
 def _set_air_mgmt_subnet(wb, value):
-    """Set the air-mgmt subnet where it actually lives — the Air_Only sheet's
-    "Air Management Subnet" row (what excel_parser/deploy read), NOT Settings."""
-    ws = wb["Air_Only"]
-    for row in ws.iter_rows():
-        if row[0].value and str(row[0].value).strip().lower() == "air management subnet":
-            ws.cell(row[0].row, 2).value = value
-            return
-    ws.append(["Air Management Subnet", value])
+    """The air-mgmt subnet is its own `Deployment` row, not a normal setting:
+    it is carried verbatim from the legacy Air_Only sheet, and excel_parser /
+    deploy read it by that exact label."""
+    workbook_access.set_setting(wb, "Air Management Subnet", value)
 
 
-def _server_rows(ws, n):
-    hdr = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]
-    fcol = hdr.index("Function") + 1
-    ipcol = hdr.index("Mgmt IP Address") + 1
-    rows = []
-    for r in range(2, ws.max_row + 1):
-        f = ws.cell(r, fcol).value
-        ip = ws.cell(r, ipcol).value
-        if f and ip and str(f).strip().lower() in ("storage", "gpu", "support", "compute"):
-            rows.append(r)
-            if len(rows) >= n:
-                break
-    return rows, ipcol
+def _server_names(wb, n):
+    return [row["name"] for row in workbook_access.node_rows(wb)
+            if not row["is_switch"] and row.get("mgmt_ip")
+            and str(row.get("function") or "").strip().lower()
+            in ("storage", "gpu", "support", "compute")][:n]
 
 
 def _set_oob_vlan_subnet(wb, subnet, gateway):
@@ -83,24 +57,11 @@ def _set_oob_vlan_subnet(wb, subnet, gateway):
     oob-switch mgmt IPs along so only the thing under test changes."""
     import ipaddress
     net = ipaddress.IPv4Network(subnet)
-    ws = wb["VLANs & Profiles"]
-    # Row 1 is the "VLANs" banner; the real header is row 2.
-    hdr = [str(ws.cell(2, c).value or "").strip() for c in range(1, ws.max_column + 1)]
-    scol, gcol = hdr.index("Subnet") + 1, hdr.index("Gateway") + 1
-    vcol = hdr.index("VRF") + 1
-    for r in range(3, ws.max_row + 1):
-        if str(ws.cell(r, vcol).value or "").strip().upper() == "OOB":
-            ws.cell(r, scol).value = subnet
-            ws.cell(r, gcol).value = gateway
+    workbook_access.set_vlan_network(wb, "OOB", subnet, gateway)
 
-    nodes = wb["Nodes"]
-    nhdr = [nodes.cell(1, c).value for c in range(1, nodes.max_column + 1)]
-    fcol = nhdr.index("Function") + 1
-    ipcol = nhdr.index("Mgmt IP Address") + 1
     offset = 20
-    for r in range(2, nodes.max_row + 1):
-        fn = str(nodes.cell(r, fcol).value or "").strip().lower()
-        ip = nodes.cell(r, ipcol).value
+    for row in workbook_access.node_rows(wb):
+        ip = row.get("mgmt_ip")
         if not ip:
             continue
         try:
@@ -108,7 +69,8 @@ def _set_oob_vlan_subnet(wb, subnet, gateway):
         except ValueError:
             continue
         if addr in ipaddress.IPv4Network("192.168.200.0/24"):
-            nodes.cell(r, ipcol).value = str(net.network_address + offset)
+            workbook_access.set_node_mgmt_ip(
+                wb, row["name"], str(net.network_address + offset))
             offset += 1
 
 
@@ -118,16 +80,14 @@ def _variant(tmp_path, name, *, mode=None, node_ips=None, air_mgmt_subnet=None,
     shutil.copy2(BASE_L3, dst)
     wb = openpyxl.load_workbook(dst)
     if mode is not None:
-        _set_setting(wb["Settings"], "oob_uplink_mode", mode)
+        workbook_access.set_setting(wb, "oob_uplink_mode", mode)
     if air_mgmt_subnet is not None:
         _set_air_mgmt_subnet(wb, air_mgmt_subnet)
     if oob_vlan is not None:
         _set_oob_vlan_subnet(wb, *oob_vlan)
     if node_ips:
-        ws = wb["Nodes"]
-        rows, ipcol = _server_rows(ws, len(node_ips))
-        for ip, r in zip(node_ips, rows):
-            ws.cell(r, ipcol).value = ip
+        for ip, node in zip(node_ips, _server_names(wb, len(node_ips))):
+            workbook_access.set_node_mgmt_ip(wb, node, ip)
     wb.save(dst)
     return dst
 

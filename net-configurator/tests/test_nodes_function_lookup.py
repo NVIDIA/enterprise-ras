@@ -15,7 +15,6 @@ Covers:
 import sys
 from pathlib import Path
 import openpyxl
-import pytest
 
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
@@ -24,7 +23,6 @@ if str(SCRIPTS_DIR) not in sys.path:
 from excel_parser import (
     build_nodes_function_map,
     _build_wiremap_row_list,
-    parse_nodes,
     canonical_category,
 )
 from validate_excel import validate_loopbacks, ValidationResult

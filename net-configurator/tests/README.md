@@ -11,7 +11,7 @@ This directory contains the complete test suite for the ERA switch configuration
 tests/
 ├── __init__.py                  # Test package initialization
 ├── conftest.py                  # Pytest fixtures and configuration
-├── test_parser_functions.py     # Parser & utility unit tests (40 tests)
+├── test_parser_functions.py     # Parser & utility unit tests
 ├── test_templates.py            # Tests for Jinja2 templates
 ├── test_config_validation.py    # Configuration validation tests
 ├── test_integration.py          # End-to-end integration tests
@@ -84,7 +84,9 @@ make test-fast
 
 ### Parser & Utility Unit Tests (`test_parser_functions.py`)
 
-Tests shared functions from `scripts/utils.py` and `scripts/excel_parser.py` (plus `scripts/compare_excel_inventory_and_configs.py` when present — those classes skip automatically if the internal-only compare script is absent):
+Tests shared functions from `scripts/utils.py` and `scripts/excel_parser.py`.
+Comparison-helper tests require the internal QA tooling and are automatically
+deselected in the public distribution:
 
 - `generate_mac()` — deterministic MAC generation
 - `classify_node()` — node role classification

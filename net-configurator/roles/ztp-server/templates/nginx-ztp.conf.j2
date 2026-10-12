@@ -59,6 +59,7 @@ server {
         deny all;
     }
 
+{% if status_page_enabled | default(false) | bool %}
     # Main location (status page)
     location / {
         try_files $uri $uri/ =404;
@@ -85,6 +86,14 @@ server {
         alias /var/www/ztp/images/;
         autoindex on;
     }
+{% else %}
+    # Status page disabled (ADR-0091): only the ZTP endpoints above and
+    # /authorized_keys below are served. The dashboard, /reports/, /licenses/
+    # and /images/ are not — including files left by an earlier enabled install.
+    location / {
+        return 404;
+    }
+{% endif %}
 
     # Authorized keys for SSH — no auth (ZTP needs this)
     location /authorized_keys {

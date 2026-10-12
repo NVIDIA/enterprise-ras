@@ -169,7 +169,7 @@ class TestAgainstRealCapturedConfigs:
     Fixtures: internal-docs/validation-evidence/
     2026-08-11-cumulus-518-running-configs/ — captured from the live 32-SU sim
     before teardown. They are INTERNAL (not shipped in net-configurator/), so
-    the test skips cleanly in the public tree.
+    the public tree deselects the test (internal_only).
 
     Guards the property that actually matters: after normalization, every
     command in our generated config must be present in the running config.
@@ -181,14 +181,15 @@ class TestAgainstRealCapturedConfigs:
         / "2026-08-11-cumulus-518-running-configs"
     )
 
+    @pytest.mark.internal_only(
+        "internal-docs/validation-evidence/2026-08-11-cumulus-518-running-configs")
     @pytest.mark.parametrize("switch", [
         "cl-01", "gl-plane1-01", "cs-01", "oob-switch-01",
     ])
     def test_no_generated_command_goes_missing(self, switch):
         gen = self.FIXTURES / f"{switch}-generated.txt"
         run = self.FIXTURES / f"{switch}-running-config.txt"
-        if not (gen.exists() and run.exists()):
-            pytest.skip("internal 5.18.0 capture fixtures not present")
+        assert gen.exists() and run.exists(), "5.18.0 capture fixture missing"
 
         def norm(path):
             out = set()

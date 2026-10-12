@@ -7,15 +7,17 @@
 # internet ping sequence REMOTELY, returning the RESULT|/---RAW:--- block — 1
 # connection instead of ~8. Byte-compatible with the serial collector.
 #
-# Args:  $1 IP   $2 PW   $3 NAME   $4 SRC_IP   $5 EXPECTED_GW   $6 ROLE
+# Args:  $1 IP   $2 NAME   $3 SRC_IP   $4 EXPECTED_GW   $5 ROLE   $6 OOB_GW
+# Env:   SSHPASS = ssh password (never an argument: argv is world-readable in ps)
 
-IP="$1"; PW="$2"; NAME="$3"; SRC_IP="$4"; EXPECTED_GW="$5"; ROLE="${6:-unknown}"
+IP="$1"; NAME="$2"; SRC_IP="$3"; EXPECTED_GW="$4"; ROLE="${5:-unknown}"
 # OOB gateway comes from the workbook (common.oob_gateway, ADR-0028). It used
 # to be a hardcoded 192.168.200.1, so every server on a workbook whose OOB VLAN
 # is not 192.168.200.0/24 reported "OOB (eth0): FAIL" while being perfectly
 # reachable — the probe was asking about an address that does not exist there.
-OOB_GW="${7:-192.168.200.1}"
-export SSHPASS="$PW"
+OOB_GW="${6:-192.168.200.1}"
+: "${SSHPASS:?SSHPASS must be set in the environment}"
+export SSHPASS
 OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
 # One session: stream the collection (quoted heredoc runs verbatim on the

@@ -17,7 +17,6 @@ Usage:
 
 import argparse
 import datetime
-import re
 import shutil
 import sys
 from pathlib import Path
@@ -27,35 +26,17 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 from excel_parser import parse_settings as _parse_settings
-from excel_parser import load_workbook_safe
+from excel_parser import load_workbook_safe  # noqa: F401
+import intake_to_legacy
+from _valid_archs import VALID_ARCHS
+from _site_name import safe_site_name
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INPUT_DIR = BASE_DIR / "input"
-VALID_ARCHS = ("2-4-3-200", "2-4-5-400", "2-4-5-800", "2-8-5-200", "2-8-9-400", "2-8-9-800", "2-8-9-400-SP")
 
-# Characters not allowed in site directory names
-_INVALID_SITE_CHARS = re.compile(r'[^\w\-]')
-
-
-def _safe_site_name(raw: str) -> str:
-    """Sanitize a site name for use as a directory name.
-
-    Case is PRESERVED. This used to `.lower()`, and nothing downstream did: the
-    Makefile uses `$(SITE)` verbatim and `make generate` reads
-    `input/<arch>/$(SITE)/<arch>.xlsx`, so import wrote one directory and
-    generate read another whenever the site name contained an uppercase letter.
-
-    Surfaced by the first e2e run of `2-8-9-400-SP` — the only arch whose NAME
-    carries uppercase, so `SITE=ci-<id>-2-8-9-400-SP-noztp` landed on disk as
-    `...-2-8-9-400-sp-noztp` and generate failed with a bare `[File] Not found`.
-    Not CI-only: any operator using a mixed-case site name hit it.
-
-    Sanitisation of genuinely unsafe characters is unchanged — the output still
-    matches the Makefile's SITE guard charset, `[A-Za-z0-9._-]`.
-    """
-    sanitized = _INVALID_SITE_CHARS.sub('-', raw.strip())
-    sanitized = re.sub(r'-+', '-', sanitized).strip('-')
-    return sanitized or "default"
+# Sanitisation lives in _site_name.py so the Makefile can apply the same rule
+# to a command-line SITE= (stdlib-only, runs at make parse time).
+_safe_site_name = safe_site_name
 
 
 def _path_derived_site(xlsx_path: Path, arch: str) -> str | None:
@@ -77,8 +58,14 @@ def _path_derived_site(xlsx_path: Path, arch: str) -> str | None:
 
 
 def read_excel_settings(xlsx_path: Path) -> dict:
-    """Return a dict of key→value from the Settings sheet (snake_case keys)."""
-    wb = load_workbook_safe(xlsx_path, data_only=True)
+    """Return Deployment settings via the adapter's Settings view (snake_case keys)."""
+    # Goes through intake_to_legacy so an intake-form workbook (ADR-0064)
+    # gets its `Settings` view built before we look for `architecture`.
+    # Without this, `make import` validates the workbook successfully (the
+    # validator adapts) and then fails one step later with "'architecture'
+    # key not found in Settings tab" -- a confusing failure on a file the
+    # rest of the pipeline handles fine.
+    wb = intake_to_legacy.load_workbook(xlsx_path, data_only=True)
     if 'Settings' not in wb.sheetnames:
         wb.close()
         return {}
@@ -90,7 +77,7 @@ def read_excel_settings(xlsx_path: Path) -> dict:
 def _archive_existing_template(dest_file: Path, arch: str, site: str):
     """Timestamped-backup an existing dest_file into archive/<date>/ before it
     is overwritten. Returns the backup Path, or None if there was nothing to
-    back up. Honors the CLAUDE.md hard backup rule for the committed templates."""
+    back up. Honors the AGENTS.md hard backup rule for the committed templates."""
     if not dest_file.exists():
         return None
     backup_dir = BASE_DIR / "archive" / datetime.date.today().isoformat()
@@ -99,6 +86,41 @@ def _archive_existing_template(dest_file: Path, arch: str, site: str):
     backup = backup_dir / f"{arch}.{site}.{stamp}.xlsx.bak"
     shutil.copy2(dest_file, backup)
     return backup
+
+
+def _emit_complete_workbook(arch, site):
+    """Write `<arch>-complete.xlsx` beside the imported workbook.
+
+    Lives HERE rather than in the Makefile's `import` target because four
+    different targets shell out to this script -- `import`, `deploy`,
+    and two others -- so a step attached to one of them is a step the other
+    three silently skip. That is exactly how `make deploy` ended up not
+    producing a completed workbook.
+
+    Never fatal: a failure here must not fail an otherwise good import, and
+    the completed workbook is a convenience, not a build artifact. Set
+    ERA_SKIP_COMPLETE=1 to skip it (it costs a resolve pass).
+    """
+    import os
+    import subprocess
+
+    if os.environ.get("ERA_SKIP_COMPLETE"):
+        return
+
+    source = BASE_DIR / 'input' / arch / site / f'{arch}.xlsx'
+    if not source.is_file():
+        return
+
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).parent / 'emit_complete_workbook.py'),
+         '--source', str(source), '--arch', arch, '--site', site],
+        cwd=BASE_DIR, capture_output=True, text=True)
+    if result.returncode == 0:
+        print(f"✓ Completed workbook: input/{arch}/{site}/{arch}-complete.xlsx")
+        print("    every address the tool resolved, beside your source sheet")
+    else:
+        print("⚠️  Completed workbook not written "
+              "(run `make complete-workbook` after `make generate`).")
 
 
 def import_excel(xlsx_path: Path, site_override: str | None = None,
@@ -157,7 +179,12 @@ def import_excel(xlsx_path: Path, site_override: str | None = None,
         if auto_confirm:
             print("   Continue? [y/N]: y (auto-confirmed)")
         else:
-            answer = input("   Continue? [y/N]: ").strip().lower()
+            try:
+                answer = input("   Continue? [y/N]: ").strip().lower()
+            except EOFError:
+                print("\n❌ No interactive terminal to confirm the 'default' site "
+                      "import. Re-run with --site <name> (or --yes to confirm).")
+                sys.exit(1)
             if answer != 'y':
                 print("Aborted.")
                 sys.exit(1)
@@ -180,7 +207,7 @@ def import_excel(xlsx_path: Path, site_override: str | None = None,
     else:
         # Back up an existing template before overwriting it — importing a
         # different Excel to a site (esp. `default`) would otherwise silently
-        # destroy the committed reference template (CLAUDE.md hard backup rule).
+        # destroy the committed reference template (AGENTS.md hard backup rule).
         backup = _archive_existing_template(dest_file, arch, site)
         if backup is not None:
             print(f"  ↳ backed up existing template → {backup.relative_to(BASE_DIR)}")
@@ -198,6 +225,8 @@ def import_excel(xlsx_path: Path, site_override: str | None = None,
         f"site: {site}\n"
     )
     print(f"✓ Context set: arch={arch}  site={site}")
+
+    _emit_complete_workbook(arch, site)
     print()
     print("Next steps:")
     print()

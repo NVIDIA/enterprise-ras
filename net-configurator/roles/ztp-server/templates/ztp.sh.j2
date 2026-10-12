@@ -28,7 +28,7 @@ function install_ldap_packages() {
     log "Checking if LDAP packages are needed..."
     
     # Check if LDAP is configured in the downloaded config
-    if grep -q "nv set system aaa ldap" /tmp/${hostname}-config.sh; then
+    if grep -q "nv set system aaa ldap" "$ztp_config_file"; then
         log "LDAP configuration detected - installing LDAP packages"
         
         # Update apt cache
@@ -69,16 +69,30 @@ function load_configuration() {
     log "Loading configuration for ${hostname}"
     
     cli_config_file="http://${PROVISION_URL}/configs/${hostname}-config.sh"
-    
+
+    # The config can carry secrets (the LDAP bind password when LDAP is on):
+    # download it, and write the load/apply logs, as root-only files, and
+    # remove the config once it has been sourced. umask 077 covers only the
+    # creation of those three files; the trap removes the config if the script
+    # exits or is interrupted before it is sourced.
+    local saved_umask
+    saved_umask=$(umask)
+    umask 077
+    rm -f /tmp/config-load.log /tmp/config-apply.log
+    : > /tmp/config-load.log
+    : > /tmp/config-apply.log
+    ztp_config_file=$(mktemp -t ztp-config.XXXXXX)
+    umask "$saved_umask"
+    trap 'rm -f "$ztp_config_file"' EXIT
+    trap 'rm -f "$ztp_config_file"; exit 1' INT TERM HUP
+
     # Download CLI configuration
-    wget -qO /tmp/${hostname}-config.sh "$cli_config_file"
-    
-    if [ $? -ne 0 ]; then
+    if ! wget -qO "$ztp_config_file" "$cli_config_file"; then
+        rm -f "$ztp_config_file"
         log "ERROR: Failed to download CLI config file from $cli_config_file"
         exit 1
     fi
-    
-    chmod +x /tmp/${hostname}-config.sh
+
     log "CLI configuration downloaded successfully"
     
     # Install LDAP packages if needed (before applying config)
@@ -95,8 +109,9 @@ function load_configuration() {
     # 'nv config apply' takes no secret arguments.
     log "Loading CLI configuration..."
     set +x
-    if source /tmp/${hostname}-config.sh > /tmp/config-load.log 2>&1; then
+    if source "$ztp_config_file" > /tmp/config-load.log 2>&1; then
         set -x
+        rm -f "$ztp_config_file"
         log "✅ CLI configuration loaded successfully"
 
         # Apply the configuration
@@ -112,6 +127,7 @@ function load_configuration() {
         fi
     else
         set -x
+        rm -f "$ztp_config_file"
         log "ERROR: Failed to load CLI configuration"
         # config-load.log may echo a failed secret-bearing command, so do not
         # cat it back into the (logged) journal — point the operator at it.
@@ -137,11 +153,12 @@ function add_topo(){
     log "Downloading topology file"
     
     if [ -n "$TOPO_URL" ]; then
-        wget -O /etc/ptm.d/topology.dot "$TOPO_URL"
-        if [ $? -eq 0 ]; then
+        local rc=0
+        wget -q -O /etc/ptm.d/topology.dot "$TOPO_URL" || rc=$?
+        if [ $rc -eq 0 ]; then
             log "Topology file downloaded successfully"
         else
-            log "WARNING: Failed to download topology file from $TOPO_URL"
+            log "WARNING: Failed to download topology file from $TOPO_URL (wget exit $rc)"
         fi
     else
         log "No topology URL configured, skipping"
@@ -155,13 +172,14 @@ function add_ssh_keys(){
     chmod 700 /home/cumulus/.ssh
     
     if [ -n "$SSH_URL" ]; then
-        wget -O /home/cumulus/.ssh/authorized_keys "$SSH_URL"
-        if [ $? -eq 0 ]; then
+        local rc=0
+        wget -q -O /home/cumulus/.ssh/authorized_keys "$SSH_URL" || rc=$?
+        if [ $rc -eq 0 ]; then
             chmod 600 /home/cumulus/.ssh/authorized_keys
             chown -R cumulus:cumulus /home/cumulus/.ssh
             log "SSH keys added successfully"
         else
-            log "WARNING: Failed to download SSH keys from $SSH_URL"
+            log "WARNING: Failed to download SSH keys from $SSH_URL (wget exit $rc)"
         fi
     else
         log "No SSH URL configured, skipping"

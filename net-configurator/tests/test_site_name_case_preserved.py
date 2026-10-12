@@ -17,7 +17,8 @@ became `...-2-8-9-400-sp-noztp` on disk:
 
 It is not CI-only. Any operator using a mixed-case site name hits it, and the
 Makefile's site-normalisation block -- which exists to reconcile exactly this and
-whose comment names `Customer-A` -- does not fire (see GitLab #63).
+whose comment names `Customer-A` -- did not fire for a command-line SITE until
+GitLab #63 gave it `override` (tests/test_makefile_arch_site_case.py).
 
 Sanitisation of genuinely unsafe characters is unchanged; only the case-folding
 goes.

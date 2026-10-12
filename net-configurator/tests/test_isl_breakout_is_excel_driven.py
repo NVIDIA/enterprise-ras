@@ -26,6 +26,9 @@ from pathlib import Path
 
 import openpyxl
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
 import yaml
 
 NC = Path(__file__).resolve().parent.parent
@@ -74,23 +77,9 @@ def test_shipped_planes_carry_the_declared_breakout():
 def _set_isl_breakout(xlsx, value):
     """Set the ISL Port Profile row's Breakout cell, by header name."""
     wb = openpyxl.load_workbook(xlsx)
-    ws = wb["VLANs & Profiles"]
-    hdr_row = None
-    for r in range(1, ws.max_row + 1):
-        row = [str(ws.cell(r, c).value or "").strip().lower()
-               for c in range(1, ws.max_column + 1)]
-        if "breakout" in row and "profile" in row:
-            hdr_row = r
-            break
-    assert hdr_row, "no Port Profiles header row with a Breakout column"
-    cols = {str(ws.cell(hdr_row, c).value or "").strip().lower(): c
-            for c in range(1, ws.max_column + 1)}
-    for r in range(hdr_row + 1, ws.max_row + 1):
-        if str(ws.cell(r, cols["profile"]).value or "").strip().upper() == "ISL":
-            ws.cell(r, cols["breakout"]).value = value
-            wb.save(xlsx)
-            return
-    pytest.fail("no ISL row in the Port Profiles table")
+    ws, cols, _first = workbook_access.port_profile_row(wb, "ISL")
+    ws.cell(_first, cols["breakout"]).value = value
+    wb.save(xlsx)
 
 
 @pytest.fixture(scope="module")

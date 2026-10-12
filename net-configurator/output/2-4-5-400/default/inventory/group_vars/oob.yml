@@ -6,4 +6,4 @@
 timezone: Etc/Zulu
 oob_vlan: '200'
 oob_uplink_mode: l3
-cumulus_target_version: 5.18.0
+cumulus_target_version: 5.18.3

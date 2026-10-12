@@ -23,6 +23,9 @@ import openpyxl
 import pytest
 import yaml
 
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
+
 NC = Path(__file__).resolve().parent.parent
 ARCHS = ["2-4-3-200", "2-4-5-800", "2-8-5-200",
          "2-8-9-400", "2-8-9-400-SP", "2-8-9-800"]
@@ -33,11 +36,10 @@ _COPY_IGNORE = shutil.ignore_patterns(
 
 
 def _profile_header(xlsx):
-    ws = openpyxl.load_workbook(xlsx)["VLANs & Profiles"]
-    for r in range(1, ws.max_row + 1):
-        if str(ws.cell(r, 1).value or "").strip() == "Profile":
-            return r, [ws.cell(r, c).value for c in range(1, 12)]
-    return None, []
+    wb = openpyxl.load_workbook(xlsx)
+    ws, _cols, first = workbook_access.section_table(
+        wb, "Network Data", "Port Profiles")
+    return first - 1, [ws.cell(first - 1, c).value for c in range(1, 12)]
 
 
 @pytest.mark.parametrize("arch", ARCHS)
@@ -96,22 +98,8 @@ def test_setting_the_column_emits_the_stanza(tmp_path):
     xlsx = dst / "input" / arch / "default" / f"{arch}.xlsx"
 
     wb = openpyxl.load_workbook(xlsx)
-    ws = wb["VLANs & Profiles"]
-    hdr = None
-    for r in range(1, ws.max_row + 1):
-        if str(ws.cell(r, 1).value or "").strip() == "Profile":
-            hdr = r
-            break
-    assert hdr, "no Port Profiles header"
-    touched = 0
-    for r in range(hdr + 1, ws.max_row + 1):
-        name = ws.cell(r, 1).value
-        if name in (None, ""):
-            break
-        if str(name).strip() == "CPU/In-Band Network":
-            ws.cell(r, 11).value = "disabled"
-            touched += 1
-    assert touched, "no CPU/In-Band Network profile row to set"
+    ws, cols, r = workbook_access.port_profile_row(wb, "CPU/In-Band Network")
+    ws.cell(r, cols["auto-negotiate"]).value = "disabled"
     wb.save(xlsx)
 
     r = subprocess.run(
@@ -153,16 +141,8 @@ def _workbook_with_autoneg(tmp_path, value):
     shutil.copytree(NC, dst, ignore=_COPY_IGNORE)
     xlsx = dst / "input" / arch / "default" / f"{arch}.xlsx"
     wb = openpyxl.load_workbook(xlsx)
-    ws = wb["VLANs & Profiles"]
-    hdr = next(r for r in range(1, ws.max_row + 1)
-               if str(ws.cell(r, 1).value or "").strip() == "Profile")
-    for r in range(hdr + 1, ws.max_row + 1):
-        n = ws.cell(r, 1).value
-        if n in (None, ""):
-            break
-        if str(n).strip() == "CPU/In-Band Network":
-            ws.cell(r, 11).value = value
-            break
+    ws, cols, r = workbook_access.port_profile_row(wb, "CPU/In-Band Network")
+    ws.cell(r, cols["auto-negotiate"]).value = value
     wb.save(xlsx)
     return dst, arch, xlsx
 

@@ -9,6 +9,26 @@
 - name: Validate ZTP Configuration on Switches
   hosts: switches
   gather_facts: false
+  vars:
+    # Every routed (BGP/EVPN) switch Function a workbook may use, as an
+    # inventory group: the shipped default sites emit core, csl, gsl(_planeN)
+    # and gl/gs(_planeN); cl, cs and un-planed gs are valid Functions that no
+    # default site uses.
+    l3_switch_groups:
+      - core
+      - csl
+      - gsl
+      - gsl_plane1
+      - gsl_plane2
+      - cl
+      - cs
+      - gl
+      - gl_plane1
+      - gl_plane2
+      - gs
+      - gs_plane1
+      - gs_plane2
+    is_l3_switch: "{{ group_names | intersect(l3_switch_groups) | length > 0 }}"
 
   tasks:
     - name: Check SSH connectivity and get hostname
@@ -45,7 +65,7 @@
       ignore_errors: true
       when:
         - hostname_result is succeeded
-        - "'core' in group_names or 'csl' in group_names or 'gsl' in group_names or 'cl' in group_names or 'cs' in group_names or 'gl' in group_names or 'gs_plane1' in group_names or 'gs_plane2' in group_names or 'gl_plane1' in group_names or 'gl_plane2' in group_names"
+        - is_l3_switch | bool
       changed_when: false
 
     - name: Check EVPN configuration (L3 switches)
@@ -54,7 +74,7 @@
       ignore_errors: true
       when:
         - hostname_result is succeeded
-        - "'core' in group_names or 'csl' in group_names or 'gsl' in group_names or 'cl' in group_names or 'cs' in group_names or 'gl' in group_names or 'gs_plane1' in group_names or 'gs_plane2' in group_names or 'gl_plane1' in group_names or 'gl_plane2' in group_names"
+        - is_l3_switch | bool
       changed_when: false
 
     - name: Get EVPN VNI counts (L3 switches)
@@ -63,7 +83,7 @@
       ignore_errors: true
       when:
         - hostname_result is succeeded
-        - "'core' in group_names or 'csl' in group_names or 'gsl' in group_names or 'cl' in group_names or 'cs' in group_names or 'gl' in group_names or 'gs_plane1' in group_names or 'gs_plane2' in group_names or 'gl_plane1' in group_names or 'gl_plane2' in group_names"
+        - is_l3_switch | bool
       changed_when: false
 
     - name: Get bridge domain output
@@ -88,24 +108,23 @@
           hostname_actual: "{{ hostname_result.stdout | default('N/A') }}"
           cumulus_version: "{{ version_result.stdout | default('N/A') }}"
           nvue_config_exists: "{{ startup_config.stat.exists | default(false) }}"
+          l3_switch: "{{ is_l3_switch | bool }}"
           nvue_config_applied: "{{ (nvue_hostname.stdout | default('') == (hostname | default(inventory_hostname))) }}"
-          # yamllint disable rule:line-length
-          # The BGP/EVPN fact expressions inline a 10-way group_names role gate
-          # (cl/cs/gl/gs + legacy core/csl/gsl); wrapping the single-line Jinja
-          # ternary would change the rendered string. Disable line-length here.
-          bgp_state: "{{ bgp_output.stdout_lines | select('match', '^state') | map('regex_replace', '^state\\s+', '') | first | default('N/A') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names or 'cl' in group_names or 'cs' in group_names or 'gl' in group_names or 'gs_plane1' in group_names or 'gs_plane2' in group_names or 'gl_plane1' in group_names or 'gl_plane2' in group_names) and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
-          bgp_configured: "{{ bgp_output.stdout_lines | select('match', '^configured-neighbors') | map('regex_replace', '^configured-neighbors\\s+', '') | first | default('0') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names or 'cl' in group_names or 'cs' in group_names or 'gl' in group_names or 'gs_plane1' in group_names or 'gs_plane2' in group_names or 'gl_plane1' in group_names or 'gl_plane2' in group_names) and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
-          bgp_established: "{{ bgp_output.stdout_lines | select('match', '^established-neighbors') | map('regex_replace', '^established-neighbors\\s+', '') | first | default('0') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names or 'cl' in group_names or 'cs' in group_names or 'gl' in group_names or 'gs_plane1' in group_names or 'gs_plane2' in group_names or 'gl_plane1' in group_names or 'gl_plane2' in group_names) and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
-          evpn_l2vni: "{{ evpn_vni_counts.stdout_lines[0] | default('0') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names or 'cl' in group_names or 'cs' in group_names or 'gl' in group_names or 'gs_plane1' in group_names or 'gs_plane2' in group_names or 'gl_plane1' in group_names or 'gl_plane2' in group_names) and evpn_vni_counts is defined and evpn_vni_counts.stdout_lines is defined else 'N/A' }}"
-          evpn_l3vni: "{{ evpn_vni_counts.stdout_lines[1] | default('0') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names or 'cl' in group_names or 'cs' in group_names or 'gl' in group_names or 'gs_plane1' in group_names or 'gs_plane2' in group_names or 'gl_plane1' in group_names or 'gl_plane2' in group_names) and evpn_vni_counts is defined and evpn_vni_counts.stdout_lines is defined else 'N/A' }}"
-          # yamllint enable rule:line-length
+          # Reachable is not enough: the switch must report its own hostname and
+          # have the generated NVUE config applied (startup.yaml carries it).
+          passed: "{{ hostname_result is succeeded and hostname_result.stdout | default('') == (hostname | default(inventory_hostname)) and nvue_hostname.stdout | default('') == (hostname | default(inventory_hostname)) }}"
+          bgp_state: "{{ bgp_output.stdout_lines | select('match', '^state') | map('regex_replace', '^state\\s+', '') | first | default('N/A') if is_l3_switch | bool and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
+          bgp_configured: "{{ bgp_output.stdout_lines | select('match', '^configured-neighbors') | map('regex_replace', '^configured-neighbors\\s+', '') | first | default('0') if is_l3_switch | bool and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
+          bgp_established: "{{ bgp_output.stdout_lines | select('match', '^established-neighbors') | map('regex_replace', '^established-neighbors\\s+', '') | first | default('0') if is_l3_switch | bool and bgp_output is defined and bgp_output.stdout is defined else 'N/A' }}"
+          evpn_l2vni: "{{ evpn_vni_counts.stdout_lines[0] | default('0') if is_l3_switch | bool and evpn_vni_counts is defined and evpn_vni_counts.stdout_lines is defined else 'N/A' }}"
+          evpn_l3vni: "{{ evpn_vni_counts.stdout_lines[1] | default('0') if is_l3_switch | bool and evpn_vni_counts is defined and evpn_vni_counts.stdout_lines is defined else 'N/A' }}"
           bridge_domains: "{{ bridge_output.stdout_lines | select('match', '^\\S') | reject('match', '^\\s*$') | list | length - 2 if bridge_output is defined and bridge_output.stdout is defined else 0 }}"
           interfaces_up: "{{ iface_output.stdout_lines | select('search', '\\s+up\\s+') | list | length if iface_output is defined and iface_output.stdout is defined else 0 }}"
         raw_output:
           bridge: "{{ bridge_output.stdout | default('N/A') }}"
           interfaces: "{{ iface_output.stdout | default('N/A') }}"
-          bgp: "{{ bgp_output.stdout | default('N/A') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names or 'cl' in group_names or 'cs' in group_names or 'gl' in group_names or 'gs_plane1' in group_names or 'gs_plane2' in group_names or 'gl_plane1' in group_names or 'gl_plane2' in group_names) else 'N/A (OOB switch)' }}"
-          evpn: "{{ evpn_output.stdout | default('N/A') if ('core' in group_names or 'csl' in group_names or 'gsl' in group_names or 'cl' in group_names or 'cs' in group_names or 'gl' in group_names or 'gs_plane1' in group_names or 'gs_plane2' in group_names or 'gl_plane1' in group_names or 'gl_plane2' in group_names) else 'N/A (OOB switch)' }}"
+          bgp: "{{ bgp_output.stdout | default('N/A') if is_l3_switch | bool else 'N/A (OOB switch)' }}"
+          evpn: "{{ evpn_output.stdout | default('N/A') if is_l3_switch | bool else 'N/A (OOB switch)' }}"
 
 - name: Display Validation Summary
   hosts: switches
@@ -115,7 +134,7 @@
     - name: Collect statistics
       set_fact:
         total_checks: "{{ groups['switches'] | default([]) | length }}"
-        successful_checks: "{{ ansible_play_hosts | map('extract', hostvars, ['validation_result', 'ssh_reachable']) | select('equalto', true) | list | length }}"
+        successful_checks: "{{ ansible_play_hosts | map('extract', hostvars, ['validation_result', 'passed']) | select('equalto', true) | list | length }}"
       run_once: true
       delegate_to: localhost
 
@@ -140,12 +159,17 @@
             NVUE Config Applied:      {{ vr.nvue_config_applied }}
             Bridge Domains:           {{ vr.bridge_domains }}
             Interfaces Up:            {{ vr.interfaces_up }}
-          {% if 'core' in hostvars[host].group_names or 'csl' in hostvars[host].group_names or 'gsl' in hostvars[host].group_names %}
+          {% if vr.l3_switch | bool %}
             BGP State:                {{ vr.bgp_state }}
             BGP Configured Neighbors: {{ vr.bgp_configured }}
             BGP Established Neighbors:{{ vr.bgp_established }}
             EVPN L2 VNIs:             {{ vr.evpn_l2vni }}
             EVPN L3 VNIs:             {{ vr.evpn_l3vni }}
+          {% endif %}
+          {% if vr.passed | bool %}
+            Status:                   PASSED
+          {% else %}
+            Status:                   FAILED — {{ 'hostname mismatch' if not vr.hostname_matches | bool else 'NVUE config not applied' }}
           {% endif %}
           {% else %}
             SSH Reachable:            ✗ No

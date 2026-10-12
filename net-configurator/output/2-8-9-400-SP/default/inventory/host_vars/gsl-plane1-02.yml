@@ -21,6 +21,13 @@ plane_mate_lo_ip: 10.1.1.1
 vlan900_ip: 192.168.0.3/20
 vlan900_vrr: 192.168.0.1/20
 gpu_rails:
+  rail0:
+    vlan_id: 900
+    vni: 4900
+    subnet: 192.168.0.0/24
+    ip: 192.168.0.3/24
+    vrr: 192.168.0.1/24
+    vrf: GPU
   rail1:
     vlan_id: 901
     vni: 4901
@@ -70,19 +77,12 @@ gpu_rails:
     ip: 192.168.7.3/24
     vrr: 192.168.7.1/24
     vrf: GPU
-  rail8:
-    vlan_id: 908
-    vni: 4908
-    subnet: 192.168.8.0/24
-    ip: 192.168.8.3/24
-    vrr: 192.168.8.1/24
-    vrf: GPU
 gpu_subports: swp1s0,swp1s1,swp2s0,swp2s1,swp3s0,swp3s1,swp4s0,swp4s1,swp5s0,swp5s1,swp6s0,swp6s1,swp7s0,swp7s1,swp8s0,swp8s1,swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1
 gpu_breakout_parents: swp1,swp2,swp3,swp4,swp5,swp6,swp7,swp8,swp9,swp10,swp11,swp12,swp13,swp14,swp15,swp16
 isl_subports: swp33s0,swp33s1,swp34s0,swp34s1,swp35s0,swp35s1,swp36s0,swp36s1,swp37s0,swp37s1,swp38s0,swp38s1,swp39s0,swp39s1,swp40s0,swp40s1,swp41s0,swp41s1,swp42s0,swp42s1,swp43s0,swp43s1,swp44s0,swp44s1,swp45s0,swp45s1,swp46s0,swp46s1,swp47s0,swp47s1,swp48s0,swp48s1
 isl_breakout_parents: swp33,swp34,swp35,swp36,swp37,swp38,swp39,swp40,swp41,swp42,swp43,swp44,swp45,swp46,swp47,swp48
 gpu_rail_subports:
-  rail2: swp1s0,swp3s0,swp5s0,swp7s0,swp9s0,swp11s0,swp13s0,swp15s0
-  rail4: swp1s1,swp3s1,swp5s1,swp7s1,swp9s1,swp11s1,swp13s1,swp15s1
-  rail6: swp2s0,swp4s0,swp6s0,swp8s0,swp10s0,swp12s0,swp14s0,swp16s0
-  rail8: swp2s1,swp4s1,swp6s1,swp8s1,swp10s1,swp12s1,swp14s1,swp16s1
+  rail1: swp1s0,swp3s0,swp5s0,swp7s0,swp9s0,swp11s0,swp13s0,swp15s0
+  rail3: swp1s1,swp3s1,swp5s1,swp7s1,swp9s1,swp11s1,swp13s1,swp15s1
+  rail5: swp2s0,swp4s0,swp6s0,swp8s0,swp10s0,swp12s0,swp14s0,swp16s0
+  rail7: swp2s1,swp4s1,swp6s1,swp8s1,swp10s1,swp12s1,swp14s1,swp16s1

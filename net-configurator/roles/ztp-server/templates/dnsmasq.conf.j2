@@ -27,8 +27,7 @@ interface={{ dnsmasq_interface | default('eth0') }}
 # leg so relayed DISCOVERs arriving from the cores' EXIT VRF are
 # accepted. Without this, `bind-interfaces` limits dnsmasq to the
 # ZTP-side interface(s) only and inter-VRF packets get dropped before
-# they reach the daemon. See
-# docs/plans/2026-05-27-l3-oob-exit-dhcp-relay.md.
+# they reach the daemon. See ADR-0007.
 interface={{ inter_vrf_dhcp_listen_iface }}
 {% endif %}
 
@@ -51,7 +50,7 @@ server=8.8.4.4
 {% set network = iface.network | regex_replace('\.\d+/\d+$', '') %}
 {% set gateway = iface.gateway | default(network ~ '.1') %}
 # {{ iface.purpose }} - {{ iface.network }}
-dhcp-range=interface:{{ iface.name }},{{ network }}.100,{{ network }}.200,12h
+dhcp-range=interface:{{ iface.name }},{{ iface.dhcp_range_start | default(network ~ '.100') }},{{ iface.dhcp_range_end | default(network ~ '.200') }},12h
 dhcp-option=interface:{{ iface.name }},3,{{ gateway }}  # Gateway (OOB server, not ZTP server)
 dhcp-option=interface:{{ iface.name }},239,http://{{ iface.ip }}/scripts/ztp.sh  # Cumulus Provision URL (ZTP server)
 dhcp-option=interface:{{ iface.name }},66,http://{{ iface.ip }}/cumulus-linux-{{ cumulus_target_release | default('5.15.0') }}.bin  # ONIE Image URL (optional)

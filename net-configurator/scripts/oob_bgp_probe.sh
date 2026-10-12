@@ -5,12 +5,14 @@
 # OOB↔CSL BGP probe (design C1) — READ ONLY.
 #
 # Runs ON an OOB Cumulus switch, streamed over SSH from the jump:
-#     sshpass -e ssh ... cumulus@<oob-switch> "bash -s -- '<sudo_pw>'" < oob_bgp_probe.sh
+#     { printf 'IFS= read -r PW\n%s\n' "$SSHPASS"; cat oob_bgp_probe.sh; } |
+#         sshpass -e ssh ... cumulus@<oob-switch> 'bash -s'
 #
-# It only DUMPS `show bgp vrf all summary json` (root via `sudo -S`). The
+# It only DUMPS `show bgp vrf all summary json` (root via `sudo -S`; the sudo
+# password arrives on stdin ahead of this script, never as an argument). The
 # PASS/FAIL classification runs on the jump via scripts/oob_bgp_classify.py, so
 # the classifier stays unit-testable and this probe shares ZERO code with
 # scripts/switch_health_probe.sh (the required isolation — no carrier-down
 # suppression leaking in from switch-health).
-PW="${1:-}"
+PW="${PW:-}"
 echo "$PW" | sudo -S -p '' vtysh -c 'show bgp vrf all summary json' 2>/dev/null
