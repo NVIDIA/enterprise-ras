@@ -4,18 +4,14 @@
 """
 Topology Generator - Generate and validate NVIDIA Air topology from Excel wiremap.
 
-Reads the Wire Map sheet from the customer-filled Excel workbook
+Reads the Wiremap sheet from the customer-filled intake workbook
 (input/<arch>/<site>/<arch>.xlsx) and produces a complete Air 2.0 topology
 JSON with all switch ports represented — including unconnected stubs for
 ports without connections.
 
-Old format: Air-specific connections (dhcp-oob, oob-server-01, dhcp-edge, eth0
-management) are included at the top of the Wire Map sheet with "Air - " prefixed
-profiles.
-
-New format: Air-specific connections are in a dedicated Air_Only sheet.
-The Air_Only sheet also contains a version→image name mapping table used to
-resolve the correct qcow2 image for each switch function.
+Deployment holds Air settings and version-to-image mappings. The compatibility
+adapter supplies in-memory Wire Map, Settings and Air_Only views to the
+helpers below. Users author the intake sheets, not those legacy-shaped views.
 
 Usage:
     # Generate topology from Excel wiremap
@@ -35,14 +31,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
-import openpyxl
 import yaml
 
 from utils import (generate_mac, classify_node, is_switch, is_valid_hostname,
-                   parse_swp_port)
+                   is_bside_sentinel, parse_swp_port, normalize_oob_uplink_mode)
 from excel_parser import (build_wiremap_column_map, _wm_cell_ws,
                           parse_nodes, build_nodes_function_map,
                           parse_vlans, resolve_oob_vlans)
+import intake_to_legacy  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -64,11 +60,6 @@ SWITCH_MODELS = {
 # from servers / infra / unknown nodes.
 SWITCH_ROLES = frozenset(SWITCH_MODELS.keys())
 
-# Last-resort OS image. Only reachable for a switch whose role never appeared in
-# the workbook's VERSIONS table at all; a role that IS pinned but whose version
-# has no image-map row now raises UnresolvedSwitchVersionError instead of
-# silently landing here. See that class for why.
-SWITCH_OS_FALLBACK = "cumulus-linux-vx-amd64-5.16.0.qcow2"
 SERVER_OS = "generic/ubuntu2204"
 
 
@@ -82,16 +73,25 @@ MAX_EDGES = 32
 
 
 class UnresolvedSwitchVersionError(RuntimeError):
-    """A pinned Cumulus version has no row in the workbook's image map.
+    """A switch's Cumulus version or image could not be resolved from the workbook.
 
-    Raised instead of quietly substituting SWITCH_OS_FALLBACK. During the
+    Raised instead of quietly substituting a different image. During the
     5.18.0 upgrade the workbook pinned `core -> 5.18.0` with no matching image
-    map row, and the generator emitted cumulus-linux-vx-amd64-5.16.0.qcow2 —
-    not 5.18.0, and not even the previous 5.16.1 — with no warning. The sim
-    would have come up on 5.16.0 and been signed off as "5.18.0 validated".
+    map row, and the generator emitted an older image with no warning. The sim
+    would have come up on the wrong release and been signed off as
+    "5.18.0 validated".
 
     A wrong-but-plausible image is worse than a hard stop: it invalidates the
     test silently. Fail loudly and make the operator add the image-map row.
+    """
+
+
+class UnclassifiedPeerRoleError(ValueError):
+    """A Wire Map B-side (Switch Name) node has a role nobody recognises.
+
+    `is_switch()` returns False for a misspelled Switch Role, so the node
+    would otherwise take the server path everywhere — Ubuntu image, ethN
+    ports, host layout — and generation would succeed (ADR-0057, GitLab #85).
     """
 
 
@@ -118,8 +118,6 @@ class UnresolvedSwitchVersionError(RuntimeError):
 #   ACCEPTED: 2/4096/20GB, and anything above it
 # oob/air-oob were 1 cpu / 2048 MB, which exactly matched cumulus-vx-5.15.1's
 # {1, 2048, 10} — 5.18.0 is the first pin that put a role BELOW its image floor.
-# Full evidence + reproduction:
-#   internal-docs/validation-evidence/2026-08-11-cumulus-518-air-minimum-resources.md
 #
 # NOTE: the declared values are arbitrary per-upload metadata and do NOT track
 # any measured requirement (cumulus-vx-5.16.0 was uploaded later than 5.16.1 and
@@ -216,7 +214,7 @@ def parse_wiremap_excel(excel_path: Path) -> List[WiremapRow]:
     cells get their roles resolved from the single source of truth
     (matches `excel_parser._build_wiremap_row_list` behavior).
     """
-    wb = openpyxl.load_workbook(excel_path, data_only=True)
+    wb = intake_to_legacy.load_workbook(excel_path, data_only=True)
     if "Wire Map" not in wb.sheetnames:
         raise ValueError(f"Sheet 'Wire Map' not found in {excel_path}")
 
@@ -398,7 +396,7 @@ def parse_air_settings(wb) -> dict:
 
 
 def parse_switch_versions(wb) -> dict:
-    """Read the VERSIONS table from the Settings sheet (new format).
+    """Read versions from the adapter's Settings view of Deployment.
 
     Returns dict: {'core': '5.16.1', 'oob': '5.15.1'} or {} if not present.
     """
@@ -447,28 +445,28 @@ class TopologyGenerator:
         self.site = site
         self.switches_only = switches_only
 
-        wb = openpyxl.load_workbook(excel_path, data_only=True)
-        new_format = "Air_Only" in wb.sheetnames
+        # The loader builds the legacy-shaped views over an intake workbook,
+        # so Wire Map and Air_Only are present either way (ADR-0064 D1 left
+        # the intake form as the only input format).
+        wb = intake_to_legacy.load_workbook(excel_path, data_only=True)
 
         # Wire Map rows — always present
         self.rows = parse_wiremap_excel(excel_path)
 
-        if new_format:
-            # New format: Air topology rows (infrastructure + outbound) are in Air_Only
-            # Air_Only rows go FIRST so they take priority in dedup over Wire Map rows
-            self.rows = parse_air_only_sheet(wb) + self.rows
-            # Build version → OS image mapping from Air_Only and per-function versions
-            image_map = parse_version_image_map(wb)
-            switch_versions = parse_switch_versions(wb)
-            self._switch_os = self._build_switch_os(image_map, switch_versions)
-        else:
-            self._switch_os = {}
+        # Air topology rows (infrastructure + outbound) come from Air_Only.
+        # They go FIRST so they take priority in dedup over Wire Map rows.
+        self.rows = parse_air_only_sheet(wb) + self.rows
+        # Build version → OS image mapping from Air_Only and per-function versions
+        image_map = parse_version_image_map(wb)
+        switch_versions = parse_switch_versions(wb)
+        self._switch_os = self._build_switch_os(image_map, switch_versions)
 
         # OOB uplink mode — drives whether we inject the L2 air-oob-switch
-        # flat bridge (existing default) or the L3 three-Ubuntu-node trio
-        # (external-conn + external-dhcp + utility). Read from Settings sheet
-        # with same snake_case normalization as scripts/excel_parser.py.
-        self._oob_uplink_mode = "l2"
+        # flat bridge (legacy mode) or the default L3 three-Ubuntu-node trio
+        # (external-conn + external-dhcp + utility). Read from the Settings view
+        # with the same key normalization as scripts/excel_parser.py, and the
+        # value normalized by the same utils helper the parser uses.
+        raw_oob_mode = None
         if "Settings" in wb.sheetnames:
             ws_settings = wb["Settings"]
             for row_idx in range(1, ws_settings.max_row + 1):
@@ -478,8 +476,9 @@ class TopologyGenerator:
                     continue
                 key_clean = str(key).strip().lower().replace(" ", "_").replace("-", "_")
                 if key_clean == "oob_uplink_mode":
-                    self._oob_uplink_mode = str(value).strip().lower()
+                    raw_oob_mode = value
                     break
+        self._oob_uplink_mode = normalize_oob_uplink_mode(raw_oob_mode)
 
         wb.close()
 
@@ -497,7 +496,7 @@ class TopologyGenerator:
         # Supplement from Nodes tab (Function → Name) when Wire Map lacks role columns.
         # This handles OEM-named deployments where the Wire Map only has System Name.
         if "Nodes" in wb.sheetnames:
-            wb_nodes = openpyxl.load_workbook(str(self.excel_path), data_only=True, read_only=True)
+            wb_nodes = intake_to_legacy.load_workbook(str(self.excel_path), data_only=True)
             ws_n = wb_nodes["Nodes"]
             for row in ws_n.iter_rows(min_row=2, max_row=ws_n.max_row, values_only=True):
                 func = str(row[0]).strip() if row[0] else ''
@@ -505,6 +504,8 @@ class TopologyGenerator:
                 if func and name and name not in self._name_to_role:
                     self._name_to_role[name] = func
             wb_nodes.close()
+
+        self._reject_unclassified_peers()
 
         # Per-server counter for sequential ethN assignment
         self._server_eth_counter: Dict[str, int] = defaultdict(int)
@@ -573,12 +574,13 @@ class TopologyGenerator:
             nodes, links, switch_connected = self._inject_air_oob_switch(
                 nodes, links, switch_connected,
             )
-        links += self._build_unconnected_stubs(switch_connected)
+        links += self._build_unconnected_stubs(switch_connected, nodes)
         if self.switches_only:
             nodes, links = self._strip_to_switches(nodes, links)
         # Re-run layout now that all infra/injected nodes exist.
         self._apply_layout(nodes)
         self._assert_no_duplicate_interfaces(links)
+        self._assert_link_endpoints_exist(nodes, links)
 
         return {
             "format": "JSON",
@@ -722,9 +724,9 @@ class TopologyGenerator:
         version bump moved exactly one row. Index under BOTH spellings so
         either vocabulary resolves.
 
-        Raises UnresolvedSwitchVersionError rather than substituting
-        SWITCH_OS_FALLBACK: a wrong-but-plausible image silently invalidates
-        whatever was validated on it.
+        Raises UnresolvedSwitchVersionError rather than substituting a different
+        image: a wrong-but-plausible image silently invalidates whatever was
+        validated on it.
         """
         by_key: Dict[str, str] = {}
         conflicts: Dict[str, set] = {}
@@ -773,13 +775,48 @@ class TopologyGenerator:
             )
         return resolved
 
+    def _reject_unclassified_peers(self) -> None:
+        """Refuse to build when a B-side node's role does not classify.
+
+        Resolves the role exactly as `_resolve_os` does: `_name_to_role`
+        (`parse_wiremap_excel._resolve` — canonical Nodes-tab Function, else
+        the Wire Map Switch Role cell — plus the raw Nodes Function for names
+        the Wire Map gives no role), falling back to the bare name. Anything
+        that would reach the server path with an `unknown` classification is
+        caught before any artifact is written. Skipped, as the validator
+        skips them: NA/outbound rows, and sentinel
+        B-sides (SPARE, cust-net-edge-NN, ext-*) which are placeholders for
+        unmanaged gear and never carry a role (`utils.is_bside_sentinel`).
+        """
+        bad: Dict[str, str] = {}
+        for r in self.rows:
+            if not r.switch_name or not is_valid_hostname(r.switch_name):
+                continue
+            raw = (r.switch_role or '').strip()
+            if raw.upper() in ('NA', 'OUTBOUND') or r.switch_name.lower() == 'outbound':
+                continue
+            if is_bside_sentinel(r.switch_name):
+                continue
+            role_name = self._name_to_role.get(r.switch_name, raw or r.switch_name)
+            if classify_node(role_name) == 'unknown':
+                bad.setdefault(r.switch_name, role_name)
+        if bad:
+            detail = ', '.join(f"{n} (role '{role}')" for n, role in sorted(bad.items()))
+            raise UnclassifiedPeerRoleError(
+                f"Wire Map Switch Role does not classify for {len(bad)} node(s): "
+                f"{detail}. Use a canonical switch role (core, cs/cl, gs/gl, "
+                f"gsl-plane1/2, oob-switch, edge) or fix the Nodes-tab Function — "
+                f"refusing to render these as servers."
+            )
+
     def _resolve_os(self, name: str) -> str:
         """Return the Air OS image string for a node.
 
         For servers always returns SERVER_OS.
         For switches, looks up per-function image from _switch_os (populated from
         the Air_Only version mapping table when using new format).
-        Falls back to SWITCH_OS_FALLBACK if no mapping is available.
+        Raises UnresolvedSwitchVersionError for a switch whose role resolves
+        nowhere.
         """
         role_name = self._name_to_role.get(name, name)
         if not is_switch(role_name):
@@ -791,13 +828,18 @@ class TopologyGenerator:
         if role == "air-oob" and "oob" in self._switch_os:
             return self._switch_os["oob"]
         # cust-net-edge (edge) is an SN5600-class L2-bridge + eBGP-underlay node
-        # that runs the same heavy config as core/csl, so it tracks core's image
-        # (5.16.1) — NOT oob's 5.15.1. (It previously inherited oob and shipped
-        # 5.15.1, which under the 2GB 'edge' default left edge01 unable to boot
-        # the bridge → the whole air-mgmt plane stayed isolated.)
+        # that runs the same heavy config as core/csl, so it tracks core's image,
+        # not oob's. Its 2GB default must not receive the lighter oob image.
         if role in ("edge", "csl", "gsl") and "core" in self._switch_os:
             return self._switch_os["core"]
-        return SWITCH_OS_FALLBACK
+        known = sorted(self._switch_os) or ["<empty>"]
+        raise UnresolvedSwitchVersionError(
+            f"No Cumulus image resolved for switch {name!r} (function "
+            f"{role_name!r}, role {role!r}). The workbook's VERSIONS table "
+            f"resolves: {known}. Add a '{role_name}' row to VERSIONS (and its "
+            "image-map row) rather than booting an image nothing was validated "
+            "on."
+        )
 
     # ---- layout -------------------------------------------------------------
 
@@ -996,7 +1038,7 @@ class TopologyGenerator:
                 "x": (infra_x_base + i) * G, "y": infra_row * G,
             }
 
-        # L3 OOB layout overrides — see docs/plans/2026-05-20-l3-oob-air-topology.md.
+        # L3 OOB layout overrides — see ADR-0067.
         # Visual hierarchy from top to bottom:
         #   y = -2G : external-conn, external-dhcp   (Ubuntu, simulated ISP/DC)
         #   y = -G  : cust-net-edge-01, cust-net-edge-02   (Cumulus, EXIT VRF)
@@ -1385,7 +1427,7 @@ class TopologyGenerator:
 
         Returns list of subnet strings, e.g., ['192.168.200.0/24', '192.168.210.0/24'].
         """
-        wb = openpyxl.load_workbook(self.excel_path, data_only=True)
+        wb = intake_to_legacy.load_workbook(self.excel_path, data_only=True)
         vlans = parse_vlans(wb["VLANs & Profiles"]) if "VLANs & Profiles" in wb.sheetnames else []
         # NOTE: passes UNFILTERED parse_nodes() (all OOB-category nodes on the
         # sheet, regardless of Active/Inactive status), unlike the deploy
@@ -1607,7 +1649,7 @@ class TopologyGenerator:
         external-dhcp answers switch ZTP DHCP, utility sits on the OOB VLAN
         200 plane as jump host + server-ZTP DHCP server.
 
-        Design doc: docs/plans/2026-05-20-l3-oob-air-topology.md
+        Design doc: ADR-0067
         """
         EDGE = "cust-net-edge-01"
         OOB = "oob-switch-01"
@@ -1623,7 +1665,7 @@ class TopologyGenerator:
                   "missing (need at least one oob-switch); skipping L3 injection.")
             return nodes, links, switch_connected
         sw_defaults = NODE_DEFAULTS.get("edge", NODE_DEFAULTS["core"])
-        edge_os = nodes.get(OOB, {}).get("os", SWITCH_OS_FALLBACK)
+        edge_os = nodes[OOB]["os"]
 
         def _make_edge_node() -> dict:
             return {
@@ -2000,7 +2042,7 @@ class TopologyGenerator:
         # cust-net-edge BGP block) advertises 10.88.88.0/24 to the cores'
         # EXIT VRF via the existing ESL underlay eBGP session. Pairs with
         # external-dhcp:eth2 = 10.88.88.88/24 in L3_TRIO_NETPLAN. See
-        # docs/plans/2026-05-27-l3-oob-exit-dhcp-relay.md.
+        # ADR-0007.
         edge_ext_dhcp_eth2_port = _alloc_edge_port()
         new_links.append(self._make_link(
             "external-dhcp", "eth2", EDGE, edge_ext_dhcp_eth2_port,
@@ -2071,17 +2113,22 @@ class TopologyGenerator:
     # ---- unconnected stubs ------------------------------------------------
 
     def _build_unconnected_stubs(
-        self, switch_connected: Dict[str, Set[str]]
+        self, switch_connected: Dict[str, Set[str]], nodes: dict
     ) -> list:
-        """Add unconnected stubs for every switch port not already linked."""
+        """Add unconnected stubs for every switch port not already linked.
+
+        Only switches present in ``nodes`` get stubs: a switch that is
+        Enabled=No on the Nodes tab keeps its Wire Map rows (for breakout
+        analysis of its peers) but has no node, so a stub for it would be a
+        dangling link endpoint."""
         links: list = []
 
         # Gather all switch names from wiremap (use actual names, not function roles)
         switch_names: Set[str] = set()
         for r in self.rows:
-            if is_switch(r.system_role):
+            if is_switch(r.system_role) and r.system_name in nodes:
                 switch_names.add(r.system_name)
-            if r.switch_role and is_switch(r.switch_role):
+            if r.switch_role and is_switch(r.switch_role) and r.switch_name in nodes:
                 switch_names.add(r.switch_name)
 
         for switch_name in sorted(switch_names):
@@ -2293,6 +2340,30 @@ class TopologyGenerator:
         self._server_eth_counter[server_name] = idx + 1
         return f"eth{idx}"
 
+    @staticmethod
+    def orphan_link_endpoints(nodes: dict, links: list) -> List[Tuple[str, str]]:
+        """(node, interface) link endpoints whose node is not in ``nodes``."""
+        orphans = []
+        for link in links:
+            for end in link:
+                if isinstance(end, dict) and end.get("node") not in nodes:
+                    orphans.append((end.get("node"), end.get("interface")))
+        return orphans
+
+    def _assert_link_endpoints_exist(self, nodes: dict, links: list) -> None:
+        """Hard-fail if a link references a node the topology does not define
+        (e.g. stubs emitted for a switch that is Enabled=No on the Nodes tab)."""
+        orphans = self.orphan_link_endpoints(nodes, links)
+        if orphans:
+            by_node: Dict[str, int] = defaultdict(int)
+            for node, _ in orphans:
+                by_node[node] += 1
+            detail = ", ".join(f"{n} ({c} link(s))" for n, c in sorted(by_node.items()))
+            raise ValueError(
+                f"Topology links reference {len(by_node)} node(s) absent from "
+                f"content.nodes: {detail}. Air rejects a topology whose link "
+                f"endpoint is not a defined node.")
+
     def _assert_no_duplicate_interfaces(self, links: list) -> None:
         """Hard-fail if one (node, interface) is wired by more than one link.
 
@@ -2386,7 +2457,7 @@ class TopologyValidator:
         # When the topology was generated switches-only, the server VMs were
         # intentionally dropped — don't flag them as "missing nodes".
         self.switches_only = switches_only
-        wb = openpyxl.load_workbook(excel_path, data_only=True)
+        wb = intake_to_legacy.load_workbook(excel_path, data_only=True)
         self.rows = parse_wiremap_excel(excel_path)
         if "Air_Only" in wb.sheetnames:
             self.rows = parse_air_only_sheet(wb) + self.rows
@@ -2414,8 +2485,9 @@ class TopologyValidator:
 
         self._check_nodes(nodes)
         self._check_links(links)
+        self._check_link_endpoints(nodes, links)
         self._check_os_versions(nodes)
-        self._check_unconnected_stubs(links)
+        self._check_unconnected_stubs(nodes, links)
 
         self._print_results()
         return len(self.errors) == 0
@@ -2436,21 +2508,18 @@ class TopologyValidator:
                 continue
             # Track Air-only nodes separately (Air - prefixed network profiles)
             is_air_row = r.net_profile and r.net_profile.startswith('Air')
-            if r.system_role:
-                # Skip invalid hostnames — generator skips them too
-                if not is_valid_hostname(r.system_name):
-                    continue
+            # A-side: same rule as the generator's _build_nodes — a valid
+            # hostname is a node whether or not its Function was filled
+            # (ext-storage-* rows have no Host Data entry in most archs).
+            if r.system_name and is_valid_hostname(r.system_name):
                 if is_air_row:
                     air_only_devices.add(r.system_name)
                 else:
                     wiremap_devices.add(r.system_name)
-            # Track the B-side device unless the role is explicitly OUTBOUND
-            # (which is a sink, not a device). Blank role and "NA" are both
-            # valid — cust-net-edge-* and ext-storage-* rows often carry NA
-            # or blank function because they're "Edge Uplink" / external
-            # device connections that don't map to a standard function.
+            # B-side: same rule as _build_nodes — a blank role counts, an
+            # explicit NA or OUTBOUND (not a real peer) does not.
             if r.switch_name and is_valid_hostname(r.switch_name):
-                if not (r.switch_role and r.switch_role.upper() == "OUTBOUND"):
+                if not (r.switch_role and r.switch_role.upper() in ("NA", "OUTBOUND")):
                     if is_air_row:
                         air_only_devices.add(r.switch_name)
                     else:
@@ -2553,7 +2622,17 @@ class TopologyValidator:
                 self.warnings.append(
                     f"OS mismatch: {name} has '{actual}', expected '{SERVER_OS}'")
 
-    def _check_unconnected_stubs(self, links: list) -> None:
+    def _check_link_endpoints(self, nodes: dict, links: list) -> None:
+        """Every link endpoint must name a node in content.nodes."""
+        by_node: Dict[str, int] = defaultdict(int)
+        for node, _ in TopologyGenerator.orphan_link_endpoints(nodes, links):
+            by_node[node] += 1
+        for node, count in sorted(by_node.items()):
+            self.errors.append(
+                f"Orphan link endpoint: {node} is referenced by {count} link(s) "
+                f"but is not a node in the topology")
+
+    def _check_unconnected_stubs(self, nodes: dict, links: list) -> None:
         topo_switch_ports: Dict[str, Set[str]] = defaultdict(set)
         for link in links:
             node = link[0]["node"]
@@ -2564,11 +2643,13 @@ class TopologyValidator:
                 if is_switch(self._name_to_role.get(node2, node2)):
                     topo_switch_ports[node2].add(link[1]["interface"])
 
+        # Only switches that exist in the topology: a Nodes-tab Enabled=No
+        # switch keeps its Wire Map rows but has no node and no ports.
         switch_names: Set[str] = set()
         for r in self.rows:
-            if is_switch(r.system_role):
+            if is_switch(r.system_role) and r.system_name in nodes:
                 switch_names.add(r.system_name)
-            if r.switch_role and is_switch(r.switch_role):
+            if r.switch_role and is_switch(r.switch_role) and r.switch_name in nodes:
                 switch_names.add(r.switch_name)
 
         for switch_name in sorted(switch_names):

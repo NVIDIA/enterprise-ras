@@ -24,6 +24,7 @@ import ipaddress
 from pathlib import Path
 
 import yaml
+import intake_to_legacy  # noqa: E402
 
 # Columns mirror the Wire Map row shape: the device is the A side ("Port (A)" is the
 # Wire Map's own physical-NIC name verbatim, e.g. "B3220 PCIe Slot 1 Port 1"), and the
@@ -34,7 +35,7 @@ COLUMNS = ["System Name (A)", "Type", "Network Profile", "Port (A)",
            "Logical Port (A)", "System Name (B)", "Port (B)",
            "IP Address", "Subnet", "Gateway"]
 
-# Second, human-facing sheet ("By Node") — LaunchPad P2P style: one row per physical
+# Second, human-facing sheet ("By Node") — LaunchPad wiremap style: one row per physical
 # port, the host name merged vertically over its block, rows tinted by Network Profile.
 # No bond abstraction — each port stands on its own line as in the LaunchPad wiremap.
 GROUPED_COLUMNS = ["System Name (A)", "Port (A)", "Network Profile",
@@ -88,11 +89,12 @@ def _derived_gateway(cidr):
 
 
 def load_switches(host_vars_dir):
-    """Return {name: host_vars} for switch host_vars (have lo_ip or vlan_interfaces)."""
+    """Return {name: host_vars} for switch host_vars (have lo_ip, vlan_interfaces
+    or a flat svi_ip -- the L2 oob-switch shape)."""
     switches = {}
     for f in sorted(host_vars_dir.glob("*.yml")):
         hv = yaml.safe_load(f.read_text()) or {}
-        if "lo_ip" in hv or "vlan_interfaces" in hv:
+        if "lo_ip" in hv or "vlan_interfaces" in hv or "svi_ip" in hv:
             switches[f.stem] = hv
     return switches
 
@@ -279,11 +281,17 @@ def load_wiremap(xlsx_path):
     if not xlsx_path.exists():
         return wm
     try:
-        from openpyxl import load_workbook
+        import openpyxl  # noqa: F401  (probe: optional dependency)
     except ImportError:
         return wm
-    wb = load_workbook(xlsx_path, data_only=True, read_only=True)
-    sheet = next((s for s in wb.sheetnames if "wire" in s.lower()), None)
+    wb = intake_to_legacy.load_workbook(xlsx_path, data_only=True)
+    # Prefer the exact legacy sheet. An intake-form workbook has BOTH
+    # `Wiremap` (its own, two-row banded header) and the legacy-shaped
+    # `Wire Map` view built by intake_to_legacy; a fuzzy "wire" match picks
+    # `Wiremap` first, whose row 1 is the Source/Destination band, so every
+    # column lookup below misses and the join silently returns nothing.
+    sheet = ("Wire Map" if "Wire Map" in wb.sheetnames
+             else next((s for s in wb.sheetnames if "wire" in s.lower()), None))
     if not sheet:
         return wm
     rows = wb[sheet].iter_rows(values_only=True)

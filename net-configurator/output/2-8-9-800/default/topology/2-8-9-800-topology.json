@@ -12,7 +12,7 @@
                     "x": 1650,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -31,7 +31,7 @@
                     "x": 2200,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -50,7 +50,7 @@
                     "x": 1650,
                     "y": -275
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -69,7 +69,7 @@
                     "x": 2200,
                     "y": -275
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -126,7 +126,7 @@
                     "x": 3300,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -145,7 +145,7 @@
                     "x": 3575,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -164,7 +164,7 @@
                     "x": 4125,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -183,7 +183,7 @@
                     "x": 4400,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -202,7 +202,7 @@
                     "x": 2750,
                     "y": 275
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -221,7 +221,7 @@
                     "x": 2750,
                     "y": 550
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false

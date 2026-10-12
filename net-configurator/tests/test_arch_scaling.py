@@ -17,6 +17,9 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
+
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -40,33 +43,10 @@ try:                                                        # noqa: E402
 except ModuleNotFoundError:                                 # public tree: no data-models/
     available_sus = get_arch_row = None
 # Arch models are internal-only (data-models/, ADR-0027) and absent from the
-# public tree, so this skips there rather than failing. Defined locally rather
-# than imported from conftest: conftest is loaded by pytest, not importable.
-_HAVE_ARCH_MODELS = (Path(__file__).resolve().parents[2] / "data-models" / "models").exists()
-needs_arch_models = pytest.mark.skipif(
-    not _HAVE_ARCH_MODELS,
-    reason="arch models are internal-only (data-models/), absent in the public tree")
+# public tree, which deselects these tests (internal_only, tests/conftest.py).
+needs_arch_models = pytest.mark.internal_only("data-models/models")
 
 pytestmark = needs_arch_models
-
-
-def _wm_cols(ws):
-    """Resolve Wire Map B-side column indices from header row.
-
-    Returns (SWNAME_COL, SWPORT_COL). After the 2026-05-28 schema
-    revision added `Cable Split (A)` between Port Side (A) and System
-    Name (B), B-side columns shifted from (5, 6) to (6, 7). Header
-    lookup keeps the tests resilient to further column changes.
-    """
-    headers = {}
-    for c in range(1, ws.max_column + 1):
-        h = (ws.cell(1, c).value or "")
-        headers[str(h).strip().lower()] = c
-    swname = headers.get("system name (b)",
-              headers.get("switch name", 5))
-    swport = headers.get("port (b)",
-              headers.get("switch port", 6))
-    return swname, swport
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +113,7 @@ class TestMaxSupportedSu:
         assert max_supported_su("2-8-5-200") == 8
         assert max_supported_su("2-8-9-400") == 16   # multi-tier > single-tier max (3)
         assert max_supported_su("2-4-5-800") == 8
+        assert max_supported_su("2-8-5-400") == 8    # ERA-104: E/W leaf+spine from SU5
         assert max_supported_su("2-8-9-800") == 32
         assert max_supported_su("2-8-9-400-SP") == 32
 
@@ -141,7 +122,7 @@ class TestMaxSupportedSu:
         # and baking it into the name meant adding 2-4-5-400 (ERA-49) left a
         # test whose name contradicted its own assertion.
         assert set(MAX_SUPPORTED_SU) == {
-            "2-4-3-200", "2-4-5-400", "2-8-5-200", "2-8-9-400",
+            "2-4-3-200", "2-4-5-400", "2-8-5-200", "2-8-5-400", "2-8-9-400",
             "2-4-5-800", "2-8-9-800", "2-8-9-400-SP"}
 
     def test_at_least_single_tier_max(self):
@@ -277,28 +258,16 @@ class TestSingleTierValidator:
         dst = tmp_path / "over.xlsx"
         shutil.copyfile(src, dst)
         wb = openpyxl.load_workbook(dst)
-        ws = wb["Nodes"]
-        col = {}
-        for c in range(1, ws.max_column + 1):
-            h = (ws.cell(1, c).value or "").strip().lower()
-            if h:
-                col[h] = c
         # Synthesize an SU-24 row. The source docs have that row, but this
         # generator intentionally skips it until E/W super-spine templates
         # exist. The validator cares about *the highest* active SU index, not
         # whether the wire-map is consistent — so just shoehorn one in.
-        # Function column is required (parser skips rows with blank function).
-        target_row = ws.max_row + 1
-        ws.cell(target_row, col["function"]).value = "server"
-        ws.cell(target_row, col["name"]).value = "su-24-node-1"
-        ws.cell(target_row, col["enabled"]).value = "Yes"
-        # Give it a valid IP so the parser doesn't error on it.
-        if "mgmt ip address" in col:
-            ws.cell(target_row, col["mgmt ip address"]).value = "192.168.200.99"
-        if "prefix" in col:
-            ws.cell(target_row, col["prefix"]).value = 24
-        if "gateway" in col:
-            ws.cell(target_row, col["gateway"]).value = "192.168.200.1"
+        # Function is required (the parser skips rows with a blank one), and
+        # the address keeps it from erroring for a different reason.
+        workbook_access.add_host(
+            wb, function="server", type="node", enabled="Yes", prefix=24,
+            ip="192.168.200.99", gateway="192.168.200.1",
+            **{"system name": "su-24-node-1", "physical interface": "eth0"})
         wb.save(dst)
         wb.close()
         result = validate_excel(str(dst))
@@ -318,15 +287,16 @@ class TestAirOobSingleCableValidator:
         dst = tmp_path / "two-yes.xlsx"
         shutil.copyfile(src, dst)
         wb = openpyxl.load_workbook(dst)
-        ws = wb["Wire Map"]
-        swname, swport = _wm_cols(ws)
+        ws, cols, first = workbook_access.sheet_table(wb, "Wiremap")
+        swname, swport = cols["system name (z)"], cols["port (z)"]
+        nodename, display = cols["system name (a)"], cols["display in air"]
         # Find one SU-1 node's OOB rows and force two of them Display=Yes
         # with distinct ports on the same oob-switch.
         target = None
         oob_rows = []
-        for r in range(2, ws.max_row + 1):
+        for r in range(first, ws.max_row + 1):
             sw = ws.cell(r, swname).value or ""
-            sysname = ws.cell(r, 2).value or ""
+            sysname = ws.cell(r, nodename).value or ""
             if "oob-switch" not in str(sw):
                 continue
             if node_name_to_su(sysname) != 1:
@@ -341,16 +311,16 @@ class TestAirOobSingleCableValidator:
         # Use high port numbers (SN2201 has 48 ports + 4 uplinks 49-52)
         # that the default doesn't claim, to avoid duplicate-port errors.
         used = set()
-        for r in range(2, ws.max_row + 1):
+        for r in range(first, ws.max_row + 1):
             sw = ws.cell(r, swname).value or ""
             port = str(ws.cell(r, swport).value or "")
             if "oob-switch" in str(sw):
                 used.add(port)
         free = [f"swp{p}" for p in range(40, 49) if f"swp{p}" not in used][:2]
         assert len(free) == 2, f"expected 2 free OOB ports, found {free}"
-        ws.cell(oob_rows[0], 1).value = "Yes"
+        ws.cell(oob_rows[0], display).value = "Yes"
         ws.cell(oob_rows[0], swport).value = free[0]
-        ws.cell(oob_rows[1], 1).value = "Yes"
+        ws.cell(oob_rows[1], display).value = "Yes"
         ws.cell(oob_rows[1], swport).value = free[1]
         wb.save(dst)
         wb.close()

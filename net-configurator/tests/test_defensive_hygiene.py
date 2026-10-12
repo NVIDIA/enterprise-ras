@@ -32,7 +32,7 @@ def _load(modname, filename, base=SCRIPTS):
 # from there when present, otherwise skip the vr-specific tests below.
 _DATA_MODELS = Path(__file__).resolve().parents[2] / "data-models"
 vr = _load("validate_requirements_mod", "validate_requirements.py", _DATA_MODELS)
-_needs_vr = pytest.mark.skipif(vr is None, reason="validate_requirements.py is internal-only (data-models/)")
+_needs_vr = pytest.mark.internal_only("data-models/validate_requirements.py")
 
 
 @_needs_vr

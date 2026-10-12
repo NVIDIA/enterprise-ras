@@ -29,6 +29,9 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
+
 REPO = Path(__file__).resolve().parent.parent
 VALIDATOR = REPO / "scripts" / "validate_excel.py"
 ERR = "renders as"
@@ -38,7 +41,8 @@ ERR = "renders as"
 # `generator_parity.py` skip that arch. A list you have to remember to edit is a list
 # that stops matching the tree.
 SHIPPED_SITES = ("default", "largescale")
-SHIPPED = sorted(p for site in SHIPPED_SITES for p in REPO.glob(f"input/*/{site}/*.xlsx"))
+SHIPPED = sorted(p for site in SHIPPED_SITES for p in REPO.glob(f"input/*/{site}/*.xlsx")
+           if not str(p).endswith(".intake.xlsx"))
 
 
 def _label(p: Path) -> str:
@@ -95,22 +99,21 @@ def test_selection_covers_every_tracked_workbook():
 
 @pytest.fixture
 def mutated(tmp_path):
-    """Copy a shipped workbook, rewrite one Wire Map port cell, validate."""
+    """Copy a shipped workbook, rewrite one wiremap port cell, validate."""
     def _go(arch, old_port, new_port):
         src = _fixture_book(arch)
         dst = tmp_path / f"{arch}.xlsx"
         shutil.copy2(src, dst)
         wb = openpyxl.load_workbook(dst)
-        ws = wb["Wire Map"]
-        hdr = [str(c.value or "").strip() for c in ws[1]]
-        cols = [hdr.index("Port (A)") + 1, hdr.index("Port (B)") + 1]
+        ws, cols, first = workbook_access.sheet_table(wb, "Wiremap")
+        ports = [cols["port (a)"], cols["port (z)"]]
         hits = 0
-        for r in range(2, ws.max_row + 1):
-            for c in cols:
+        for r in range(first, ws.max_row + 1):
+            for c in ports:
                 if str(ws.cell(r, c).value or "").strip() == old_port:
                     ws.cell(r, c).value = new_port
                     hits += 1
-        assert hits, f"{old_port} not found in {arch} Wire Map"
+        assert hits, f"{old_port} not found in the {arch} wiremap"
         wb.save(dst)
         return _run(dst)
     return _go

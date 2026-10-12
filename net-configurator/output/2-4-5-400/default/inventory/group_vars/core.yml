@@ -5,7 +5,7 @@ timezone: Etc/Zulu
 mh_mac: 44:38:39:FF:00:AA
 anycast_mac: 44:38:39:ff:00:ff
 bgp_asn: 4260394788
-cumulus_target_version: 5.18.0
+cumulus_target_version: 5.18.3
 ntp_servers:
 - 0.cumulusnetworks.pool.ntp.org
 - 1.cumulusnetworks.pool.ntp.org
@@ -15,18 +15,18 @@ vlans:
 - 200
 - 300
 - 400
+- 900
 - 901
 - 902
 - 903
-- 904
 vnis:
   200: 4200
   300: 4300
   400: 4400
+  900: 4900
   901: 4901
   902: 4902
   903: 4903
-  904: 4904
 vrf_vnis:
   OOB: 5001
   INBAND: 5002
@@ -144,6 +144,94 @@ oob_uplink_interfaces:
       - 2
   speed: 100G
 gpu_rail_interfaces:
+  rail0:
+    ports:
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    breakout: 2
+    lanes: 4
+    vlan: 900
+    state: up
+    port_overrides:
+      6:
+        subports:
+        - 0
+      7:
+        subports:
+        - 0
+      8:
+        subports:
+        - 0
+      9:
+        subports:
+        - 0
+      10:
+        subports:
+        - 0
+      11:
+        subports:
+        - 0
+      12:
+        subports:
+        - 0
+      13:
+        subports:
+        - 0
+      14:
+        subports:
+        - 0
+      15:
+        subports:
+        - 0
+      16:
+        subports:
+        - 0
+      17:
+        subports:
+        - 0
+      18:
+        subports:
+        - 0
+      19:
+        subports:
+        - 0
+      20:
+        subports:
+        - 0
+      21:
+        subports:
+        - 0
+      22:
+        subports:
+        - 0
+      23:
+        subports:
+        - 0
+      24:
+        subports:
+        - 0
+      25:
+        subports:
+        - 0
+    speed: 400G
   rail1:
     ports:
     - 6
@@ -261,64 +349,64 @@ gpu_rail_interfaces:
     port_overrides:
       6:
         subports:
-        - 0
+        - 1
       7:
         subports:
-        - 0
+        - 1
       8:
         subports:
-        - 0
+        - 1
       9:
         subports:
-        - 0
+        - 1
       10:
         subports:
-        - 0
+        - 1
       11:
         subports:
-        - 0
+        - 1
       12:
         subports:
-        - 0
+        - 1
       13:
         subports:
-        - 0
+        - 1
       14:
         subports:
-        - 0
+        - 1
       15:
         subports:
-        - 0
+        - 1
       16:
         subports:
-        - 0
+        - 1
       17:
         subports:
-        - 0
+        - 1
       18:
         subports:
-        - 0
+        - 1
       19:
         subports:
-        - 0
+        - 1
       20:
         subports:
-        - 0
+        - 1
       21:
         subports:
-        - 0
+        - 1
       22:
         subports:
-        - 0
+        - 1
       23:
         subports:
-        - 0
+        - 1
       24:
         subports:
-        - 0
+        - 1
       25:
         subports:
-        - 0
+        - 1
     speed: 400G
   rail3:
     ports:
@@ -345,94 +433,6 @@ gpu_rail_interfaces:
     breakout: 2
     lanes: 4
     vlan: 903
-    state: up
-    port_overrides:
-      6:
-        subports:
-        - 1
-      7:
-        subports:
-        - 1
-      8:
-        subports:
-        - 1
-      9:
-        subports:
-        - 1
-      10:
-        subports:
-        - 1
-      11:
-        subports:
-        - 1
-      12:
-        subports:
-        - 1
-      13:
-        subports:
-        - 1
-      14:
-        subports:
-        - 1
-      15:
-        subports:
-        - 1
-      16:
-        subports:
-        - 1
-      17:
-        subports:
-        - 1
-      18:
-        subports:
-        - 1
-      19:
-        subports:
-        - 1
-      20:
-        subports:
-        - 1
-      21:
-        subports:
-        - 1
-      22:
-        subports:
-        - 1
-      23:
-        subports:
-        - 1
-      24:
-        subports:
-        - 1
-      25:
-        subports:
-        - 1
-    speed: 400G
-  rail4:
-    ports:
-    - 6
-    - 7
-    - 8
-    - 9
-    - 10
-    - 11
-    - 12
-    - 13
-    - 14
-    - 15
-    - 16
-    - 17
-    - 18
-    - 19
-    - 20
-    - 21
-    - 22
-    - 23
-    - 24
-    - 25
-    breakout: 2
-    lanes: 4
-    vlan: 904
     state: up
     port_overrides:
       6:

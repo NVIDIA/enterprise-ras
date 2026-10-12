@@ -95,6 +95,19 @@
         mode: '0644'
         owner: www-data
         group: www-data
+      when: status_page_enabled | default(false) | bool
+
+    - name: Remove the dashboard and status-page credentials when the status page is disabled (ADR-0091)
+      # nginx already returns 404 for everything but the ZTP endpoints when the page
+      # is off; this also drops what an earlier enabled install left behind.
+      # Reports under /var/www/ztp/reports/ are kept on disk (not served).
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/www/ztp/index.html
+        - /etc/nginx/.htpasswd
+      when: not (status_page_enabled | default(false) | bool)
 
     - name: Copy generated switch configs to web root
       # Operator-facing convenience — same files served from /var/www/ztp/
@@ -110,23 +123,41 @@
       loop: "{{ groups['switches'] | default([]) }}"
       failed_when: false
 
+    - name: Refuse a missing or placeholder status_page_password (ADR-0091)
+      # The status page is served over plain HTTP (and Air forwards it publicly):
+      # it needs its own real password, never a placeholder or a switch password.
+      # There is no fallback value; scripts/check_secrets.py applies the same rule
+      # before generate/deploy, and the development opt-in does not waive it.
+      assert:
+        that:
+          - status_page_password is defined
+          - (status_page_password | string | trim | length) > 0
+          - (status_page_password | string) is not search('[\r\n\x00]')
+          - (status_page_password | string | trim | lower) not in ['change_me', 'changeme', 'change-me', 'replace_me', 'replaceme', 'password', 'passw0rd', 'todo', 'fixme', 'xxx', 'secret', 'cumu1uslinux!', 'era-status-change_me']
+          - (status_page_password | string) != (switch_password | default('') | string)
+          - (status_page_password | string) != (switch_ansible_password | default('') | string)
+          - (status_page_password | string | lower) != (status_page_username | default('era') | string | lower)
+        fail_msg: >-
+          status_page_enabled is Yes but status_page_password is unset, multi-line, a placeholder,
+          the status_page_username or a switch password. Set a dedicated value in secrets.yml, or set
+          status_page_enabled to No in the workbook's Deployment sheet.
+        quiet: true
+      when: status_page_enabled | default(false) | bool
+
     - name: Set up basic auth (if status_page_enabled)
       shell: |
         python3 -c "
-        import crypt, os
+        import crypt, os, sys
         salt = crypt.mksalt(crypt.METHOD_SHA256)
-        hashed = crypt.crypt(os.environ['HTPASSWD_PASS'], salt)
+        hashed = crypt.crypt(sys.stdin.readline().rstrip('\n'), salt)
         print(os.environ['HTPASSWD_USER'] + ':' + hashed)
         " > /etc/nginx/.htpasswd
         chmod 640 /etc/nginx/.htpasswd
         chown root:www-data /etc/nginx/.htpasswd
+      args:
+        # stdin, not environment: Ansible's shell wrapper would carry it in argv.
+        stdin: "{{ status_page_password }}"
       environment:
-        # Do NOT fall back to switch_password: the status page is served over
-        # plain HTTP (and Air publicly forwards it), so reusing the switch
-        # credential would leak it. Use the dedicated status_page_password
-        # secret; the placeholder default keeps deploys working but should be
-        # overridden in secrets.yml. Mirrors roles/ztp-server/tasks/main.yml.
-        HTPASSWD_PASS: "{{ status_page_password | default('era-status-CHANGE_ME') }}"
         HTPASSWD_USER: "{{ status_page_username | default('era') }}"
       when: status_page_enabled | default(false) | bool
       no_log: true

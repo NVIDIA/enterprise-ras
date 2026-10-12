@@ -41,7 +41,7 @@ import validate_excel as _ve  # noqa: E402  (needs the sys.path insert above)
 
 REPO = Path(__file__).resolve().parent.parent
 VALIDATOR = REPO / "scripts" / "validate_excel.py"
-ARCHS = ["2-4-3-200", "2-4-5-800", "2-8-5-200",
+ARCHS = ["2-4-3-200", "2-4-5-800", "2-8-5-200", "2-8-5-400",
          "2-8-9-400", "2-8-9-400-SP", "2-8-9-800"]
 
 MARKER = "unaccounted sub-port"

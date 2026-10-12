@@ -285,8 +285,10 @@ def write_encrypted_vault(vault_path: Path, data: dict, password: str) -> None:
     try:
         with os.fdopen(plaintext_fd, "w") as f:
             f.write("---\n")
+            # REUSE-IgnoreStart
             f.write("# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n")
             f.write("# SPDX-License-Identifier: MIT\n")
+            # REUSE-IgnoreEnd
             f.write("# NVIDIA Air shared credentials.\n")
             f.write("# Managed by `make air-setup` -- edit with `ansible-vault edit`.\n")
             yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
@@ -433,10 +435,8 @@ def prompt_ngc_org(current: str | None = None) -> str:
     return _resolve_optional(val, current, "NGC org")
 
 
-# Air moved to dsx-air hostnames. The previous names (air-ngc.nvidia.com,
-# ngc.air-inside.nvidia.com) still resolve to the same addresses and remain
-# mapped in airlib.api, so existing vaults keep working — they are just no
-# longer offered as choices here.
+# Offer current Air hostnames; airlib.api retains legacy URL rewriting
+# for existing vaults. This list controls the wizard choices only.
 AIR_INSTANCES = {
     "1": ("Public Air", "https://dsx-air.nvidia.com"),
     "2": ("Internal (inside)", "https://inside.dsx-air.nvidia.com"),
@@ -465,12 +465,12 @@ def prompt_air_url(current: str | None = None) -> str:
         if raw == "3":
             val = input(f"  Custom Air URL{' [' + current + ']' if current else ''}: ").strip()
             if not val and current:
-                return current.rstrip("/")
+                val = current
             if not val:
                 warn("URL is required.")
                 continue
-            if not val.startswith(("http://", "https://")):
-                warn("URL must start with http:// or https://")
+            if not val.startswith("https://"):
+                warn("URL must start with https:// (the API key is sent with every request)")
                 continue
             return val.rstrip("/")
         warn("Enter 1, 2, or 3.")
@@ -625,6 +625,9 @@ def run_non_interactive(args: argparse.Namespace) -> int:
         return 2
     if not args.ssh_key:
         args.ssh_key = "~/.ssh/id_ed25519"
+    if args.air_url and not args.air_url.startswith("https://"):
+        err("--air-url must start with https:// (the API key is sent with every request)")
+        return 2
 
     cfg_dir = shared_config_dir()
     vault_path = find_existing_vault() or (cfg_dir / SHARED_VAULT_FILENAME)

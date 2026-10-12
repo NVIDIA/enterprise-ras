@@ -5,11 +5,52 @@
 
 Ansible automation for ERA (Enterprise Reference Architecture) network switch configuration. Fill out an Excel spreadsheet describing your deployment, and this tool generates Ansible inventory, NVUE switch configs, and an NVIDIA Air topology -- then deploys everything via Zero Touch Provisioning (ZTP).
 
+## Upgrading from v7 to v8 — required workflow changes
+
+**Convert your v7 workbook and configure secrets before generating a v8 deployment.**
+Run these commands from the net-configurator directory.
+
+1. **Legacy workbooks are no longer accepted.** Convert once, review conversion
+   warnings and the resulting sheets, then validate the new intake workbook:
+
+   ```bash
+   make convert-workbook EXCEL=/path/to/site-v7.xlsx
+   make validate-excel EXCEL=/path/to/site-v7.intake.xlsx
+   ```
+
+   The converter writes `site-v7.intake.xlsx` beside the original; it does not
+   overwrite the v7 workbook. It preserves populated optional override sheets and omits empty ones.
+   Use the intake workbook from now on. The transitional converter is scheduled
+   for removal in v10.
+
+2. **Use `make secrets` to create or update deployment credentials.** Import
+   the converted workbook first so the wizard can read its LDAP settings, then
+   configure the matching architecture and site before generation. For example,
+   for a `2-8-5-200` workbook and site `customer-a`:
+
+   ```bash
+   make import EXCEL=/path/to/site-v7.intake.xlsx SITE=customer-a
+   make secrets ARCH=2-8-5-200 SITE=customer-a
+   make generate ARCH=2-8-5-200 SITE=customer-a
+   ```
+
+   Substitute your workbook's architecture and chosen site. A bare
+   `make secrets` edits the shared template, ignores the saved context, and
+   does not update existing deployment copies. With `ARCH=… SITE=…`, it edits
+   that deployment and offers Vault encryption. Existing valid secrets can be
+   retained; you do not have to rotate them solely to upgrade. Disabled LDAP
+   skips its password prompts. If you encrypt the file, configure the Vault
+   password source before running unattended generation or deployment.
+
+See [workbook migration](docs/EXCEL_CONFIGURATION_GUIDE.md#migrating-a-legacy-workbook)
+and [secrets and Vault](docs/SECRETS_AND_VAULT.md#make-secrets--create-edit-and-vault-encrypt-secretsyml)
+for details.
+
 ## Terms used in this guide
 
 | Term | What it means |
 |---|---|
-| **ERA** | NVIDIA's Enterprise Reference Architecture — the set of network topologies this tool configures (2-4-3-200, 2-4-5-400, 2-4-5-800, 2-8-5-200, 2-8-9-400, 2-8-9-800, 2-8-9-400-SP). |
+| **ERA** | NVIDIA's Enterprise Reference Architecture — the set of network topologies this tool configures (2-4-3-200, 2-4-5-400, 2-4-5-800, 2-8-5-200, 2-8-5-400, 2-8-9-400, 2-8-9-800, 2-8-9-400-SP). |
 | **NVUE** | NVIDIA User Experience CLI — the config language for Cumulus Linux switches (`nv set ...`). This tool generates `.sh` scripts of NVUE commands. |
 | **Cumulus Linux** | The switch OS running on NVIDIA Spectrum hardware. NVUE is its management interface. |
 | **ZTP** | Zero Touch Provisioning — the switch boots, DHCP hands it a provisioning script, the script applies the NVUE config, done. No console access required. |
@@ -31,15 +72,15 @@ network, in Gbps**.
 
 | Architecture | CPUs | GPUs | Network Adapters | Per-GPU E/W bandwidth | Fabric |
 |---|---|---|---|---|---|
-| `2-4-3-200` | 2 | 4 | 3 | 200 Gbps* | Converged (core) |
-| `2-8-5-200` | 2 | 8 | 5 | 200 Gbps* | Converged (core); dedicated CSL+GSL split at larger deployments |
+| `2-4-3-200` | 2 | 4 | 3 | 200 Gbps | Converged (core) |
+| `2-8-5-200` | 2 | 8 | 5 | 200 Gbps | Converged (core); dedicated CSL+GSL split at larger deployments |
 | `2-4-5-400` | 2 | 4 | 5 | 400 Gbps | Depopulated `2-8-5-200` — same fabric, half the GPUs, half the external uplink capacity |
 | `2-8-9-400` | 2 | 8 | 9 | 400 Gbps | Converged (core); dedicated-GPU CSL+GSL 2-tier at larger deployments |
+| `2-8-5-400` | 2 | 8 | 5 | 400 Gbps | Converged (core) through SU 3; dedicated N/S CSL pair from SU 4, E/W leaf+spine from SU 5 (ERA-00014-001). Air-tested at default (SU 3) and largescale (SU 8); the intermediate SU 4 GSL stage was not a campaign cell. See [support matrix](docs/ARCH_SUPPORT_MATRIX.md) |
 | `2-4-5-800` | 2 | 4 | 5 | 800 Gbps | **Multi-tier dedicated-GPU dual-plane** (GB300 NVL72 Mini-Cloud) |
 | `2-8-9-800` | 2 | 8 | 9 | 800 Gbps | **Dual-plane** (CSL + GSL) |
 | `2-8-9-400-SP` | 2 | 8 | 9 | 400 Gbps | **Dedicated-GPU single-plane** (CSL + GSL plane 1; `2-8-9-800` minus plane 2) |
 
-\* 200 Gbps is the per-NIC link speed (these archs run a 1:2 NIC:GPU ratio).
 
 ### Converged vs dual-plane fabric
 
@@ -49,8 +90,9 @@ network, in Gbps**.
 - **Dual-plane (`csl-*` + `gsl-plane1-*` + `gsl-plane2-*`):** CSL leaves
   carry CPU/in-band, storage, support, and OOB. The GPU fabric is split
   across two independent planes — `gsl-plane1-*` and `gsl-plane2-*` — each
-  with its own underlay loopback subnet, EVPN scope, and BGP graph. Same
-  VLAN ID (900) on both planes, but they're L3-isolated by design.
+  with its own underlay loopback subnet, EVPN scope, and BGP graph. The
+  default workbooks give each plane its own GPU VLANs (plane 1: 900+,
+  plane 2: 920+); the planes are L3-isolated by design.
   Used by 2-8-9-800 (HGX B300) and, multi-tier, by 2-4-5-800 (GB300 NVL72
   Mini-Cloud). `2-8-9-400-SP` is the **single-plane** variant of 2-8-9-800
   (GSL plane 1 only — the dual-plane default minus plane 2).
@@ -61,30 +103,35 @@ and validation status.
 
 ### Tested
 
-The matrix below reflects what has been **tested in NVIDIA Air using this repo**,
-at both the default (1 SU) and largescale (largest verified) sizes for each
-architecture. ✅ = exercised in validation; ✅ at scale = present only at larger
-deployments (not in the 1-SU default); — = not applicable to that architecture.
-It is a record of what has been tested here, not a statement of official product
-support — see the ERA reference architecture documents for that.
+The October 7–9, 2026 campaign passed **48 final Air runs**: all eight
+architectures at default and largescale, in NOZTP, DHCP ZTP and switches-only
+modes, on Cumulus Linux 5.18.3 with L3 OOB. Full-server runs also passed
+all-rail connectivity checks. LDAP and the status page were disabled in that
+campaign; their earlier feature-specific coverage is listed separately.
 
-| Feature | `2-4-3-200` | `2-8-5-200` / `2-4-5-400` | `2-8-9-400` | `2-4-5-800` | `2-8-9-800` | `2-8-9-400-SP` |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| L3 OOB underlay + EVPN | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Inter-VRF DHCP relay (OOB + EXIT) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Operator-configurable SSH login banners | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| LDAP authentication (auto-detected from Excel) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| NVIDIA Air simulation (NOZTP) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Status page (HTTP report dashboard) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Dedicated-GPU fabric (CSL N/S + GSL E/W) | — | ✅ at scale | ✅ at scale | ✅ | ✅ | ✅ |
-| Multi-tier (dedicated spine switches) | — | — | ✅ at scale | ✅ | ✅ at scale | ✅ at scale |
-| STORAGE VRF as first-class | — | — | — | ✅ | ✅ | ✅ |
-| Dual-plane GPU fabric | — | — | — | ✅ | ✅ | — |
-| Per-rail-per-plane GPU VLAN mode | — | — | — | — | ✅ | — |
+See the [architecture support matrix](docs/ARCH_SUPPORT_MATRIX.md) for tested
+scales, feature-specific limits and resource sizing. These results do not
+establish physical-switch, RDMA, throughput, storage-I/O or failover validation.
+The matrix is a record of testing with this tool, not an official product
+support statement.
 
-See [`docs/ARCH_SUPPORT_MATRIX.md`](docs/ARCH_SUPPORT_MATRIX.md) for the
-per-arch resource-sizing numbers tested in Air (default + largescale) and the
-converged-vs-multi-tier fabric notes.
+The following rows are a subset of the matrix. A checkmark applies only to
+the named configuration or test, with any qualifications shown in the cell.
+
+| Feature | `2-4-3-200` | `2-8-5-200` / `2-4-5-400` | `2-8-9-400` | `2-8-5-400` | `2-4-5-800` | `2-8-9-800` | `2-8-9-400-SP` |
+|---------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Dedicated GPU (CSL N/S split from GSL E/W) | — | ✅ at scale | ✅ at scale | ✅ at scale | ✅ | ✅ | ✅ |
+| Multi-tier (dedicated spine switches) | — | — | ✅ at scale | ✅ at scale | ✅ | ✅ at scale | ✅ at scale |
+| Dual-plane GPU fabric | — | — | — | — | ✅ | ✅ | — |
+| L3 OOB underlay + EVPN | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| STORAGE VRF configuration (Air) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| External storage (STORAGE BGP to the storage peers, storage I/O) | untested | untested | untested | untested | untested | untested | untested |
+| Inter-VRF DHCP relay configuration (OOB + EXIT) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SSH login banner configuration | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Air deploy — NOZTP (Node Instructions) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| LDAP (auto-detected from Excel) | ✅ | ✅ | ✅ | untested | ✅ default, L3 OOB, NOZTP | ✅ | untested |
+| Status page (HTTP report dashboard) | ✅ | ✅ | ✅ | untested | ✅ | ✅ | ✅ |
+| Shipped GPU VLAN mode (all-rail connectivity) | ✅ per_rail | ✅ per_rail | ✅ per_rail | ✅ per_rail | ✅ per_rail_per_plane | ✅ per_rail_per_plane | ✅ per_rail |
 
 ## Features
 
@@ -100,24 +147,25 @@ converged-vs-multi-tier fabric notes.
 
 ## Known Limitations
 
-- **Replace placeholder passwords before deploying to real hardware.** The
-  shipped `secrets.yml` files use documented placeholders (`Cumu1usLinux!`,
-  `nvidia`, etc.) that are safe for NVIDIA Air simulations only. See
-  [`SECURITY.md`](SECURITY.md) for the rotation checklist.
+- **The documented switch default is allowed.** `Cumu1usLinux!` passes
+  `make secrets`, generation and deployment checks without an override on
+  Air and physical targets. Other placeholders such as `CHANGE_ME` remain
+  rejected. Use unique passwords for production; see
+  [`SECURITY.md`](SECURITY.md) for credential handling.
 - **SSH host-key checking is disabled** in `ansible.cfg` for lab/Air use.
   If you're running this against production hardware on an untrusted
   network, re-enable `host_key_checking` and populate `known_hosts` first.
   See [Security Considerations](#security-considerations) below.
 - **Don't run this tool on a multi-user host** (bastion, shared jump box,
   CI runner with other tenants) until the `sshpass` refactor ships.
-  Several validation playbooks (`validate-ping-matrix`, `validate-config`,
-  `restart-ldap-switches`, and the Air `ProxyCommand`) pass passwords
-  to `sshpass` via CLI arguments, which makes them visible in
-  `ps auxww` to any other local user during those steps. The long-term
+  `restart-ldap-switches`, `push-switch-configs` and the Air `ProxyCommand`
+  still expose passwords in process arguments, which makes them visible in
+  `ps auxww` to any other local user during those steps (the `validate-*`
+  playbooks pass them on stdin instead; see [`SECURITY.md`](SECURITY.md)). The long-term
   fix is SSH key-based auth end-to-end.
 - **If a deploy fails mid-flight**, see [`docs/MANUAL_FALLBACK_GUIDE.md`](docs/MANUAL_FALLBACK_GUIDE.md)
-  for the manual Air-deployment path (uses Node Instructions + Ansible
-  from `dhcp-oob`).
+  for the manual Air-deployment path (legacy L2 OOB only — uses Node
+  Instructions + Ansible from `dhcp-oob`).
 - **Test coverage is uneven.** Parser/template/topology have unit tests;
   the Air API client and several utility scripts do not yet. Bugs in
   those paths will surface as runtime errors rather than test failures.
@@ -156,7 +204,7 @@ source .venv/bin/activate        # Linux/macOS
 pip install -r requirements.txt
 
 # Verify
-ansible --version    # should show 2.20+
+ansible --version    # should show 2.21.4+
 make help            # list available commands
 ```
 
@@ -176,7 +224,17 @@ The recommended path is a single command that validates your Excel, imports it, 
 
 ### Step 1 -- Fill out the Excel template
 
-Copy the template for your architecture and fill it in:
+Copy the template for your architecture and fill it in. The workbook is the
+**intake form** — seven sheets: `Read Me`, `Wiremap`, `Network Data`,
+`Switch Data`, `Host Data`, `Deployment`, `Derived` (ADR-0064). It is the only
+input format; a workbook in the older layout is refused with a pointer to
+`make convert-workbook`. See the
+[Excel Configuration Guide](docs/EXCEL_CONFIGURATION_GUIDE.md).
+
+Server data-plane addresses (CPU/In-Band, Support, Storage bonds and GPU
+NICs) are allocated automatically when their `Host Data` `IP` cell is blank,
+and used exactly as written when it is filled — see the guide's
+*"Data-plane addresses: declared if filled, allocated if blank"* (ADR-0034).
 
 **Ready-to-use sample files** (recommended — deploy directly without modifying defaults):
 
@@ -186,6 +244,7 @@ Copy the template for your architecture and fill it in:
 | `2-8-5-200` | `input/sample-2-8-5-200.xlsx` | 2 CPU, 8 GPU, 5 NIC, 200G — converged |
 | `2-4-5-400` | `input/sample-2-4-5-400.xlsx` | 2 CPU, 4 GPU, 5 NIC, 400G — depopulated `2-8-5-200`, identical fabric |
 | `2-8-9-400` | `input/sample-2-8-9-400.xlsx` | 2 CPU, 8 GPU, 9 NIC, 400G — converged |
+| `2-8-5-400` | `input/sample-2-8-5-400.xlsx` | 2 CPU, 8 GPU, 5 NIC, 400G — converged, N/S + E/W split at larger deployments |
 | `2-4-5-800` | `input/sample-2-4-5-800.xlsx` | 2 CPU, 4 GPU, 5 NIC, 800G — multi-tier dedicated-GPU dual-plane |
 | `2-8-9-800` | `input/sample-2-8-9-800.xlsx` | 2 CPU, 8 GPU, 9 NIC, 800G — dual-plane (CSL + GSL) |
 | `2-8-9-400-SP` | `input/sample-2-8-9-400-SP.xlsx` | 2 CPU, 8 GPU, 9 NIC, 400G — dedicated-GPU single-plane |
@@ -195,7 +254,7 @@ directory (`input/<arch>/sample/`) without overwriting the committed defaults.
 
 **Largescale samples** — for each architecture there is also a
 `input/largescale-<arch>.xlsx` sized to the largest scale verified in Air using
-this repo (see [`docs/ARCH_SUPPORT_MATRIX.md`](docs/ARCH_SUPPORT_MATRIX.md) for
+this repo, including `2-8-5-400` (see [`docs/ARCH_SUPPORT_MATRIX.md`](docs/ARCH_SUPPORT_MATRIX.md) for
 the exact SU/node/GPU counts). Deploy one the same way, e.g.:
 
 ```bash
@@ -222,17 +281,19 @@ make deploy EXCEL=~/my-deployment.xlsx
 | `2-8-5-200` | `input/2-8-5-200/default/2-8-5-200.xlsx` |
 | `2-4-5-400` | `input/2-4-5-400/default/2-4-5-400.xlsx` |
 | `2-8-9-400` | `input/2-8-9-400/default/2-8-9-400.xlsx` |
+| `2-8-5-400` | `input/2-8-5-400/default/2-8-5-400.xlsx` |
 | `2-4-5-800` | `input/2-4-5-800/default/2-4-5-800.xlsx` |
 | `2-8-9-800` | `input/2-8-9-800/default/2-8-9-800.xlsx` |
 | `2-8-9-400-SP` | `input/2-8-9-400-SP/default/2-8-9-400-SP.xlsx` |
 
 Each template is pre-configured with default values. Update the sheets for your deployment:
 
-- **Settings** -- site name, management subnets, LDAP toggle, Air options
-- **Nodes** -- hostnames, MAC addresses, management IPs
-- **Loopbacks** -- per-switch loopback / router-id / VTEP IPs for the underlay + EVPN overlay (see [`docs/LOOPBACKS.md`](docs/LOOPBACKS.md))
-- **VLANs & Profiles** -- VLAN IDs, subnets, network profiles
-- **Wire Map** -- every physical cable connection
+- **Deployment** -- `site_name`, `architecture`, LDAP toggle, Air options, Cumulus versions
+- **Switch Data** -- switch hostnames, ZTP MAC addresses, management IPs, per-switch loopback (router-id follows it) / ASN overrides (see [`docs/LOOPBACKS.md`](docs/LOOPBACKS.md))
+- **Host Data** -- server hostnames, MAC addresses, management and data-plane IPs
+- **Network Data** -- VLAN IDs, subnets, VRFs, port profiles
+- **Wiremap** -- every physical cable connection
+- **Derived** -- read-only: topology settings derived from the wiremap (`gpu_planes`, `convergence`)
 
 See the [Excel Configuration Guide](docs/EXCEL_CONFIGURATION_GUIDE.md) for detailed field-by-field documentation.
 
@@ -318,12 +379,34 @@ make generate
 # Deploy via ZTP to your physical fabric (requires a reachable ZTP server —
 # see docs/OOB_SERVER_SETUP.md and docs/ZTP_MODES.md for preparing one)
 make switch-ztp-deploy
+
+# Confirm every switch took its config (direct SSH from this controller)
+make validate-ztp-direct
 ```
+
+> **Physical ZTP is supported in nc-v8.** Set `deploy_in_air = No` on the
+> Deployment sheet, fill in each switch's **ZTP MAC Address** on Switch Data,
+> and give it a mgmt IP inside its OOB VLAN subnet. The ZTP server then
+> reserves that IP for that MAC and serves its config; no Air nodes, air-mgmt
+> network or `air-connect.py` are involved. See
+> [`docs/ZTP_MODES.md`](docs/ZTP_MODES.md#physical-ztp).
+> The generated configuration is tested; a live ZTP boot on physical switches
+> has not been run for this release.
 
 > **No ZTP server? Apply the generated configs directly.** `make generate` writes
 > ready-to-run NVUE CLI scripts to `output/<arch>/<site>/configs/*.sh` — one per
 > switch. You can SCP-and-run or console-paste them without ZTP or Ansible at all.
 > See [Applying Pre-built Configs Manually to Physical Switches](#applying-pre-built-configs-manually-to-physical-switches) below.
+
+> **Re-generating into the same site prunes its own leftovers.** When a node is
+> renamed or set to `Enabled=No` in the Excel, the last step of `make generate`
+> deletes the `host_vars/<node>.yml`, `configs/<node>-config.sh` and
+> `topology/node-instructions/<node>.sh` that an earlier run wrote for it
+> (tracked in `output/<arch>/<site>/generated-manifest.json`). Files it did not
+> write are reported and left alone; `secrets.yml`, `hosts`, `group_vars/` and
+> the topology JSON are never touched. Preview with
+> `python3 scripts/prune_stale_artifacts.py --arch <arch> --site <site> --dry-run --adopt-all`
+> or see `make help-generate`.
 
 Both Air commands run the same pipeline:
 
@@ -400,16 +483,15 @@ This runs five validation phases (in order):
 
 > **On-prem / physical note:** `make validate-all` and the individual
 > `validate-config` / `validate-ztp` / `validate-switch-health` /
-> `validate-servers` / `validate-ping-matrix` playbooks currently run **through
-> the OOB jump host** (`hosts: jump`), which is populated from the Air virtual
-> nodes. On a pure physical deployment with no Air jump host, the suite
-> **degrades to a near-no-op** (the config phase can't connect, and the later
-> phases are skipped) rather than validating your gear. Until first-class
-> direct-SSH validation lands, verify a physical fabric by running the checks
-> from a controller that can
-> reach the switch mgmt IPs, or inspect `nv config diff` / BGP / EVPN state on
-> the switches directly. The **topology** phase (phase 1) is local and works
-> regardless.
+> `validate-servers` / `validate-ping-matrix` playbooks run **through the OOB
+> jump host** (`hosts: jump`). A physical site keeps a jump host only if you
+> point it at a real server (`dhcp-oob` in L2, `utility` in L3), so without one
+> the suite **degrades to a near-no-op** rather than validating your gear. Use
+> **`make validate-ztp-direct`** from a controller that can reach the switch
+> mgmt IPs: it passes a switch only if it reports its own hostname and its
+> generated config is applied, and fails the target otherwise. For BGP / EVPN
+> state, inspect the switches directly. The **topology** phase (phase 1) is
+> local and works regardless.
 
 ---
 
@@ -433,7 +515,7 @@ Choose the right command based on where you are in the workflow:
 
 Every architecture-specific command needs to know which architecture and site to target. This is managed through a **context** -- a saved `architecture + site` pair stored in `.era-context`.
 
-- **Set automatically** by `make import` or `make deploy` (reads from the Excel Settings tab)
+- **Set automatically** by `make import` or `make deploy` (reads from the Excel Deployment sheet)
 - **Set manually** with `make use ARCH=2-8-5-200 SITE=customer-a`
 - **Override anytime** by passing `ARCH=` and/or `SITE=` to any command
 - **View** with `make show-context`
@@ -455,8 +537,12 @@ If `SITE` is not specified, it defaults to `default`.
 `site=`, `Site=` and `SITE=` all reach `SITE`, and the same applies to every
 operator-facing variable (`EXCEL`, `LDAP`, `NOZTP`, `SIM`, `FORCE`, …). Values
 are matched case-insensitively too: `arch=2-8-9-400-sp` resolves to
-`2-8-9-400-SP`, and `site=CUSTOMER-A` finds an existing `customer-a`. All four
-of these are equivalent:
+`2-8-9-400-SP`, and `site=CUSTOMER-A` finds an existing `customer-a` (an exact
+directory always wins; a case-only match is applied with a warning naming both
+spellings; `EXCEL=`-driven targets skip it because the arch comes from the
+workbook, not the current context). One exception: `make secrets` refuses a
+lower- or mixed-case `arch=`/`site=` and asks for `ARCH=`/`SITE=`, so a typo
+cannot silently edit the shared template. All four of these are equivalent:
 
 ```bash
 make generate ARCH=2-8-9-400-SP SITE=customer-a
@@ -556,6 +642,8 @@ make validate                                   # Ansible playbook syntax check
 ```bash
 make import EXCEL=my-config.xlsx          # Import filled Excel (sets context automatically)
 make import EXCEL=my-config.xlsx SITE=lab # Import with site name override
+#   Site names use [A-Za-z0-9_-]; `.` and repeated/edge hyphens are folded
+#   (`lab--2.x` → `lab-2-x`, with a warning) so import/generate/deploy agree.
 make use ARCH=2-8-5-200                   # Set arch manually (SITE defaults to 'default')
 make use ARCH=2-8-5-200 SITE=customer-a   # Set arch + custom site
 make show-context                         # Show current arch/site
@@ -670,7 +758,9 @@ python3 scripts/make_validation_bundle.py --arch 2-8-5-200 --out ~/acme-bundle.z
 
 The archive contains the rendered switch `configs/`, the generated `inventory/`, the
 `topology/`, any `reports/`, the source `.xlsx`, and a `MANIFEST.txt` listing a
-SHA-256 for every file so a reviewer can confirm nothing changed in transit.
+SHA-256 for every file so a reviewer can confirm nothing changed in transit. A preceding
+`make validate-ztp` capture includes the DRB-required `nv show evpn multihoming` and
+`nv show nve vxlan` evidence in `reports/raw/`.
 
 **The bundle is built to be safe to send.** `output/` contains a plaintext
 `group_vars/all/secrets.yml`, and an LDAP-enabled deployment renders its LDAP
@@ -736,21 +826,36 @@ All passwords are stored in `output/<arch>/<site>/inventory/group_vars/all/secre
 switch_ansible_password: "Cumu1usLinux!"   # SSH to switches
 switch_bootstrap_password: "cumulus"       # Factory / first-login password (optional; default cumulus)
 server_ansible_password: "nvidia"          # SSH to servers
-ansible_become_password: "nvidia"          # sudo (no --ask-become-pass needed)
+ansible_become_password: "nvidia"          # sudo (deploy-servers, deploy-servers-via-jump, ztp-setup, oob-setup, restart-ldap-direct still prompt)
 switch_password: "Cumu1usLinux!"           # Password set on switches during ZTP
 ldap_admin_password: "Ldap@123"            # LDAP bind password
 status_page_username: "era"                # Report / status-page basic-auth user
 status_page_password: "CHANGE_ME"          # Report / status-page basic-auth password
 ```
 
-The default values above are placeholders for development and Air simulations. For production deployments, change these passwords and encrypt the file with Ansible Vault.
+The default values above are placeholders for development and Air simulations. For production deployments, change these passwords and encrypt the file with Ansible Vault — `make secrets` does both interactively:
 
-> **Report / status-page server.** When `status_page_enabled: Yes` is set in the
-> Excel Settings tab, the deploy stands up an HTTP server (on `dhcp-oob`) that
+```bash
+make secrets                          # shared template inventories/secrets.yml (seed for new arch/sites)
+make secrets ARCH=2-8-5-200 SITE=x    # one deployment's copy (ARCH is optional here on purpose)
+```
+
+It prompts for active keys, skips both LDAP passwords when deployment settings disable LDAP, and lets shared-template authors skip LDAP (default no). Deployment mode checks the workbook and generated inventory; unknown deployment state still requires a valid LDAP user password. It rejects switch passwords that fail the ERA switch-password policy on the spot (same rules as `make generate`), offers `ansible-vault encrypt` at the end, and re-runs safely on an already-encrypted file. See `make help-secrets`.
+
+> **Report / status-page server.** Off by default (`status_page_enabled: No` in every
+> shipped workbook). When `status_page_enabled: Yes` is set in the
+> Excel Deployment sheet, the deploy stands up an HTTP server on the `[jump]`
+> host (`utility` in L3 OOB, `dhcp-oob` in legacy L2) that
 > serves the ZTP status page and the validation reports at `/reports/`. It is
 > protected by HTTP basic auth using `status_page_username` / `status_page_password`
-> above — default `era` / `CHANGE_ME`. **Set a real password before enabling it;**
-> it does **not** fall back to any other secret.
+> above. The shipped `CHANGE_ME` is refused: with the page enabled, `make generate`
+> and the deploy stop until `status_page_password` is a real, dedicated password
+> (not a placeholder, not a switch password) — Air and physical alike, and the
+> development opt-in does not waive it. There is no fallback to any other secret.
+> With the page off, nginx serves only the unauthenticated, OOB-subnet-restricted ZTP
+> endpoints (`/scripts/`, `/configs/`, `/authorized_keys`); the dashboard, `/reports/`,
+> `/licenses/` and `/images/` return 404, and the deploy removes a dashboard and
+> `.htpasswd` left by an earlier enabled install.
 
 ### Encrypt with Ansible Vault (recommended for production)
 
@@ -762,6 +867,9 @@ ansible-vault encrypt output/2-8-5-200/default/inventory/group_vars/all/secrets.
 export ANSIBLE_VAULT_PASSWORD_FILE=~/.vault_pass
 make switch-ztp-deploy
 ```
+
+When no explicit vault source is set, `.era-secrets/vault-pass` is discovered
+automatically by the Makefile wrapper.
 
 See [docs/SECRETS_AND_VAULT.md](docs/SECRETS_AND_VAULT.md) for full details.
 
@@ -831,9 +939,9 @@ These changes are not needed for Air simulations or lab environments where node 
 - Verify the path to your Excel file is correct and the file exists
 - Use an absolute path if a relative path is not resolving
 
-**"architecture key not found in Settings tab"**
-- Open the Excel file and confirm the Settings sheet has an `architecture` field
-- The value must be one of: `2-4-3-200`, `2-4-5-400`, `2-4-5-800`, `2-8-5-200`, `2-8-9-400`, `2-8-9-800`, `2-8-9-400-SP`
+**"architecture key not found"**
+- Open the Excel file and confirm the Deployment sheet has an `architecture` row
+- The value must be one of: `2-4-3-200`, `2-4-5-400`, `2-4-5-800`, `2-8-5-200`, `2-8-5-400`, `2-8-9-400`, `2-8-9-800`, `2-8-9-400-SP`
 
 **"SameFileError" during import**
 This happens when your Excel file already lives at the exact destination
@@ -843,18 +951,43 @@ it in place at `input/<arch>/<site>/<arch>.xlsx`. Two options:
 - **Copy the source elsewhere first:** `cp input/2-8-5-200/default/2-8-5-200.xlsx /tmp/my-config.xlsx && make import EXCEL=/tmp/my-config.xlsx`
 
 **`make import` put my file in the wrong site**
-`make import` reads the destination site from the Excel **`site_name`
-cell in the Settings tab**, not from the directory path you placed
-the file at. If you want your deployment to land at
-`input/2-8-5-200/customer-acme/`, you must also set
-`site_name: customer-acme` inside the Excel's Settings tab before
-importing — otherwise the import will route to whatever the Excel's
-`site_name` currently says (often `sample` or `default`).
+`make import` picks the destination site in this order: an explicit
+`SITE=<name>` (`--site`) wins; otherwise, if the file already lives under
+`input/<arch>/<site>/`, that folder name is used (a warning is printed when
+the Excel's `site_name` cell disagrees); only for a file outside `input/`
+does the **`site_name` cell on the Deployment sheet** decide, falling back
+to `default` behind a confirmation prompt. If you want a file from elsewhere
+to land at `input/2-8-5-200/customer-acme/`, pass `SITE=customer-acme` or
+set `site_name: customer-acme` before importing.
 
 **Ansible syntax errors during generate**
 - Run `make validate-excel EXCEL=/path/to/file.xlsx` to check for invalid data
 - Review the error message -- it usually points to a specific variable or sheet
 - Common causes: empty required fields, invalid IP addresses, duplicate hostnames
+
+### A host bond on a core/CSL switch is down with a BPDU-guard violation
+
+Every N/S host-facing bond (`cpu`, `support`, custom server profiles) on the
+core / CSL role is generated as an STP edge port with BPDU guard (ADR-0046):
+
+```
+nv set interface bond1s0,... bridge domain br_default stp admin-edge enabled
+nv set interface bond1s0,... bridge domain br_default stp bpdu-guard enabled
+```
+
+If the host behind such a bond sends a BPDU (a bridged VM, a mis-cabled switch
+under the rack, a lab device on a compute port), Cumulus Linux puts the bond
+into `protodown` with reason `stp` and leaves it there — this is the intended
+outcome, not a fault in the generated config. To recover after fixing the
+device:
+
+```bash
+nv action clear interface <bond> bridge domain br_default stp bpduguardviolation
+```
+
+If the interface was removed from the bridge while protodown, clear the Linux
+state directly: `ip link set <bond> protodown off protodown_reason stp off`.
+ISL, uplink, GPU and storage interfaces are never BPDU-guarded.
 
 ### Applying Pre-built Configs Manually to Physical Switches
 
@@ -894,7 +1027,7 @@ scripts for each switch. To apply them without ZTP or Ansible:
 
 **Switches not provisioning?**
 ```bash
-# On the ZTP server (dhcp-oob):
+# On the ZTP server (external-dhcp in L3 OOB, dhcp-oob in legacy L2):
 sudo cat /var/lib/misc/dnsmasq.leases         # Check DHCP leases
 sudo tail -f /var/log/nginx/ztp-access.log    # Check if switches are downloading configs
 
@@ -958,8 +1091,9 @@ and Air's image doesn't ship one. `make air-ssh-check FIX=1` checks for it and
 installs it.
 
 **Automated Air deploy failing mid-pipeline?** Fall back to the manual
-procedure: [`docs/MANUAL_FALLBACK_GUIDE.md`](docs/MANUAL_FALLBACK_GUIDE.md).
-You upload the topology through the Air web UI, SSH into `dhcp-oob`, and
+procedure: [`docs/MANUAL_FALLBACK_GUIDE.md`](docs/MANUAL_FALLBACK_GUIDE.md)
+(legacy L2 OOB only). You upload the topology through the Air web UI, SSH
+into `dhcp-oob`, and
 run the Ansible roles by hand from there. Slower, but every step is
 inspectable.
 
@@ -972,16 +1106,26 @@ ldapsearch -x -H ldap://<server-ip>          # Test LDAP server directly
 
 ### Validation Failures
 
-After deploying, `make validate-all` runs the full validation suite:
-topology, ZTP, running-config comparison, and server checks. When a
-stage fails, run the individual targets to narrow it down:
+After deploying, `make validate-all` runs the full validation suite in five
+phases: topology, running-config comparison, ZTP, switch health, and server
+checks. When a stage fails, run the individual targets to narrow it down:
 
 ```bash
 make validate-topology     # Air topology vs. wiremap
 make validate-config       # Running switch config vs. generated config
+make validate-ztp          # ZTP status on switches
+make validate-switch-health  # Switch apply/BGP/EVPN health
 make validate-servers      # Server bonds, VLANs, connectivity
 make validate-ping-matrix  # Full server-to-server ping matrix across VLANs
 ```
+
+- **`validate-ping-matrix` exits non-zero with servers listed as `FETCHFAIL`
+  or `NODATA`:** `FETCHFAIL` means the jump host could not fetch that
+  server's results (timeout / ssh / sshpass) — a harness fault, not a
+  data-plane verdict; `NODATA` means the server never produced results for
+  this run. Neither is a pass. Collection runs in batches of
+  `collect_batch_size` (32) concurrent SSH sessions; raise it with `-e` if
+  the jump has headroom.
 
 - **`validate-config` reports diffs:** the switch is running a config
   that differs from the freshly generated one. Re-push with
@@ -1000,8 +1144,10 @@ make validate-ping-matrix  # Full server-to-server ping matrix across VLANs
   dual-plane `2-8-9-800` architecture, GPU↔GPU pings *across* planes
   are also expected to fail, since each plane is a separate fabric.
 - **`validate-topology` fails:** the generated topology references a
-  port or node the wiremap does not define. Regenerate with
-  `make generate` and confirm the Wire Map sheet matches your node list.
+  port the wiremap does not define, or a link endpoint names a node that is
+  not in the topology (e.g. a switch set to `Enabled=No` on the Switch Data
+  tab while its Wiremap rows remain). Regenerate with `make generate` and
+  confirm the Wiremap sheet matches your node list.
 
 ## License
 

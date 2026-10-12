@@ -20,7 +20,7 @@ This guide explains how to configure a ZTP server with **multiple network interf
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│                     ZTP SERVER (dhcp-oob)                     │
+│         ZTP SERVER (external-dhcp L3 / dhcp-oob legacy L2)   │
 │                                                               │
 │  ens3:  DHCP/External (no ZTP)                               │
 │  ens4:  192.168.1.8     ─┐                                   │
@@ -92,7 +92,7 @@ make import EXCEL=your-config.xlsx
 
 ### 2. ZTP Server Interfaces (Reference)
 
-The following interface layout is generated automatically from the Excel Wire Map. This
+The following interface layout is generated automatically from the Excel Wiremap. This
 section is kept as a reference for understanding the network topology:
 
 ```
@@ -104,13 +104,13 @@ Interface 4 (ens7): 192.168.220.0/24 - OOB3 network
 
 ### 3. Additional Settings (Reference)
 
-These are configured in the Excel Settings tab (not via interactive prompts):
-- **Management Networks**: Set in Excel Settings tab
-- **Data Networks**: VLANs configured in the VLANs & Profiles tab
-- **Device Counts**: Derived from the Nodes tab
-- **LDAP**: `ldap_enabled` field in Settings tab
-- **Switch Credentials**: Set in Settings tab or `secrets.yml`
-- **MAC Addresses**: MAC Address column in the Nodes tab
+These are configured in the Excel Deployment sheet (not via interactive prompts):
+- **Management Networks**: Set in Excel Deployment sheet
+- **Data Networks**: VLANs configured in the Network Data sheet
+- **Device Counts**: Derived from the Switch Data sheet
+- **LDAP**: `ldap_enabled` field in Deployment sheet
+- **Switch Credentials**: Set in Deployment sheet or `secrets.yml`
+- **MAC Addresses**: MAC Address column in the Switch Data sheet
 - **IP Assignment Mode**: DHCP is the default for ZTP
 
 ### 4. Apply Configuration
@@ -188,6 +188,7 @@ dhcp-option=interface:ens7,3,192.168.220.8  # Gateway
 ### Check ZTP Server Interfaces
 
 ```bash
+# external-dhcp in L3 OOB, dhcp-oob in legacy L2
 ssh netadmin@dhcp-oob
 ip addr show
 ```
@@ -332,7 +333,7 @@ Set `dnsmasq_listen: false` in the generated inventory:
 
 ### Add More Interfaces
 
-Add more interface entries to the Wire Map in your Excel template and re-run
+Add more interface entries to the Wiremap in your Excel template and re-run
 `make generate`. The additional interfaces will be picked up automatically.
 
 ## Summary

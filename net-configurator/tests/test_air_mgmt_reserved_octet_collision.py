@@ -25,7 +25,6 @@ and no generated site may put a switch on a reserved octet.
 """
 import ipaddress
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -43,11 +42,11 @@ from oob_reserved import (  # noqa: E402
 
 
 def _committed_sites():
-    out = subprocess.run(
-        ["git", "ls-files", "net-configurator/input/*/*/*.xlsx"],
-        cwd=REPO.parent, capture_output=True, text=True, check=True,
-    ).stdout.split()
-    return sorted((Path(r).parts[-3], Path(r).parts[-2]) for r in out)
+    """(arch, site) for every shipped workbook. A glob, not `git ls-files`: the
+    public tree is not a git checkout and has no monorepo parent."""
+    return sorted((p.parts[-3], p.parts[-2])
+                  for site in ("default", "largescale")
+                  for p in REPO.glob(f"input/*/{site}/*.xlsx"))
 
 
 SITES = _committed_sites()

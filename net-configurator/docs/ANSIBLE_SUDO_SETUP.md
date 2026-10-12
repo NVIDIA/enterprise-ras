@@ -5,6 +5,12 @@
 
 This guide explains how to configure sudo access for Ansible deployments.
 
+> **Host names in the examples.** The commands below use `dhcp-oob` — the
+> ZTP/DHCP server in **legacy L2 OOB** mode — as the example target. In the
+> default **L3 OOB** mode that host does not exist; substitute `external-dhcp`
+> (ZTP/DHCP) or `utility` (jump host). The procedure is the same for any
+> Ubuntu host in the inventory.
+
 ## The Issue
 
 When running Ansible playbooks that need sudo/root access, you may see:
@@ -40,7 +46,7 @@ Enter the sudo password for the target server.
 
 Set up passwordless sudo on the target server(s).
 
-#### On the Target Server (dhcp-oob, etc.)
+#### On the Target Server (e.g. `external-dhcp` in L3 OOB, `dhcp-oob` in legacy L2)
 
 ```bash
 # SSH to the server

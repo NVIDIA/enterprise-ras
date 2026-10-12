@@ -3,7 +3,7 @@
 """
 `make import` must back up an existing template before overwriting it — a
 different Excel imported to a site (esp. `default`) would otherwise silently
-destroy the committed reference template (violating the CLAUDE.md backup rule).
+destroy the committed reference template (violating the AGENTS.md backup rule).
 """
 import importlib.util
 from pathlib import Path

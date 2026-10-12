@@ -95,7 +95,7 @@ def build_ssh_args(
     user: str,
     ssh_key_path: str = "",
     *,
-    forward_agent: bool = True,
+    forward_agent: bool = False,
 ) -> list[str]:
     """Build SSH command arguments.
 
@@ -104,7 +104,9 @@ def build_ssh_args(
         port: SSH port.
         user: SSH username.
         ssh_key_path: Path to private key (supports ~ expansion).
-        forward_agent: Enable SSH agent forwarding (-A).
+        forward_agent: Enable SSH agent forwarding (-A). Off by default: a
+            forwarded agent lets anyone with root on the remote host use your
+            local keys for as long as the session is open.
     """
     args = ["ssh", *SSH_STRICT_OFF]
     if forward_agent:

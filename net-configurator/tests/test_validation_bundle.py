@@ -271,6 +271,14 @@ def test_missing_output_dir_is_a_clean_failure(tmp_path, monkeypatch):
         sys.argv = argv
 
 
+def test_ztp_probe_captures_required_drb_evpn_outputs():
+    probe = (SCRIPTS / "ztp_collect_probe.sh").read_text()
+    assert "nv show evpn multihoming" in probe
+    assert "---RAW:evpn_multihoming---" in probe
+    assert "nv show nve vxlan" in probe
+    assert "---RAW:nve_vxlan---" in probe
+
+
 # ------------------------------------------------ e2e marker sweep ----------
 
 REAL_SITE = REPO / "output" / "2-8-9-800" / "default"

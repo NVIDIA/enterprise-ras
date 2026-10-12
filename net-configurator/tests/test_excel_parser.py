@@ -24,7 +24,6 @@ from excel_parser import (
     parse_settings,
     parse_nodes,
     parse_vlans,
-    parse_vrfs,
     parse_versions,
     parse_oob_switch_configs,
     parse_core_port_config,
@@ -1007,7 +1006,10 @@ def test_per_switch_gpu_rails_include_rows_hidden_from_air():
 @pytest.mark.parametrize(
     ("arch", "expected_parents"),
     [
-        ("2-4-3-200", list(range(9, 25))),
+        # Two GPU rail ports per SU, so this range tracks the committed
+        # default's scale: 2-4-3-200 moved SU 8 -> SU 5 (GitLab #81), taking
+        # 16 ports down to 10.
+        ("2-4-3-200", list(range(9, 19))),
         ("2-8-5-200", list(range(6, 26))),
         ("2-8-9-400", list(range(4, 28))),
     ],
@@ -1547,8 +1549,7 @@ class TestPerRailPerPlaneParser:
     # built wiremap_rows list shaped by _build_wiremap_row_list (with system_role,
     # nic_port, network_profile, dst_switch, etc. populated correctly). Hand-rolled
     # dicts don't suffice. End-to-end verification is covered by smoke-running a
-    # synthetic 2-8-9-800-derived Excel through `make generate` — see
-    # docs/plans/2026-05-18-gpu-plane-per-rail.md.
+    # synthetic 2-8-9-800-derived Excel through `make generate` — see ADR-0044.
 
     def test_mode_single_ignores_per_rail_plane_rows(self):
         """When mode is single, gpu_rail*_plane* rows shouldn't get used for IP allocation."""

@@ -10,25 +10,21 @@ that need to pick mode-appropriate hosts/files before calling Ansible.
 Usage:
     python3 scripts/_show_oob_mode.py <topology.json>
 """
-import json
-import os
 import sys
+from pathlib import Path
+
+_SCRIPT_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from utils import DEFAULT_OOB_UPLINK_MODE, read_topology_oob_uplink_mode  # noqa: E402
 
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("l2")
+        print(DEFAULT_OOB_UPLINK_MODE)
         return 0
-    path = sys.argv[1]
-    if not os.path.exists(path):
-        print("l2")
-        return 0
-    try:
-        with open(path) as f:
-            mode = str(json.load(f).get("_oob_uplink_mode", "l2")).strip().lower()
-        print(mode or "l2")
-    except (OSError, json.JSONDecodeError, ValueError):
-        print("l2")
+    print(read_topology_oob_uplink_mode(sys.argv[1]))
     return 0
 
 

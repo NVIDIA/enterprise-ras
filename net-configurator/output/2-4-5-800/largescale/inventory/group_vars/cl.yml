@@ -5,7 +5,7 @@ timezone: Etc/Zulu
 mh_mac: 44:38:39:FF:00:AC
 anycast_mac: 44:38:39:ff:00:ff
 bgp_asn: 4200100001
-cumulus_target_version: 5.18.0
+cumulus_target_version: 5.18.3
 ntp_servers:
 - 0.cumulusnetworks.pool.ntp.org
 - 1.cumulusnetworks.pool.ntp.org

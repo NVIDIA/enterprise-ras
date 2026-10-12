@@ -16,6 +16,9 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
+
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -60,61 +63,48 @@ def _author_l2_storage(xlsx):
     that no longer contains one. That also makes it a direct test of the
     supported-but-not-shipped path, which is the thing at risk of rotting.
 
-    Everything is located by name. The previous revision hardcoded `vp["B26"]`
+    Everything is located by name. An earlier revision hardcoded `vp["B26"]`
     to reach the Storage Uplink profile; row indices shift whenever a profile
     is added, and a mis-aimed write silently rewrites a different profile.
     """
     wb = openpyxl.load_workbook(xlsx)
-    vp = wb["VLANs & Profiles"]
 
-    def find_row(label):
-        for r in range(1, vp.max_row + 1):
-            if str(vp.cell(r, 1).value or "").strip() == label:
-                return r
-        raise AssertionError(f"{label!r} not found in VLANs & Profiles")
+    # 1. VLAN 500.
+    workbook_access.add_vlan(
+        wb, vlan=500, **{"fabric name": "Storage", "use": "Storage Network",
+                         "vni(d)": 4500, "vrf": "STORAGE",
+                         "ip subnet": "172.16.180.0/24",
+                         "gateway addr": "172.16.180.1",
+                         "dhcp relay client": "No"})
 
-    # 1. VLAN 500 — inserted directly after the last VLAN row (VLAN ID header
-    #    section), so it lands inside the VLAN block rather than after it.
-    vlan_hdr = find_row("VLAN ID")
-    last_vlan = vlan_hdr + 1
-    while str(vp.cell(last_vlan + 1, 1).value or "").strip().isdigit():
-        last_vlan += 1
-    vp.insert_rows(last_vlan + 1)
-    for col, val in enumerate(
-        [500, "Storage", "Storage Network", "172.16.180.0/24",
-         "172.16.180.1", "STORAGE", 4500, "No"], start=1
-    ):
-        vp.cell(last_vlan + 1, col).value = val
-
-    # 2. The L2 `Storage` port profile, immediately after the Profile header.
-    prof_hdr = find_row("Profile")
-    vp.insert_rows(prof_hdr + 1)
-    for col, val in enumerate(
-        # Access on VLAN 500, untagged. Storage servers bond untagged (bond1),
-        # so the switch port is an access port in the storage VLAN. The shipped
-        # workbooks used to carry a Trunk/400,500/untagged-300 Storage row, but
-        # nothing ever referenced it (storage servers were never cabled), so
-        # that shape was never exercised — it renders `vlan 400,500` and the
-        # server's untagged frames land outside VLAN 500.
-        ["Storage", "Access", "500", None, None, None, "Yes", "200G", 4, 2],
-        start=1,
-    ):
-        vp.cell(prof_hdr + 1, col).value = val
+    # 2. The L2 `Storage` port profile. Access on VLAN 500, untagged: storage
+    #    servers bond untagged (bond1), so the switch port is an access port in
+    #    the storage VLAN. The shipped workbooks used to carry a
+    #    Trunk/400,500/untagged-300 Storage row, but nothing ever referenced it
+    #    (storage servers were never cabled), so that shape was never exercised
+    #    -- it renders `vlan 400,500` and the server's untagged frames land
+    #    outside VLAN 500.
+    workbook_access.add_port_profile(
+        wb, profile="Storage", speed="200G", breakout=4, lanes=2,
+        **{"port mode": "Access", "native/access vlan": "500",
+           "lacp bypass": "Yes"})
 
     # 3. Storage servers, dual-homed to the core pair on the L2 profile.
-    nodes = wb["Nodes"]
-    wm = wb["Wire Map"]
     for idx in (1, 2):
         name = f"storage-{idx:02d}"
-        nodes.append([
-            "storage", name, None, "server", None,
-            f"192.168.200.{60 + idx}", 24, "192.168.200.1", "No", "Yes", None,
-        ])
+        workbook_access.add_host(
+            wb, function="storage", type="node", prefix=24, ztp="No",
+            enabled="Yes", ip=f"192.168.200.{60 + idx}",
+            gateway="192.168.200.1",
+            **{"system name": name, "physical interface": "eth0"})
         for link, core in enumerate(("core-01", "core-02"), start=1):
-            wm.append([
-                "Yes", name, f"B3220 SL1 P{link}", "NA", None,
-                core, f"swp{40 + idx}s{link - 1}", "NA", "1.0", "Storage",
-            ])
+            workbook_access.add_wiremap_row(wb, **{
+                "display in air": "Yes",
+                "system name (a)": name, "port (a)": f"B3220 SL1 P{link}",
+                "port side (a)": "NA",
+                "system name (z)": core, "port (z)": f"swp{40 + idx}s{link - 1}",
+                "port side (z)": "NA", "cable split (z)": "1.0",
+                "network profile": "Storage"})
     wb.save(xlsx)
 
 

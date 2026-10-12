@@ -22,6 +22,9 @@ from pathlib import Path
 
 import openpyxl
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
 import yaml
 
 NC = Path(__file__).resolve().parent.parent
@@ -30,13 +33,6 @@ _COPY_IGNORE = shutil.ignore_patterns(
     "output", "archive", ".git", ".venv*", "__pycache__", "*.pyc",
     ".pytest_cache", ".era-secrets", "legacy",
 )
-
-
-def _cell(ws, header):
-    for c in range(1, ws.max_column + 1):
-        if str(ws.cell(1, c).value or "").strip().lower() == header:
-            return c
-    return None
 
 
 @pytest.fixture(scope="module")
@@ -52,29 +48,16 @@ def split_vlan_tree(tmp_path_factory):
     wb = openpyxl.load_workbook(xlsx)
 
     # 1. Declare a second OOB VLAN.
-    vp = wb["VLANs & Profiles"]
-    hdr = next(r for r in range(1, vp.max_row + 1)
-               if str(vp.cell(r, 1).value or "").strip() == "VLAN ID")
-    last = hdr + 1
-    while str(vp.cell(last + 1, 1).value or "").strip().isdigit():
-        last += 1
-    vp.insert_rows(last + 1)
-    for col, val in enumerate(
-        [201, "OOB2", "Out-of-Band Management 2", "192.168.201.0/24",
-         "192.168.201.1", "OOB", 4201, "OOB"], start=1
-    ):
-        vp.cell(last + 1, col).value = val
+    workbook_access.add_vlan(
+        wb, vlan=201, **{"fabric name": "OOB2", "use": "Out-of-Band Management 2",
+                         "vni(d)": 4201, "vrf": "OOB",
+                         "ip subnet": "192.168.201.0/24",
+                         "gateway addr": "192.168.201.1",
+                         "dhcp relay client": "OOB"})
 
     # 2. Put oob-switch-02 on it.
-    nodes = wb["Nodes"]
-    c_name, c_vlan = _cell(nodes, "name"), _cell(nodes, "oob vlan")
-    assert c_name and c_vlan, "Nodes sheet lacks Name / OOB VLAN columns"
-    moved = 0
-    for r in range(2, nodes.max_row + 1):
-        if str(nodes.cell(r, c_name).value or "").strip() == "oob-switch-02":
-            nodes.cell(r, c_vlan).value = 201
-            moved += 1
-    assert moved, "no oob-switch-02 row to move"
+    assert workbook_access.set_node_oob_vlan(wb, "oob-switch-02", 201), \
+        "no oob-switch-02 row to move"
     wb.save(xlsx)
 
     r = subprocess.run(

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for gs-plane1-04
-# Generated: 2026-09-02T02:44:59Z
+# Generated: 2026-09-18T13:11:13Z
 # Format: NVUE CLI commands (Spine, Plane 1, EVPN Relay)
 #============================================================================
 # EVPN (relay — no local VTEPs)
@@ -46,6 +46,10 @@ nv set router bfd profile underlay min-tx-interval 300
 nv set router bgp autonomous-system 4260395887
 nv set router bgp state enabled
 nv set router bgp router-id 10.1.1.44
+nv set router bgp graceful-restart mode full
+nv set router bgp graceful-restart restart-time 180
+nv set router bgp graceful-restart path-selection-deferral-time 180
+nv set router bgp graceful-restart stale-routes-time 180
 
 #============================================================================
 # Route Maps
@@ -67,6 +71,7 @@ nv set system ntp vrf mgmt
 #============================================================================
 # AAA
 #============================================================================
+nv set system aaa authentication order local
 nv set system aaa class nvapply action allow
 nv set system aaa class nvapply command-path / permission all
 nv set system aaa class nvshow action allow
@@ -272,6 +277,7 @@ nv set vrf default router bgp neighbor swp32s1 type unnumbered
 # BGP Path Selection
 #============================================================================
 nv set vrf default router bgp path-selection multipath aspath-ignore enabled
+nv set vrf default router bgp address-family ipv4-unicast multipaths ebgp 128
 
 #============================================================================
 # Peer Group Definitions

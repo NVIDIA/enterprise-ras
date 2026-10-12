@@ -25,14 +25,11 @@ import openpyxl
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import validate_excel as _ve  # noqa: E402  (needs the sys.path insert above)
+import intake_to_legacy  # noqa: E402  (needs the sys.path insert above)
+import validate_excel as _ve  # noqa: E402
 # Arch models are internal-only (data-models/, ADR-0027) and absent from the
-# public tree, so this skips there rather than failing. Defined locally rather
-# than imported from conftest: conftest is loaded by pytest, not importable.
-_HAVE_ARCH_MODELS = (Path(__file__).resolve().parents[2] / "data-models" / "models").exists()
-needs_arch_models = pytest.mark.skipif(
-    not _HAVE_ARCH_MODELS,
-    reason="arch models are internal-only (data-models/), absent in the public tree")
+# public tree, which deselects these tests (internal_only, tests/conftest.py).
+needs_arch_models = pytest.mark.internal_only("data-models/models")
 
 
 class _Result:
@@ -303,7 +300,7 @@ def test_shipped_defaults_satisfy_every_criterion(path):
     the slide-10 floor. If one of these ever warns, the design changed or the check is
     wrong — either way it is not something to discover in an OEM's report."""
     arch = path.parent.parent.name
-    wb = openpyxl.load_workbook(path, data_only=True)
+    wb = intake_to_legacy.load_workbook(path, data_only=True)
     r = _Result()
     _ve.validate_ew_not_oversubscribed(wb, {}, r)
     _ve.validate_ew_uses_private_ips(wb, {}, r)
@@ -327,7 +324,7 @@ def test_ew_fabric_resolves_on_every_arch(path):
     """
     arch = path.parent.parent.name
     expected = int(arch.split("-")[3])
-    wb = openpyxl.load_workbook(path, data_only=True)
+    wb = intake_to_legacy.load_workbook(path, data_only=True)
     down, _up, unsized = _ve._ew_leaf_bandwidth(wb)
     assert down, f"{arch}: no E/W fabric resolved — the check is disarmed here"
     assert not unsized, f"{arch}: an E/W profile has an unreadable Speed cell"

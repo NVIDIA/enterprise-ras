@@ -63,7 +63,7 @@ GUARD_PATTERNS = [
 # generated inventory is full of them by design.
 JINJA_REF = re.compile(r"\{\{[^}]*\}\}")
 
-# Documented placeholders (CLAUDE.md: "Only default/placeholder passwords in
+# Documented placeholders (AGENTS.md: "Only default/placeholder passwords in
 # version control"). These carry no secret, and redacting them actively damages
 # the bundle: the shipped defaults set status_page_password to CHANGE_ME, which
 # also appears as `ansible_host: CHANGE_ME` in the Air vnode host_vars — so a
@@ -71,14 +71,13 @@ JINJA_REF = re.compile(r"\{\{[^}]*\}\}")
 PLACEHOLDER_VALUES = {
     "change_me", "changeme", "change-me", "tbd", "todo", "none", "null",
     "example", "placeholder", "unset", "n/a",
-    # Documented shipped defaults (CLAUDE.md / SECURITY.md). They are public in
+    # Documented shipped defaults (AGENTS.md / SECURITY.md). They are public in
     # the repo, so redacting one protects nothing — and each is a common word
     # that appears in legitimate content, where redaction does real damage:
-    #   nvidia  -> `ansible_host: air-worker-example.air-inside.nvidia.com`
-    #              `status_page_url: http://...air-inside.nvidia.com:14357`
+    #   nvidia  -> a hostname under nvidia.com
     #   cumulus -> `nv set system aaa user cumulus ...` in every switch config
-    # Observed on a real site (2-8-9-800/evpnval): server_ansible_password and
-    # ansible_become_password were both `nvidia`, matching 8 files each.
+    # A default password can also appear in unrelated hostnames; preserve
+    # those names rather than applying a blanket substring replacement.
     "nvidia", "cumulus", "ubuntu", "admin", "root",
 }
 

@@ -157,17 +157,29 @@
     - /var/www/ztp/licenses
     - /var/www/ztp/images
 
-- name: Generate SSH key for ZTP server user (netadmin)
+- name: Check the ZTP server user name
+  assert:
+    that:
+      - ztp_server_user is string
+      - ztp_server_user is match('^[a-z_][a-z0-9_-]{0,31}$')
+    fail_msg: >-
+      ztp_server_user '{{ ztp_server_user }}' is not a valid Linux user name
+      (lower-case letters, digits, '_' or '-', starting with a letter or '_',
+      at most 32 characters).
+    quiet: true
+
+- name: Generate SSH key for ZTP server user ({{ ztp_server_user }})
   user:
-    name: netadmin
+    name: "{{ ztp_server_user }}"
     generate_ssh_key: yes
     ssh_key_type: rsa
     ssh_key_bits: 2048
     ssh_key_file: .ssh/id_rsa
+  register: ztp_server_account
 
 - name: Read ZTP server SSH public key
   slurp:
-    src: /home/netadmin/.ssh/id_rsa.pub
+    src: "{{ ztp_server_account.ssh_key_file | default('/home/' ~ ztp_server_user ~ '/.ssh/id_rsa') }}.pub"
   register: ztp_server_pubkey
 
 - name: Copy ZTP server public key to web directory
@@ -281,22 +293,41 @@
     owner: www-data
     group: www-data
 
+- name: Refuse a missing or placeholder status_page_password (ADR-0091)
+  # The status page is served over plain HTTP (and Air forwards it publicly):
+  # it needs its own real password, never a placeholder or a switch password.
+  # There is no fallback value; scripts/check_secrets.py applies the same rule
+  # before generate/deploy, and the development opt-in does not waive it.
+  assert:
+    that:
+      - status_page_password is defined
+      - (status_page_password | string | trim | length) > 0
+      - (status_page_password | string) is not search('[\r\n\x00]')
+      - (status_page_password | string | trim | lower) not in ['change_me', 'changeme', 'change-me', 'replace_me', 'replaceme', 'password', 'passw0rd', 'todo', 'fixme', 'xxx', 'secret', 'cumu1uslinux!', 'era-status-change_me']
+      - (status_page_password | string) != (switch_password | default('') | string)
+      - (status_page_password | string) != (switch_ansible_password | default('') | string)
+      - (status_page_password | string | lower) != (status_page_username | default('era') | string | lower)
+    fail_msg: >-
+      status_page_enabled is Yes but status_page_password is unset, multi-line, a placeholder,
+      the status_page_username or a switch password. Set a dedicated value in secrets.yml, or set
+      status_page_enabled to No in the workbook's Deployment sheet.
+    quiet: true
+  when: status_page_enabled | default(false) | bool
+
 - name: Create htpasswd file for status page (using Python - no apt needed)
   shell: |
     python3 -c "
-    import crypt, os
+    import crypt, os, sys
     salt = crypt.mksalt(crypt.METHOD_SHA256)
-    hashed = crypt.crypt(os.environ['HTPASSWD_PASS'], salt)
+    hashed = crypt.crypt(sys.stdin.readline().rstrip('\n'), salt)
     print(os.environ['HTPASSWD_USER'] + ':' + hashed)
     " > /etc/nginx/.htpasswd
     chmod 640 /etc/nginx/.htpasswd
     chown root:www-data /etc/nginx/.htpasswd
+  args:
+    # stdin, not environment: Ansible's shell wrapper would carry it in argv.
+    stdin: "{{ status_page_password }}"
   environment:
-    # Do NOT fall back to switch_password: the status page is served over plain
-    # HTTP, so reusing the switch credential would expose it. Use the dedicated
-    # status_page_password secret (set in secrets.yml); a placeholder default
-    # keeps deploys working but should be overridden.
-    HTPASSWD_PASS: "{{ status_page_password | default('era-status-CHANGE_ME') }}"
     HTPASSWD_USER: "{{ status_page_username | default('era') }}"
   when: status_page_enabled | default(false) | bool
   changed_when: true
@@ -309,6 +340,19 @@
     mode: '0644'
     owner: www-data
     group: www-data
+  when: status_page_enabled | default(false) | bool
+
+- name: Remove the dashboard and status-page credentials when the status page is disabled (ADR-0091)
+  # nginx already returns 404 for everything but the ZTP endpoints when the page
+  # is off; this also drops what an earlier enabled install left behind.
+  # Reports under /var/www/ztp/reports/ are kept on disk (not served).
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/www/ztp/index.html
+    - /etc/nginx/.htpasswd
+  when: not (status_page_enabled | default(false) | bool)
 
 - name: Create manual ZTP helper script directory
   file:
@@ -462,6 +506,34 @@
     msg: "{{ 'DNS resolution working ✅' if dns_test.rc == 0 else 'DNS resolution failed ❌ - check logs' }}"
   when: configure_dhcp | default(true)
 
+# The summary reports the scopes dnsmasq.conf.j2 actually rendered: one line
+# per listening ztp_interfaces entry, or the single legacy scope when a
+# hand-written inventory has no ztp_interfaces at all.
+- name: Build DHCP scope summary lines
+  set_fact:
+    ztp_dhcp_summary_lines: >-
+      {%- set lines = [] -%}
+      {%- if ztp_interfaces is defined and ztp_interfaces | length > 0 -%}
+      {%-   for iface in ztp_interfaces if iface.dnsmasq_listen | default(false) -%}
+      {%-     set network = iface.network | regex_replace('\.\d+/\d+$', '') -%}
+      {%-     set _ = lines.append('  ' ~ iface.name ~ ' (' ~ iface.purpose | default('ztp') ~ '): '
+                ~ iface.dhcp_range_start | default(network ~ '.100') ~ ' - '
+                ~ iface.dhcp_range_end | default(network ~ '.200')
+                ~ '  gateway ' ~ iface.gateway | default(network ~ '.1')) -%}
+      {%-   endfor -%}
+      {%- else -%}
+      {%-   set _ = lines.append('  ' ~ dnsmasq_interface | default('eth0') ~ ' (legacy): '
+                ~ dhcp_range_start | default('192.168.200.100') ~ ' - '
+                ~ dhcp_range_end | default('192.168.200.200')
+                ~ '  gateway ' ~ dhcp_gateway | default('192.168.200.1')) -%}
+      {%- endif -%}
+      {{ lines }}
+
+- name: Display configured DHCP scopes as "interface (purpose) range  gateway"
+  debug:
+    msg: "{{ item }}"
+  loop: "{{ ztp_dhcp_summary_lines }}"
+
 - name: Display ZTP server information
   debug:
     msg:
@@ -479,9 +551,7 @@
       - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       - "🔧 DHCP/DNS CONFIGURATION"
       - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - "  Server:      dnsmasq (listening on {{ dnsmasq_interface | default('eth0') }})"
-      - "  DHCP Range:  {{ dhcp_range_start | default('192.168.200.100') }} - {{ dhcp_range_end | default('192.168.200.200') }}"
-      - "  Gateway:     {{ dhcp_gateway | default('192.168.200.1') }}"
+      - "  Server:      dnsmasq ({{ ztp_dhcp_summary_lines | length }} DHCP scope(s) — listed in the previous task)"
       - ""
       - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       - "✨ KEY FEATURES"

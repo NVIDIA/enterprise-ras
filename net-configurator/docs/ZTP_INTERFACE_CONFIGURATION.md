@@ -32,7 +32,34 @@ When `configure_ztp_ips: true` (the default for generated inventories), `make zt
 4. **Make it persistent** -- creates `/etc/netplan/99-ztp-interfaces.yaml` (Ubuntu)
 5. **Configure dnsmasq** -- sets up DHCP on each interface with `dnsmasq_listen: true`
 
-You typically don't need to touch this. The Excel Wire Map and Settings tabs drive everything.
+You typically don't need to touch this. The Excel Wiremap and Deployment sheets drive everything.
+
+### Physical sites (`deploy_in_air = No`)
+
+A physical site has no air-mgmt network, so no `air-mgmt` entry is generated.
+Instead there is one interface per OOB VLAN subnet, named `eth1`, `eth2`, …,
+holding the ZTP server's address on that subnet (L2: the `dhcp-oob` slot, L3:
+the `ztp_server` slot, `<oob-subnet>+100`) and a DHCP range from the same
+subnet:
+
+```yaml
+ztp_interfaces:
+- name: eth1
+  ip: 192.168.200.100
+  network: 192.168.200.0/24
+  gateway: 192.168.200.1
+  purpose: mgmt-subnet-1
+  dnsmasq_listen: true
+```
+
+The interface names are a guess: rename them to your ZTP server's NICs before
+`make switch-ztp-deploy`. A name that does not exist on the server makes the
+role stop with *Interface does not exist* (below). On a physical site
+(`deploy_in_air = No`) regeneration keeps your names: `make generate` and step 3
+of `make switch-ztp-deploy` rewrite `main.yml` but carry each interface's name
+forward, matched by its `network`. A subnet that changes in the workbook gets a
+fresh `ethN` name, and a name that is not a valid Linux interface name stops
+generation. Air sites always use the generated names.
 
 ## When to Edit Manually
 

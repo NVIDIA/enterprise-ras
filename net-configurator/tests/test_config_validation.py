@@ -127,17 +127,27 @@ def _validate_port_range(port_range: str) -> bool:
     return True
 
 
+def _references_root(project_root: Path):
+    """Locate the REFERENCES tree: in the monorepo it lives beside the tool
+    under release/ (guarded by is_dir() so the public tree stays
+    self-contained); a public checkout has no reference configs at all and
+    returns None."""
+    for candidate in (project_root / "REFERENCES",
+                      project_root.parent / "release" / "REFERENCES"):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
 def _read_config(project_root: Path, arch: str, switch_name: str) -> str:
-    """Read a reference config file from REFERENCES/&lt;arch&gt;/configs/."""
-    config_path = (
-        project_root
-        / "REFERENCES"
-        / arch
-        / "configs"
-        / f"{switch_name}.sh"
-    )
-    if not config_path.exists():
-        pytest.skip(f"Config file not found: {config_path}")
+    """Read a reference config file from REFERENCES/&lt;arch&gt;/configs/.
+
+    The callers are internal_only: the public tree has no REFERENCES and
+    deselects them. A missing tree or file is a missing fixture and fails."""
+    root = _references_root(project_root)
+    assert root is not None, "no REFERENCES tree"
+    config_path = root / arch / "configs" / f"{switch_name}.sh"
+    assert config_path.exists(), f"Reference config fixture missing: {config_path}"
     return config_path.read_text()
 
 
@@ -457,6 +467,7 @@ def _build_oob_params():
     return params
 
 
+@pytest.mark.internal_only("release/REFERENCES")
 class TestConfigurationCompleteness:
     """Test that reference configurations have all required sections.
 

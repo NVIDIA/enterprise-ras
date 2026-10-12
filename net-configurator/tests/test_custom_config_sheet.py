@@ -12,9 +12,12 @@ Two failure modes drive these tests:
   believes their config shipped. That is the class behind #59 (`make fix-ext-storage`
   exiting 0 having done nothing) and ERA-86 (`2-4-5-400` in the generate matrix but in
   neither e2e matrix). Every unmatched token is therefore a hard error, never a warning.
-* **Injection.** The content reaches a bash script. `nv config` / `nv action` and shell
-  metacharacters are refused. Best-effort containment, not a sandbox.
+* **Injection.** The content reaches a bash script. Lines must match an explicit
+  grammar (`nv set|unset` + bare words / single-quoted literals, ADR-0090) and are
+  re-rendered from the approved tokens, so bash receives exactly that argv.
 """
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -25,12 +28,29 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+import intake_to_legacy  # noqa: E402
 from excel_parser import (  # noqa: E402
     parse_custom_config_sheet,
     CustomConfigError,
+    _validate_custom_config_line,
 )
 
 HEADER = ["Switch_Location", "Config"]
+
+# What the shipped sheet carried before ADR-0064 D6 dropped the empty override
+# sheets. Kept as test input because the rows still turn up: in a workbook
+# round-tripped from an older version, and in one an operator annotates.
+GUIDANCE_ROWS = [
+    ["# HOW TO USE - delete these rows before filling in",
+     "Optional sheet. Leave it empty and nothing changes."],
+    ["# Switch_Location accepts:",
+     "ALL   |   Function: <list>   |   Host: <list>"],
+    ["# Valid functions in THIS workbook:", "csl, gsl-plane1, gsl-plane2, oob-switch"],
+    ["# Matching is EXACT and case-sensitive",
+     "'gl' is rejected - write 'gl-plane1, gl-plane2'."],
+    ["# Config accepts nv commands ONLY", "One per line. nv set / nv unset only."],
+    ["# Your lines are applied LAST", "On any setting the tool also configures, yours wins."],
+]
 
 # The switch inventory a workbook declares. Function -> [names]. Servers are present on
 # purpose: `Function: gpu` must fail, and it must fail because gpu is not a SWITCH
@@ -149,11 +169,17 @@ class TestContentAllowlist:
     @pytest.mark.parametrize("line", [
         "nv set system hostname sw1",
         "nv unset interface swp1 link state",
-        "nv show system",
     ])
     def test_nv_verbs_are_accepted(self, line):
         got = _parse([["Function: csl", line]])
         assert got["csl-01"] == [line]
+
+    @pytest.mark.parametrize("line", ["nv show system", "nv list x"])
+    def test_other_nv_verbs_are_blocked(self, line):
+        """Only set/unset stage configuration; anything else has no place in the file."""
+        with pytest.raises(CustomConfigError) as exc:
+            _parse([["Function: csl", line]])
+        assert "Only nv set, nv unset" in str(exc.value)
 
     @pytest.mark.parametrize("line", [
         "nv config apply",
@@ -197,29 +223,117 @@ class TestContentAllowlist:
         assert "2" in str(exc.value)
 
 
+# (line, argv nv must receive). The stored line is the shell-quoted rendering.
+ACCEPTED = [
+    ("nv set system hostname sw1", ["set", "system", "hostname", "sw1"]),
+    ("nv set system timezone Etc/UTC", ["set", "system", "timezone", "Etc/UTC"]),
+    ("nv set interface swp1-4,swp9 link mtu 9216",
+     ["set", "interface", "swp1-4,swp9", "link", "mtu", "9216"]),
+    ("nv set vrf RED router bgp neighbor 10.0.0.1 remote-as 65001:1",
+     ["set", "vrf", "RED", "router", "bgp", "neighbor", "10.0.0.1", "remote-as",
+      "65001:1"]),
+    ("nv set x user@example.com a+b=c_d", ["set", "x", "user@example.com", "a+b=c_d"]),
+    ("nv  unset   interface swp1", ["unset", "interface", "swp1"]),
+    ("nv set system message pre-login 'Authorized use only'",
+     ["set", "system", "message", "pre-login", "Authorized use only"]),
+    ("nv set system message pre-login 'a; b && c | d $(e) `f` $HOME \\ \" # * ? [g] {h} & (i) < > !'",
+     ["set", "system", "message", "pre-login",
+      'a; b && c | d $(e) `f` $HOME \\ " # * ? [g] {h} & (i) < > !']),
+    ("nv set x ''", ["set", "x", ""]),
+]
+
+REFUSED = [
+    "nv set system hostname `whoami`",
+    "nv set system hostname $(id)",
+    "nv set system hostname $HOME",
+    "nv set system hostname x; reboot",
+    "nv set system hostname x;reboot",
+    "nv set system hostname x && reboot",
+    "nv set system hostname x & reboot",
+    "nv set system hostname x&",
+    "nv set system hostname a&b",
+    "nv set system hostname x || reboot",
+    "nv set system hostname x | tee /tmp/x",
+    "nv set system hostname x > /etc/passwd",
+    "nv set system hostname x < /etc/shadow",
+    "nv set system hostname x \\",
+    "nv set system hostname a\\b",
+    "nv set system hostname (x)",
+    "nv set system hostname {a,b}",
+    "nv set system hostname {{ lookup('pipe','id') }}",
+    'nv set system message pre-login "Authorized use only"',
+    'nv set system hostname "x"',
+    "nv set system hostname sw*",
+    "nv set system hostname sw?",
+    "nv set system hostname sw[1]",
+    "nv set system hostname ~root",
+    "nv set system hostname x # comment",
+    "nv set system hostname x#y",
+    "nv set system hostname !x",
+    "nv set system hostname 'unterminated",
+    "nv set system hostname 'it's'",
+    "nv set system hostname 'a'b",
+    "nv set system hostname 'a\tb'",
+    "nv set system hostname x\ty",
+    "nv set system hostname x\ry",
+    "nv set system hostname x\x00y",
+    "nv set system hostname x\x1by",
+    "nv set system hostname x\x7fy",
+]
+
+
 class TestInjectionDefences:
-    """The content reaches a bash script. A legitimate `nv` line needs none of these."""
+    """The content reaches a bash script. Lines are held to an explicit grammar
+    (ADR-0090) and re-rendered from the approved tokens."""
 
-    @pytest.mark.parametrize("line", [
-        "nv set system hostname `whoami`",
-        "nv set system hostname $(id)",
-        "nv set system hostname x; reboot",
-        "nv set system hostname x && reboot",
-        "nv set system hostname x || reboot",
-        "nv set system hostname x | tee /tmp/x",
-        "nv set system hostname x > /etc/passwd",
-        "nv set system hostname x < /etc/shadow",
-        "nv set system hostname x \\",
-    ])
-    def test_shell_metacharacters_are_rejected(self, line):
-        with pytest.raises(CustomConfigError):
-            _parse([["Function: csl", line]])
-
-    def test_ordinary_values_with_spaces_are_accepted(self):
-        """Quoting is the templates' job (`| quote`); the parser must not over-reject."""
-        line = 'nv set system message pre-login "Authorized use only"'
+    @pytest.mark.parametrize("line,argv", ACCEPTED)
+    def test_accepted_lines_render_as_the_quoted_argv(self, line, argv):
         got = _parse([["Function: csl", line]])
-        assert got["csl-01"] == [line]
+        assert got["csl-01"] == [shlex.join(["nv"] + argv)]
+
+    @pytest.mark.parametrize("line", REFUSED)
+    def test_refused_lines(self, line):
+        # Called directly: openpyxl cannot store some control characters in a cell.
+        with pytest.raises(CustomConfigError) as exc:
+            _validate_custom_config_line(line, 7, 3)
+        assert "Custom_Config row 7, line 3" in str(exc.value)
+
+    def test_diagnostic_names_row_and_line(self):
+        with pytest.raises(CustomConfigError) as exc:
+            _parse([["Function: csl", "nv set a b"],
+                     ["Function: csl", "nv set ok\nnv set x & y"]])
+        assert "Custom_Config row 3, line 2" in str(exc.value)
+        assert "'&'" in str(exc.value)
+
+    def test_double_quotes_point_at_single_quotes(self):
+        with pytest.raises(CustomConfigError) as exc:
+            _parse([["Function: csl", 'nv set system message pre-login "Hi there"']])
+        assert "single quotes" in str(exc.value)
+
+    def test_rendered_script_runs_exactly_the_approved_argv(self, tmp_path):
+        """Render through the real template, run it under bash with a stub `nv`."""
+        marker = tmp_path / "PWN"
+        lines = [line for line, _ in ACCEPTED]
+        got = _parse([["Function: csl", "\n".join(lines)]])
+        out = TestRendering()._render("roles/core/templates/core_nvue_cli.j2",
+                                      {"custom_config": got["csl-01"]})
+        block = out[out.index("# Custom Config"):]
+        log = tmp_path / "argv.log"
+        stub = tmp_path / "bin" / "nv"
+        stub.parent.mkdir()
+        stub.write_text('#!/bin/bash\nprintf \'%s\\0\' "$@" >> "$NV_LOG"\n'
+                        'printf \'\\n\' >> "$NV_LOG"\n')
+        stub.chmod(0o755)
+        script = tmp_path / "custom.sh"
+        script.write_text(f"cd {shlex.quote(str(tmp_path))}\n" + block)
+        env = {"PATH": f"{stub.parent}:/usr/bin:/bin", "NV_LOG": str(log),
+               "HOME": str(tmp_path)}
+        r = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        calls = [c.split("\0") for c in log.read_text().split("\0\n")[:-1]]
+        assert calls == [argv for _, argv in ACCEPTED]
+        assert not marker.exists()
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["argv.log", "bin", "custom.sh"]
 
 
 class TestInertWhenAbsent:
@@ -294,13 +408,13 @@ class TestAgainstRealParsedNodes:
     while production resolves nothing."""
 
     def test_helper_resolves_switches_from_a_real_workbook(self):
-        import openpyxl as _oxl
         from excel_parser import parse_nodes, switches_by_function_from_nodes
         wb_path = (Path(__file__).resolve().parent.parent
                    / "input" / "2-8-9-800" / "default" / "2-8-9-800.xlsx")
         if not wb_path.exists():
             pytest.skip("shipped workbook absent")
-        nodes = parse_nodes(_oxl.load_workbook(wb_path, data_only=True)["Nodes"])
+        nodes = parse_nodes(intake_to_legacy.load_workbook(
+            wb_path, data_only=True)["Nodes"])
         got = switches_by_function_from_nodes(nodes)
         assert got, "resolved no switches from a real workbook — wrong node key?"
         assert "csl" in got and sorted(got["csl"]) == ["csl-01", "csl-02"], got
@@ -333,13 +447,12 @@ class TestEndToEndThroughParseExcel:
         return dst
 
     def test_lines_reach_only_the_targeted_switches(self, tmp_path):
-        import openpyxl as _oxl
         from excel_parser import (parse_nodes, parse_custom_config_sheet,
                                   switches_by_function_from_nodes,
                                   servers_by_function_from_nodes)
         wb_path = self._workbook_with_sheet(
             tmp_path, [["Host: csl-01", "nv set system message pre-login x"]])
-        wb = _oxl.load_workbook(wb_path, data_only=True)
+        wb = intake_to_legacy.load_workbook(wb_path, data_only=True)
         nodes = parse_nodes(wb["Nodes"])
         got = parse_custom_config_sheet(
             wb["Custom_Config"],
@@ -350,12 +463,11 @@ class TestEndToEndThroughParseExcel:
     def test_a_bad_target_fails_against_a_real_workbook(self, tmp_path):
         """`edge` is a real node and utils.is_switch() calls it a switch — but it
         renders no template, so it must be refused."""
-        import openpyxl as _oxl
         from excel_parser import (parse_nodes, parse_custom_config_sheet,
                                   switches_by_function_from_nodes,
                                   servers_by_function_from_nodes)
         wb_path = self._workbook_with_sheet(tmp_path, [["Function: edge", "nv set x y"]])
-        wb = _oxl.load_workbook(wb_path, data_only=True)
+        wb = intake_to_legacy.load_workbook(wb_path, data_only=True)
         nodes = parse_nodes(wb["Nodes"])
         with pytest.raises(CustomConfigError) as exc:
             parse_custom_config_sheet(
@@ -393,6 +505,10 @@ class TestRendering:
 
         class _Anything(jinja2.ChainableUndefined):
             def __call__(self, *a, **k):
+                # The templates refuse a line by calling a missing str method,
+                # which a strict Undefined (Ansible's) raises on; keep that.
+                if "outside_the_nv_set_unset_grammar" in str(self._undefined_name):
+                    self._fail_with_undefined_error()
                 return self
 
             def __getitem__(self, k):
@@ -431,6 +547,26 @@ class TestRendering:
         )
 
     @pytest.mark.parametrize("template_rel", TEMPLATES)
+    @pytest.mark.parametrize("line", [
+        "nv set x; touch /tmp/PWN", "nv set x $(id)", "nv set x `id`", "nv set x | tee y",
+        "nv show system", "nv config apply", "touch /tmp/PWN", "nv set x\ntouch /tmp/PWN",
+        "nv set \"a b\"", "nv set a\\ b", "nv set 'a\x1bb'", "nv set 'a", "nv set ~", "nv set a && b", "nv set x > /tmp/f",
+    ])
+    def test_template_refuses_a_line_outside_the_grammar(self, template_rel, line):
+        """The template re-checks the grammar, so a hand-edited host_vars line
+        that bypassed the parser never reaches the rendered script."""
+        import jinja2
+        with pytest.raises(jinja2.UndefinedError, match="outside_the_nv_set_unset_grammar"):
+            self._render(template_rel, {"custom_config": ["nv set system foo bar", line]})
+
+    @pytest.mark.parametrize("template_rel", TEMPLATES)
+    def test_template_renders_every_approved_line_unchanged(self, template_rel):
+        lines = _parse([["Function: csl", "\n".join(l for l, _ in ACCEPTED)]])["csl-01"]
+        out = self._render(template_rel, {"custom_config": lines})
+        block = out[out.index("# Custom Config"):]
+        assert [l for l in block.splitlines() if l.startswith("nv ")] == lines
+
+    @pytest.mark.parametrize("template_rel", TEMPLATES)
     def test_absent_custom_config_emits_nothing(self, template_rel):
         """Absent sheet must be byte-for-byte inert."""
         out = self._render(template_rel, {})
@@ -461,14 +597,13 @@ class TestNodeShapeTolerance:
 
     def test_validate_excel_node_output_resolves_switches(self):
         """The regression itself: run validate_excel's own parser and resolve."""
-        import openpyxl as _oxl
         import validate_excel as V
         from excel_parser import switches_by_function_from_nodes
         wb_path = (Path(__file__).resolve().parent.parent
                    / "input" / "2-8-9-800" / "default" / "2-8-9-800.xlsx")
         if not wb_path.exists():
             pytest.skip("shipped workbook absent")
-        wb = _oxl.load_workbook(wb_path, data_only=True)
+        wb = intake_to_legacy.load_workbook(wb_path, data_only=True)
         nodes = V.validate_nodes(wb["Nodes"], V.ValidationResult())
         got = switches_by_function_from_nodes(nodes)
         assert "csl" in got, (
@@ -544,7 +679,8 @@ class TestValidateConfigUnsetHandling:
     def test_unrelated_missing_lines_still_fail(self, tmp_path):
         """The exclusion must be narrow — a genuinely missing line still counts."""
         import subprocess
-        missing = tmp_path / "m.txt"; unset = tmp_path / "u.txt"
+        missing = tmp_path / "m.txt"
+        unset = tmp_path / "u.txt"
         missing.write_text("nv set bgp router-id 10.0.0.1\n")
         unset.write_text("system wjh state\n")
         script = f'''
@@ -571,14 +707,13 @@ class TestGeneratedSheet:
     does nothing — the same silent no-op strict targeting exists to prevent.
     """
 
+    @pytest.mark.internal_only("data-models/generate_arch_excel.py")
     def test_generator_targetable_set_matches_the_parser(self):
         """Two copies of the switch-function set; they must not drift apart."""
         import importlib.util
         from excel_parser import CONFIG_GENERATING_FUNCTIONS
         dm = Path(__file__).resolve().parents[2] / "data-models"
         gen = dm / "generate_arch_excel.py"
-        if not gen.exists():
-            pytest.skip("internal generator not present (public tree)")
         if str(dm) not in sys.path:            # it imports `models` from beside it
             sys.path.insert(0, str(dm))
         spec = importlib.util.spec_from_file_location("_gen", gen)
@@ -592,24 +727,38 @@ class TestGeneratedSheet:
         )
 
     @pytest.mark.parametrize("arch", ["2-8-9-800", "2-4-3-200"])
-    def test_shipped_workbook_has_the_sheet(self, arch):
+    def test_shipped_workbook_omits_the_empty_sheet(self, arch):
+        """ADR-0064 D6: an unfilled override sheet is not shipped.
+
+        It used to be, so that a misnamed hand-made one could not fail
+        silently. The intake form answers that differently -- `Deployment`
+        names the sheet in its instruction block, so the operator adding one
+        has the exact name in front of them, and four blank tabs stay out of
+        the workbook.
+        """
         import openpyxl as _oxl
         wb_path = (Path(__file__).resolve().parent.parent
                    / "input" / arch / "default" / f"{arch}.xlsx")
         if not wb_path.exists():
             pytest.skip(f"{arch} workbook absent")
         wb = _oxl.load_workbook(wb_path, data_only=True)
-        assert "Custom_Config" in wb.sheetnames, (
-            f"{arch} ships without the sheet; operators would have to create it by "
-            f"hand and a misnamed one fails silently"
-        )
-        ws = wb["Custom_Config"]
-        assert [c.value for c in ws[1]][:2] == ["Switch_Location", "Config"]
+        assert "Custom_Config" not in wb.sheetnames, (
+            f"{arch} ships a blank Custom_Config; D6 drops unfilled overrides")
+        names = "\n".join(
+            str(wb["Deployment"].cell(r, 1).value or "")
+            for r in range(1, wb["Deployment"].max_row + 1))
+        assert "Custom_Config" in names, (
+            "Deployment must name the sheet, or an operator has nothing to "
+            "copy the spelling from")
 
     @pytest.mark.parametrize("arch", ["2-8-9-800", "2-4-3-200"])
-    def test_shipped_sheet_is_inert(self, arch):
-        """Guidance rows must not parse as configuration."""
-        import openpyxl as _oxl
+    def test_the_guidance_block_stays_inert_when_pasted_back(self, arch):
+        """`#`-prefixed instruction rows must not parse as configuration.
+
+        These used to ship inside the workbook, which is what made them worth
+        asserting. D6 drops the empty sheet, but the rows outlive it: a
+        workbook round-tripped from an older version still carries them.
+        """
         from excel_parser import (parse_nodes, parse_custom_config_sheet,
                                   switches_by_function_from_nodes,
                                   servers_by_function_from_nodes, CustomConfigError)
@@ -617,16 +766,24 @@ class TestGeneratedSheet:
                    / "input" / arch / "default" / f"{arch}.xlsx")
         if not wb_path.exists():
             pytest.skip(f"{arch} workbook absent")
-        wb = _oxl.load_workbook(wb_path, data_only=True)
+        wb = intake_to_legacy.load_workbook(wb_path, data_only=True)
+        assert "Custom_Config" not in wb.sheetnames, (
+            f"{arch} still ships a blank Custom_Config -- D6 drops it, and this "
+            f"test would then be asserting against the shipped sheet, not the "
+            f"guidance block")
+        ws = wb.create_sheet("Custom_Config")
+        ws.append(HEADER)
+        for row in GUIDANCE_ROWS:
+            ws.append(row)
         nodes = parse_nodes(wb["Nodes"])
         try:
             got = parse_custom_config_sheet(
-                wb["Custom_Config"],
+                ws,
                 switches_by_function=switches_by_function_from_nodes(nodes),
                 servers_by_function=servers_by_function_from_nodes(nodes))
         except CustomConfigError as exc:
-            pytest.fail(f"{arch}'s shipped sheet does not parse cleanly: {exc}")
-        assert got == {}, f"{arch} ships with active custom config: {got}"
+            pytest.fail(f"the documented guidance block does not parse: {exc}")
+        assert got == {}, f"the guidance block parsed as config: {got}"
 
 
 class TestCommentRows:

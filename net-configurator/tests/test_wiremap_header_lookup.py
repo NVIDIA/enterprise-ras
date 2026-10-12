@@ -22,7 +22,6 @@ if str(SCRIPTS_DIR) not in sys.path:
 from excel_parser import (
     build_wiremap_column_map,
     _build_wiremap_row_list,
-    _WM_HEADER_ALIASES,
     _WM_REQUIRED,
 )
 

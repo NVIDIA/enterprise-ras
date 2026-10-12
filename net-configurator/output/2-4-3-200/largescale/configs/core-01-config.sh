@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT
 # NVUE CLI Configuration for core-01
-# Generated: 2026-09-02T02:43:33Z
+# Generated: 2026-09-18T13:10:17Z
 # Format: NVUE CLI commands (Simplified with Pure Jinja2)
 
 #============================================================================
@@ -13,6 +13,7 @@ nv set bridge domain br_default vlan 200 vni 4200
 nv set bridge domain br_default vlan 300 vni 4300
 nv set bridge domain br_default vlan 400 vni 4400
 nv set bridge domain br_default vlan 900 vni 4900
+nv set bridge domain br_default vlan 901 vni 4901
 
 #============================================================================
 # EVPN
@@ -147,6 +148,8 @@ nv set interface bond1s0,bond1s1,bond1s2,bond1s3,bond2s0,bond2s1,bond2s2,bond2s3
 nv set interface bond1s0,bond1s1,bond1s2,bond1s3,bond2s0,bond2s1,bond2s2,bond2s3,bond3s0,bond3s1,bond3s2,bond3s3,bond4s0,bond4s1,bond4s2,bond4s3,bond5s0,bond5s1,bond5s2,bond5s3,bond6s0,bond6s1,bond6s2,bond6s3,bond7s0,bond7s1,bond7s2,bond7s3,bond8s0,bond8s1,bond8s2,bond8s3 bridge domain br_default vlan 300,400
 nv set interface bond1s0,bond1s1,bond1s2,bond1s3,bond2s0,bond2s1,bond2s2,bond2s3,bond3s0,bond3s1,bond3s2,bond3s3,bond4s0,bond4s1,bond4s2,bond4s3,bond5s0,bond5s1,bond5s2,bond5s3,bond6s0,bond6s1,bond6s2,bond6s3,bond7s0,bond7s1,bond7s2,bond7s3,bond8s0,bond8s1,bond8s2,bond8s3 bridge domain br_default untagged 300
 nv set interface bond1s0,bond1s1,bond1s2,bond1s3,bond2s0,bond2s1,bond2s2,bond2s3,bond3s0,bond3s1,bond3s2,bond3s3,bond4s0,bond4s1,bond4s2,bond4s3,bond5s0,bond5s1,bond5s2,bond5s3,bond6s0,bond6s1,bond6s2,bond6s3,bond7s0,bond7s1,bond7s2,bond7s3,bond8s0,bond8s1,bond8s2,bond8s3 bond lacp-bypass enabled
+nv set interface bond1s0,bond1s1,bond1s2,bond1s3,bond2s0,bond2s1,bond2s2,bond2s3,bond3s0,bond3s1,bond3s2,bond3s3,bond4s0,bond4s1,bond4s2,bond4s3,bond5s0,bond5s1,bond5s2,bond5s3,bond6s0,bond6s1,bond6s2,bond6s3,bond7s0,bond7s1,bond7s2,bond7s3,bond8s0,bond8s1,bond8s2,bond8s3 bridge domain br_default stp admin-edge enabled
+nv set interface bond1s0,bond1s1,bond1s2,bond1s3,bond2s0,bond2s1,bond2s2,bond2s3,bond3s0,bond3s1,bond3s2,bond3s3,bond4s0,bond4s1,bond4s2,bond4s3,bond5s0,bond5s1,bond5s2,bond5s3,bond6s0,bond6s1,bond6s2,bond6s3,bond7s0,bond7s1,bond7s2,bond7s3,bond8s0,bond8s1,bond8s2,bond8s3 bridge domain br_default stp bpdu-guard enabled
 
 nv set interface bond25s0 bond member swp25s0
 nv set interface bond25s0 evpn multihoming segment local-id 250
@@ -181,6 +184,8 @@ nv set interface bond25s0,bond25s1,bond25s2,bond25s3,bond26s0,bond26s1,bond26s2,
 nv set interface bond25s0,bond25s1,bond25s2,bond25s3,bond26s0,bond26s1,bond26s2,bond26s3 bridge domain br_default vlan 200,300,400
 nv set interface bond25s0,bond25s1,bond25s2,bond25s3,bond26s0,bond26s1,bond26s2,bond26s3 bridge domain br_default untagged 300
 nv set interface bond25s0,bond25s1,bond25s2,bond25s3,bond26s0,bond26s1,bond26s2,bond26s3 bond lacp-bypass enabled
+nv set interface bond25s0,bond25s1,bond25s2,bond25s3,bond26s0,bond26s1,bond26s2,bond26s3 bridge domain br_default stp admin-edge enabled
+nv set interface bond25s0,bond25s1,bond25s2,bond25s3,bond26s0,bond26s1,bond26s2,bond26s3 bridge domain br_default stp bpdu-guard enabled
 
 #============================================================================
 # Management Interface
@@ -201,7 +206,7 @@ nv set interface lo type loopback
 #============================================================================
 # Direct Interfaces (Non-Bonded) - GPU, ISL, Edge
 #============================================================================
-# GPU role - direct interfaces
+# GPU role - direct interfaces (per-rail VLAN)
 nv set interface swp9s0,swp9s1,swp10s0,swp10s1,swp11s0,swp11s1,swp12s0,swp12s1,swp13s0,swp13s1,swp14s0,swp14s1,swp15s0,swp15s1,swp16s0,swp16s1,swp17s0,swp17s1,swp18s0,swp18s1,swp19s0,swp19s1,swp20s0,swp20s1,swp21s0,swp21s1,swp22s0,swp22s1,swp23s0,swp23s1,swp24s0,swp24s1 bridge domain br_default access 900
 
 # GPU role - QoS PFC watchdog
@@ -257,13 +262,20 @@ nv set interface vlan400 ipv4 vrr vrr-state up
 nv set interface vlan400 type svi
 nv set interface vlan400 vlan 400
 nv set interface vlan400 vrf INBAND
-nv set interface vlan900 ipv4 address 192.168.110.2/24
-nv set interface vlan900 ipv4 vrr address 192.168.110.1/24
+nv set interface vlan900 ipv4 address 192.168.0.2/24
+nv set interface vlan900 ipv4 vrr address 192.168.0.1/24
 nv set interface vlan900 ipv4 vrr state enabled
 nv set interface vlan900 ipv4 vrr vrr-state up
 nv set interface vlan900 type svi
 nv set interface vlan900 vlan 900
 nv set interface vlan900 vrf GPU
+nv set interface vlan901 ipv4 address 192.168.1.2/24
+nv set interface vlan901 ipv4 vrr address 192.168.1.1/24
+nv set interface vlan901 ipv4 vrr state enabled
+nv set interface vlan901 ipv4 vrr vrr-state up
+nv set interface vlan901 type svi
+nv set interface vlan901 vlan 901
+nv set interface vlan901 vrf GPU
 
 #============================================================================
 # NVE / VXLAN
@@ -282,6 +294,11 @@ nv set nve vxlan source address 172.16.176.11
 nv set router bgp state enabled
 nv set router bgp autonomous-system 4260394788
 nv set router bgp router-id 172.16.176.11
+
+nv set router bgp graceful-restart mode full
+nv set router bgp graceful-restart restart-time 180
+nv set router bgp graceful-restart path-selection-deferral-time 180
+nv set router bgp graceful-restart stale-routes-time 180
 
 nv set router bfd state enabled
 nv set router bfd profile underlay detect-multiplier 3
@@ -422,6 +439,8 @@ nv set vrf EXIT router bgp address-family l2vpn-evpn state enabled
 
 nv set vrf EXIT router bgp autonomous-system 4260394788
 nv set vrf EXIT router bgp state enabled
+nv set vrf EXIT router bgp path-selection multipath aspath-ignore enabled
+nv set vrf EXIT router bgp address-family ipv4-unicast multipaths ebgp 128
 
 nv set vrf EXIT router bgp neighbor swp63s0 peer-group exit
 nv set vrf EXIT router bgp neighbor swp63s0 type unnumbered
@@ -463,6 +482,8 @@ nv set vrf INBAND router bgp address-family l2vpn-evpn state enabled
 
 nv set vrf INBAND router bgp autonomous-system 4260394788
 nv set vrf INBAND router bgp state enabled
+nv set vrf INBAND router bgp path-selection multipath aspath-ignore enabled
+nv set vrf INBAND router bgp address-family ipv4-unicast multipaths ebgp 128
 
 nv set vrf INBAND router bgp route-export
 nv set vrf INBAND router bgp route-import
@@ -472,7 +493,7 @@ nv set vrf GPU evpn state enabled
 nv set vrf GPU evpn vlan 3003
 nv set vrf GPU evpn vni 5003
 
-nv set vrf GPU loopback ip address 192.168.110.5/32
+nv set vrf GPU loopback ip address 172.16.176.215/32
 
 nv set vrf GPU router bgp address-family ipv4-unicast state enabled
 nv set vrf GPU router bgp address-family ipv4-unicast redistribute connected state enabled
@@ -481,8 +502,10 @@ nv set vrf GPU router bgp address-family l2vpn-evpn state enabled
 
 nv set vrf GPU router bgp autonomous-system 4260394788
 nv set vrf GPU router bgp state enabled
+nv set vrf GPU router bgp path-selection multipath aspath-ignore enabled
+nv set vrf GPU router bgp address-family ipv4-unicast multipaths ebgp 128
 
-nv set vrf GPU router bgp router-id 192.168.110.5
+nv set vrf GPU router bgp router-id 172.16.176.215
 
 nv set vrf OOB evpn state enabled
 nv set vrf OOB evpn vlan 3001
@@ -500,6 +523,8 @@ nv set vrf OOB router bgp address-family l2vpn-evpn state enabled
 
 nv set vrf OOB router bgp autonomous-system 4260394788
 nv set vrf OOB router bgp state enabled
+nv set vrf OOB router bgp path-selection multipath aspath-ignore enabled
+nv set vrf OOB router bgp address-family ipv4-unicast multipaths ebgp 128
 
 nv set vrf OOB router bgp router-id 172.16.176.151
 
@@ -516,6 +541,8 @@ nv set vrf STORAGE router bgp address-family l2vpn-evpn state enabled
 
 nv set vrf STORAGE router bgp autonomous-system 4260394788
 nv set vrf STORAGE router bgp state enabled
+nv set vrf STORAGE router bgp path-selection multipath aspath-ignore enabled
+nv set vrf STORAGE router bgp address-family ipv4-unicast multipaths ebgp 128
 
 nv set vrf STORAGE router bgp neighbor swp62s0 peer-group storage
 nv set vrf STORAGE router bgp neighbor swp62s0 type unnumbered

@@ -3,7 +3,7 @@
 
 # ZTP and MAC Addresses
 
-> MAC addresses are provided in the Excel **Nodes** tab (column C, "MAC Address for ZTP")
+> MAC addresses are provided in the Excel **Switch Data** tab (`ZTP MAC Address` column)
 > or auto-generated deterministically when left blank. See the
 > [Excel Configuration Guide](EXCEL_CONFIGURATION_GUIDE.md) for details.
 
@@ -15,9 +15,9 @@
 
 For ZTP to work correctly, each switch needs to:
 1. Get the **correct IP address** from DHCP
-2. Receive **DHCP option 239** pointing to **its specific ZTP script**
+2. Get the **correct hostname** in the same DHCP lease
 
-Without MAC addresses, DHCP can't distinguish between switches and might give them random IPs or the wrong ZTP script!
+Every switch receives the same **DHCP option 239** URL (`http://<ztp-server-ip>/scripts/ztp.sh`). `ztp.sh` then downloads `configs/<hostname>-config.sh` using the hostname from the DHCP lease — so without a MAC reservation a switch gets a random pool IP, no hostname, and the wrong (or no) config!
 
 ---
 
@@ -42,7 +42,7 @@ Without MAC addresses, DHCP can't distinguish between switches and might give th
        │ DHCP Offer            │                        │
        │ IP: 192.168.200.201   │                        │
        │ Option 239:           │                        │
-       │ http://.../core-01.sh │                        │
+       │ http://.../ztp.sh     │                        │
        │<──────────────────────┤                        │
        │                       │                        │
        │ Request IP            │                        │
@@ -52,10 +52,10 @@ Without MAC addresses, DHCP can't distinguish between switches and might give th
        │<──────────────────────┤                        │
        │                       │                        │
        │ Download ZTP script                            │
-       │ http://.../ core-01.sh                         │
+       │ http://.../scripts/ztp.sh                      │
        ├───────────────────────────────────────────────>│
        │                       │                        │
-       │ Receive core-01.sh                             │
+       │ ztp.sh fetches configs/core-01-config.sh       │
        │<───────────────────────────────────────────────┤
        │                       │                        │
        │ Execute script        │                        │
@@ -70,19 +70,18 @@ Without MAC addresses, DHCP can't distinguish between switches and might give th
 The ZTP server uses `dnsmasq` to assign IPs based on MAC addresses:
 
 ```bash
-# /etc/dnsmasq.d/ztp.conf (auto-generated)
+# /etc/dnsmasq.conf (auto-generated): one option-239 URL per listening ZTP
+# interface. The address is that interface's own IP (the ZTP server, here
+# 192.168.200.100), not the OOB gateway.
+dhcp-option=interface:eth1,239,http://192.168.200.100/scripts/ztp.sh
+```
 
-# core-01 (192.168.200.201)
-dhcp-host=50:6B:4B:12:34:01,192.168.200.201,core-01,12h,set:core_01
-dhcp-option=tag:core_01,239,http://192.168.200.1/scripts/core-01.sh
-
-# core-02 (192.168.210.202)
-dhcp-host=50:6B:4B:12:34:02,192.168.210.202,core-02,12h,set:core_02
-dhcp-option=tag:core_02,239,http://192.168.200.1/scripts/core-02.sh
-
-# oob-switch-01 (192.168.200.2)
-dhcp-host=50:6B:4B:12:34:11,192.168.200.2,oob-switch-01,12h,set:oob_switch_01
-dhcp-option=tag:oob_switch_01,239,http://192.168.200.1/scripts/oob-switch-01.sh
+```bash
+# /etc/dnsmasq.d/ztp.conf (auto-generated): per-switch reservations
+# (MAC, hostname, IP)
+dhcp-host=50:6B:4B:12:34:01,core-01,192.168.200.201,12h
+dhcp-host=50:6B:4B:12:34:02,core-02,192.168.210.202,12h
+dhcp-host=50:6B:4B:12:34:11,oob-switch-01,192.168.200.2,12h
 ```
 
 **Without MAC addresses**, dnsmasq can't create these static reservations!
@@ -93,14 +92,14 @@ dhcp-option=tag:oob_switch_01,239,http://192.168.200.1/scripts/oob-switch-01.sh
 
 ### **Physical Hardware (Real MACs)**
 
-For physical switches, enter the real MAC addresses in the Excel **Nodes** tab, column C ("MAC Address for ZTP"). You can find switch MACs from:
+For physical switches, enter the real MAC addresses in the Excel **Switch Data** tab, `ZTP MAC Address` column. You can find switch MACs from:
 - The label on the back/bottom of the switch
 - Console access: `cat /sys/class/net/eth0/address`
 - Switch documentation or inventory system
 
 ### **Simulation / NVIDIA Air (Auto-generated MACs)**
 
-For Air simulations, leave the MAC column blank in the Excel Nodes tab. The parser auto-generates deterministic MACs using an MD5 hash of the node name and interface. These MACs are consistent between the inventory and the Air topology JSON, so ZTP DHCP reservations match.
+For Air simulations, leave the MAC column blank in the Excel Switch Data sheet. The parser auto-generates deterministic MACs using an MD5 hash of the node name and interface. These MACs are consistent between the inventory and the Air topology JSON, so ZTP DHCP reservations match.
 
 ---
 
@@ -136,11 +135,8 @@ The `setup-ztp-server.yml` playbook reads these MACs and generates:
 ```bash
 # Auto-generated from inventory
 
-dhcp-host=50:6B:4B:12:34:01,192.168.200.201,core-01,12h,set:core_01
-dhcp-option=tag:core_01,239,http://192.168.200.1/scripts/core-01.sh
-
-dhcp-host=50:6B:4B:12:34:02,192.168.210.202,core-02,12h,set:core_02
-dhcp-option=tag:core_02,239,http://192.168.200.1/scripts/core-02.sh
+dhcp-host=50:6B:4B:12:34:01,core-01,192.168.200.201,12h
+dhcp-host=50:6B:4B:12:34:02,core-02,192.168.210.202,12h
 
 # ... etc ...
 ```
@@ -209,7 +205,7 @@ sudo dhclient -v eth0
 
 ```bash
 # On the switch (via console)
-sudo /usr/lib/cumulus/ztp -v -r http://192.168.200.1/scripts/core-01.sh
+sudo /usr/lib/cumulus/ztp -v -r http://192.168.200.100/scripts/ztp.sh
 ```
 
 ### **4. Monitor ZTP Server Logs**
@@ -230,7 +226,7 @@ tail -f /var/log/nginx/access.log
 
 **Solution**:
 1. Verify switch's actual MAC: `cat /sys/class/net/eth0/address`
-2. Update the MAC in the Excel Nodes tab (column C)
+2. Update the MAC in the Excel Switch Data sheet (column C)
 3. Run: `make generate ARCH=<type>`
 4. Update ZTP server: `make ztp-update`
 
@@ -328,7 +324,7 @@ make deploy-servers ARCH=<type>
 2. **NVIDIA Air**: Use auto-generated MACs
 3. **Testing**: Use auto-generated MACs initially, replace with real MACs later
 4. **Documentation**: Keep a spreadsheet of switch hostnames and MACs
-5. **Reconfiguration**: If MACs change, update the Excel Nodes tab and rerun `make generate` then `make ztp-update`
+5. **Reconfiguration**: If MACs change, update the Excel Switch Data sheet and rerun `make generate` then `make ztp-update`
 
 ---
 

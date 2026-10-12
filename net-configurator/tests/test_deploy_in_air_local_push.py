@@ -16,6 +16,9 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
+
 NC = Path(__file__).resolve().parent.parent  # net-configurator/
 ARCH = "2-4-3-200"
 
@@ -39,18 +42,13 @@ def _set_deploy_no_with_switch_ips(xlsx):
     """Set Deploy in Air = No and give each switch a real (non-Air) mgmt IP,
     as an operator would for local push. Returns {switch_name: ip}."""
     wb = openpyxl.load_workbook(xlsx)
-    for row in wb["Settings"].iter_rows():
-        if row[0].value and str(row[0].value).strip() == "deploy_in_air":
-            row[1].value = "No"
-    ns = wb["Nodes"]
-    hdr = [str(c.value or '').strip() for c in next(ns.iter_rows())]
-    ni, mi = hdr.index("Name"), hdr.index("Mgmt IP Address")
+    workbook_access.set_setting(wb, "deploy_in_air", "No")
     ips, octet = {}, 11
-    for row in ns.iter_rows(min_row=2):
-        name = str(row[ni].value or '')
+    for row in workbook_access.node_rows(wb):
+        name = str(row["name"])
         if name.startswith(("oob-switch", "core-")):
             ip = f"10.10.0.{octet}"
-            row[mi].value = ip
+            workbook_access.set_node_mgmt_ip(wb, name, ip)
             ips[name] = ip
             octet += 1
     wb.save(xlsx)

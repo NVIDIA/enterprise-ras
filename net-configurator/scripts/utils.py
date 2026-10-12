@@ -9,6 +9,7 @@ to ensure consistent behavior (e.g., deterministic MAC generation).
 """
 
 import hashlib
+import json
 import re
 from collections import defaultdict
 
@@ -65,6 +66,63 @@ def parse_swp_port(port_str):
     if m:
         return int(m.group(1)), None
     return None
+
+
+# --- OOB uplink mode ---------------------------------------------------------
+#
+# ONE source of truth for the `Settings.oob_uplink_mode` value. The parser and
+# the topology generator each normalised it independently; the parser
+# validated against ('l2', 'l3') while the generator accepted any string, so a
+# typo produced an inventory in L2 and a topology in neither (GitLab #71,
+# ADR-0039). Every reader of the generated topology's `_oob_uplink_mode`
+# field goes through here too, so the fallback default lives in one place.
+OOB_UPLINK_MODES = ('l2', 'l3')
+DEFAULT_OOB_UPLINK_MODE = 'l2'
+TOPOLOGY_OOB_UPLINK_MODE_KEY = '_oob_uplink_mode'
+
+
+def normalize_oob_uplink_mode(raw, source='Settings.oob_uplink_mode', warn=True):
+    """Return ``'l2'`` or ``'l3'`` for an operator-supplied OOB uplink mode.
+
+    ``None``/blank -> the default (``'l2'``). Case and surrounding whitespace
+    are ignored. Any other value falls back to the default and, when ``warn``
+    is set, prints a warning naming ``source`` (ADR-0035: a fallback standing
+    in for operator intent must announce itself).
+    """
+    if raw is None or str(raw).strip() == '':
+        return DEFAULT_OOB_UPLINK_MODE
+    mode = str(raw).strip().lower()
+    if mode not in OOB_UPLINK_MODES:
+        if warn:
+            print(f"  ⚠️  {source}='{raw}' not in {OOB_UPLINK_MODES} — "
+                  f"falling back to {DEFAULT_OOB_UPLINK_MODE}.")
+        return DEFAULT_OOB_UPLINK_MODE
+    return mode
+
+
+def topology_oob_uplink_mode(topology_json):
+    """Return the OOB uplink mode recorded in a generated topology dict.
+
+    Missing key, non-dict input, or an unrecognised value -> ``'l2'`` (the
+    field predates L3 support, so older topology JSON does not carry it).
+    """
+    if not isinstance(topology_json, dict):
+        return DEFAULT_OOB_UPLINK_MODE
+    return normalize_oob_uplink_mode(
+        topology_json.get(TOPOLOGY_OOB_UPLINK_MODE_KEY), warn=False)
+
+
+def read_topology_oob_uplink_mode(path):
+    """Return the OOB uplink mode of the topology JSON at ``path``.
+
+    ``'l2'`` when the file is missing, unreadable, or not valid JSON — the
+    topology may simply not have been generated yet.
+    """
+    try:
+        with open(path) as f:
+            return topology_oob_uplink_mode(json.load(f))
+    except (OSError, ValueError):
+        return DEFAULT_OOB_UPLINK_MODE
 
 
 def loopbacks_sheet_name(wb):
@@ -224,6 +282,22 @@ def is_valid_hostname(name: str) -> bool:
     return bool(re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$', name))
 
 
+# Wire Map B-side names that are placeholders, not managed nodes: unused
+# links ("SPARE ISL"), customer edge (cust-net-edge-NN) and external gear
+# cabled into the fabric but not ZTP-managed (ext-*, ADR-0047). Neither the
+# validator nor the topology generator requires a classifiable role for them.
+BSIDE_SENTINEL_PATTERNS = (
+    re.compile(r'^spare\b', re.IGNORECASE),
+    re.compile(r'^cust[-_]?net[-_]?edge[-_]?\d+$', re.IGNORECASE),
+    re.compile(r'^ext[-_]', re.IGNORECASE),
+)
+
+
+def is_bside_sentinel(name: str) -> bool:
+    """True when a Wire Map B-side name is a sentinel (see BSIDE_SENTINEL_PATTERNS)."""
+    return any(pat.match(name) for pat in BSIDE_SENTINEL_PATTERNS)
+
+
 def classify_net_profile(net_profile: str) -> str:
     """Classify a Wire Map Network Profile string into a canonical key.
 
@@ -328,8 +402,8 @@ def build_interface_map(rows, node_name: str) -> dict:
     # Step 2: Iterate rows, assign ethN, classify.
     # Reserve eth0 ONLY when an OOB-peer row was found (matches the
     # topology generator's _oob_eth0 logic, which also conditionally
-    # reserves eth0). Pre-MR-!26 this was unconditional, which caused
-    # off-by-one drift when a server had no OOB-peer row (IPMI rows
+    # reserves eth0). Reserving it unconditionally causes off-by-one
+    # drift when a server has no OOB-peer row (IPMI rows
     # with blank Port (B), etc.) — topology started at eth0 but
     # netplan started at eth1.
     result = defaultdict(list)

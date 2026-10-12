@@ -5,7 +5,7 @@
 Post-generate cross-check that asserts netplan-side and topology-side
 eth-numbering agree for every non-switch node.
 
-This guards against the class of bug fixed in MR !26: an off-by-one
+This guards against a class of bug seen before: an off-by-one
 between `build_interface_map()` and the topology generator caused
 `su-01-node-01`'s bond to pair a CPU NIC with a GPU NIC. The
 discrepancy was silent — mii-monitor saw both bond members "up" and
@@ -107,7 +107,7 @@ def main():
     print()
     print("  This usually means the parser's build_interface_map() and the")
     print("  topology generator's _oob_eth0 logic have diverged. Bonds may")
-    print("  silently pair NICs from different L2 domains — see MR !26.")
+    print("  silently pair NICs from different L2 domains.")
     return 1
 
 

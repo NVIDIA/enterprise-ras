@@ -28,6 +28,9 @@ from pathlib import Path
 
 import openpyxl
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
 import yaml
 
 NC = Path(__file__).resolve().parent.parent
@@ -98,13 +101,7 @@ def test_per_server_association_type_is_honoured(value, expected, tmp_path):
     xlsx = dst / "input" / ARCH / "default" / f"{ARCH}.xlsx"
 
     wb = openpyxl.load_workbook(xlsx)
-    ws = wb["Settings"]
-    for r in range(1, ws.max_row + 1):
-        if str(ws.cell(r, 1).value or "").strip() == "ntp_servers":
-            ws.cell(r, 2).value = f"0.pool.ntp.org\n{value}"
-            break
-    else:
-        pytest.fail("no ntp_servers row in Settings")
+    workbook_access.set_setting(wb, "ntp_servers", f"0.pool.ntp.org\n{value}")
     wb.save(xlsx)
 
     r = subprocess.run(
@@ -136,11 +133,8 @@ def test_address_never_carries_the_type_through(tmp_path):
     shutil.copytree(NC, dst, ignore=_COPY_IGNORE)
     xlsx = dst / "input" / ARCH / "default" / f"{ARCH}.xlsx"
     wb = openpyxl.load_workbook(xlsx)
-    ws = wb["Settings"]
-    for r in range(1, ws.max_row + 1):
-        if str(ws.cell(r, 1).value or "").strip() == "ntp_servers":
-            ws.cell(r, 2).value = "0.pool.ntp.org association-type pool"
-            break
+    workbook_access.set_setting(wb, "ntp_servers",
+                                "0.pool.ntp.org association-type pool")
     wb.save(xlsx)
     subprocess.run(
         [sys.executable, "scripts/excel_parser.py", "--arch", ARCH,
@@ -161,11 +155,8 @@ def test_unknown_association_type_falls_back_to_server(tmp_path):
     shutil.copytree(NC, dst, ignore=_COPY_IGNORE)
     xlsx = dst / "input" / ARCH / "default" / f"{ARCH}.xlsx"
     wb = openpyxl.load_workbook(xlsx)
-    ws = wb["Settings"]
-    for r in range(1, ws.max_row + 1):
-        if str(ws.cell(r, 1).value or "").strip() == "ntp_servers":
-            ws.cell(r, 2).value = "0.pool.ntp.org association-type poool"
-            break
+    workbook_access.set_setting(wb, "ntp_servers",
+                                "0.pool.ntp.org association-type poool")
     wb.save(xlsx)
     r = subprocess.run(
         [sys.executable, "scripts/excel_parser.py", "--arch", ARCH,

@@ -14,6 +14,9 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
+
 NC = Path(__file__).resolve().parent.parent  # net-configurator/
 ARCH = "2-8-9-800"
 SWITCH = "oob-switch-01"
@@ -26,22 +29,9 @@ _COPY_IGNORE = shutil.ignore_patterns(
 
 
 def _inject_asn(xlsx: Path, switch: str, asn: int):
-    """Set `switch`'s ASN in the Loopbacks ASN column (create the column if the
-    workbook predates it), overriding just that one switch."""
+    """Set `switch`'s ASN, overriding just that one switch."""
     wb = openpyxl.load_workbook(xlsx)
-    lb = next(s for s in wb.sheetnames if str(s).strip().lower().startswith("loopback"))
-    ws = wb[lb]
-    hr = next(r for r in range(1, 5)
-              if str(ws.cell(r, 1).value or "").strip().startswith("Switch"))
-    col = next((c for c in range(1, ws.max_column + 1)
-                if str(ws.cell(hr, c).value or "").strip().lower() in
-                ("asn", "bgp asn", "bgp_asn", "autonomous system", "as number")), None)
-    if col is None:
-        col = ws.max_column + 1
-        ws.cell(hr, col, "ASN")
-    for r in range(hr + 1, ws.max_row + 1):
-        if str(ws.cell(r, 1).value or "").strip() == switch:
-            ws.cell(r, col, asn)
+    assert workbook_access.set_switch_asn(wb, switch, asn), f"no {switch} row"
     wb.save(xlsx)
 
 

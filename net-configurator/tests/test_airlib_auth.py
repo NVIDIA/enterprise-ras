@@ -12,7 +12,6 @@ Commit d277792 hardened the function to require a 2xx response and
 raise distinct, actionable errors for each of the common failure
 modes. These tests pin that behaviour and each error-message branch.
 """
-import json
 import sys
 from pathlib import Path
 

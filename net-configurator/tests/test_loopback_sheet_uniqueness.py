@@ -64,6 +64,7 @@ def _tracked_workbooks():
     return sorted(
         str(p.relative_to(REPO))
         for p in REPO.glob("input/*/*/*.xlsx")
+        if not str(p).endswith(".intake.xlsx")
         if p.parent.name in ("default", "largescale")
     )
 

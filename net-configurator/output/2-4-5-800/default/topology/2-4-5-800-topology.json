@@ -12,7 +12,7 @@
                     "x": 1650,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -31,7 +31,7 @@
                     "x": 2200,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -50,7 +50,7 @@
                     "x": 1650,
                     "y": -550
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -69,7 +69,7 @@
                     "x": 2200,
                     "y": -550
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -126,7 +126,7 @@
                     "x": 3300,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -145,7 +145,7 @@
                     "x": 3575,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -164,7 +164,7 @@
                     "x": 3850,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -183,7 +183,7 @@
                     "x": 4125,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -202,7 +202,7 @@
                     "x": 4675,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -221,7 +221,7 @@
                     "x": 4950,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -240,7 +240,7 @@
                     "x": 5225,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -259,7 +259,7 @@
                     "x": 5500,
                     "y": 0
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -278,7 +278,7 @@
                     "x": 3300,
                     "y": -275
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -297,7 +297,7 @@
                     "x": 3575,
                     "y": -275
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -316,7 +316,7 @@
                     "x": 4675,
                     "y": -275
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -335,7 +335,7 @@
                     "x": 4950,
                     "y": -275
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -354,7 +354,7 @@
                     "x": 2750,
                     "y": 275
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -373,7 +373,7 @@
                     "x": 2750,
                     "y": 550
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -392,7 +392,7 @@
                     "x": 2750,
                     "y": 825
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false
@@ -411,7 +411,7 @@
                     "x": 2750,
                     "y": 1100
                 },
-                "os": "cumulus-vx-5.18.0",
+                "os": "cumulus-vx-5.18.3",
                 "features": {
                     "uefi": false,
                     "tpm": false

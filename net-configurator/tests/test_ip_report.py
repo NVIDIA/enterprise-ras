@@ -17,7 +17,6 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:

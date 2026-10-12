@@ -34,10 +34,15 @@ third VRF, these tests fail rather than letting it go quietly unadvertised.
 """
 import ipaddress
 import re
+import sys
 from pathlib import Path
 
 import openpyxl
+
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
 
 NC = Path(__file__).resolve().parent.parent
 _SHIPPED_SITES = ("default", "largescale")
@@ -70,28 +75,19 @@ def _covered(net, rules):
 
 
 def _vlan_subnets(xlsx):
-    """-> [(vrf, subnet_str, ip_network)] from the VLANs & Profiles sheet."""
-    ws = openpyxl.load_workbook(xlsx, data_only=True)["VLANs & Profiles"]
-    hdr = {}
-    for r in range(1, min(ws.max_row + 1, 6)):
-        for c in range(1, ws.max_column + 1):
-            v = str(ws.cell(r, c).value or "").strip().lower()
-            if v in ("vlan id", "subnet", "vrf"):
-                hdr.setdefault(v, (r, c))
-        if "vlan id" in hdr:
-            break
-    if not {"vlan id", "subnet", "vrf"} <= set(hdr):
-        return []
+    """-> [(vrf, subnet_str, ip_network)] from the workbook's VLAN table."""
+    wb = openpyxl.load_workbook(xlsx, data_only=True)
     out = []
-    for r in range(hdr["vlan id"][0] + 1, ws.max_row + 1):
-        sn = str(ws.cell(r, hdr["subnet"][1]).value or "").strip()
+    for row in workbook_access.vlan_rows(wb):
+        sn = str(row.get("subnet") or "").strip()
         if "/" not in sn:
             continue
-        vrf = str(ws.cell(r, hdr["vrf"][1]).value or "").strip()
         try:
-            out.append((vrf, sn, ipaddress.ip_network(sn, strict=False)))
+            out.append((str(row.get("vrf") or "").strip(), sn,
+                        ipaddress.ip_network(sn, strict=False)))
         except ValueError:
             continue
+    wb.close()
     return out
 
 
@@ -218,23 +214,11 @@ def _validate(xlsx):
 def _set_vlan_subnet(xlsx, want_vrf, new_subnet):
     """Move the first VLAN in `want_vrf` onto `new_subnet`. -> the VLAN id."""
     wb = openpyxl.load_workbook(xlsx)
-    ws = wb["VLANs & Profiles"]
-    hdr = {}
-    for r in range(1, min(ws.max_row + 1, 6)):
-        for c in range(1, ws.max_column + 1):
-            v = str(ws.cell(r, c).value or "").strip().lower()
-            if v in ("vlan id", "subnet", "vrf"):
-                hdr.setdefault(v, (r, c))
-        if "vlan id" in hdr:
-            break
-    for r in range(hdr["vlan id"][0] + 1, ws.max_row + 1):
-        vrf = str(ws.cell(r, hdr["vrf"][1]).value or "").strip().upper()
-        if vrf == want_vrf:
-            ws.cell(r, hdr["subnet"][1]).value = new_subnet
-            vid = ws.cell(r, hdr["vlan id"][1]).value
-            wb.save(xlsx)
-            return vid
-    pytest.skip(f"no {want_vrf} VLAN to move")
+    vid = workbook_access.set_vlan_subnet(wb, want_vrf, new_subnet)
+    if vid is None:
+        pytest.skip(f"no {want_vrf} VLAN to move")
+    wb.save(xlsx)
+    return vid
 
 
 def test_shipped_workbook_passes_prefix_alignment(tmp_path):
@@ -295,6 +279,7 @@ def test_gpu_subnet_outside_the_supernet_is_accepted(tmp_path):
 _E2E_FIXTURES = sorted((NC.parent / "release" / "e2e" / "fixtures").glob("*.xlsx"))
 
 
+@pytest.mark.internal_only("release/e2e/fixtures")
 @pytest.mark.parametrize("fx", _E2E_FIXTURES, ids=lambda p: p.stem)
 def test_e2e_fixtures_validate_without_crashing(fx):
     """`make import` must not die on the fixtures CI actually deploys."""
@@ -313,21 +298,7 @@ def test_storage_vrf_does_not_warn(tmp_path):
     xlsx = _workbook_copy(tmp_path)
     _set_vlan_subnet(xlsx, "GPU", "192.168.99.0/24")  # keep GPU valid
     wb = openpyxl.load_workbook(xlsx)
-    ws = wb["VLANs & Profiles"]
-    hdr = {}
-    for r in range(1, min(ws.max_row + 1, 6)):
-        for c in range(1, ws.max_column + 1):
-            v = str(ws.cell(r, c).value or "").strip().lower()
-            if v in ("vlan id", "subnet", "vrf"):
-                hdr.setdefault(v, (r, c))
-        if "vlan id" in hdr:
-            break
-    # Retag one GPU row as STORAGE with an off-supernet subnet.
-    for r in range(hdr["vlan id"][0] + 1, ws.max_row + 1):
-        if str(ws.cell(r, hdr["vrf"][1]).value or "").strip().upper() == "GPU":
-            ws.cell(r, hdr["vrf"][1]).value = "STORAGE"
-            ws.cell(r, hdr["subnet"][1]).value = "10.10.10.0/24"
-            break
+    workbook_access.retag_first_vlan(wb, "GPU", "STORAGE", "10.10.10.0/24")
     wb.save(xlsx)
 
     r = _validate(xlsx)
@@ -341,20 +312,7 @@ def test_a_genuinely_unknown_vrf_warns_and_does_not_crash(tmp_path):
     """The branch that was dead code. Must warn cleanly, not raise."""
     xlsx = _workbook_copy(tmp_path)
     wb = openpyxl.load_workbook(xlsx)
-    ws = wb["VLANs & Profiles"]
-    hdr = {}
-    for r in range(1, min(ws.max_row + 1, 6)):
-        for c in range(1, ws.max_column + 1):
-            v = str(ws.cell(r, c).value or "").strip().lower()
-            if v in ("vlan id", "subnet", "vrf"):
-                hdr.setdefault(v, (r, c))
-        if "vlan id" in hdr:
-            break
-    for r in range(hdr["vlan id"][0] + 1, ws.max_row + 1):
-        if str(ws.cell(r, hdr["vrf"][1]).value or "").strip().upper() == "GPU":
-            ws.cell(r, hdr["vrf"][1]).value = "TENANT_X"
-            ws.cell(r, hdr["subnet"][1]).value = "10.20.30.0/24"
-            break
+    workbook_access.retag_first_vlan(wb, "GPU", "TENANT_X", "10.20.30.0/24")
     wb.save(xlsx)
 
     r = _validate(xlsx)

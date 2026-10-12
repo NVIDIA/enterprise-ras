@@ -23,6 +23,7 @@ switches auto-assign around the pins. Three gates keep that safe:
 A non-switch host inside air_mgmt_subnet is still an intruder, unchanged.
 """
 import importlib.util
+import ipaddress
 import shutil
 import subprocess
 import sys
@@ -33,55 +34,59 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 VALIDATOR = REPO / "scripts" / "validate_excel.py"
-BASE = REPO / "input" / "RH-2-8-5-200.xlsx"
+# A shipped intake-form workbook (ADR-0064) that passes `make validate-excel`
+# as committed. The brownfield shape -- every switch pinned to a live address
+# on a non-default air-mgmt plane -- is applied on a copy by `workbook()`, so
+# the module runs everywhere the tool ships, including the public tree.
+BASE = REPO / "input" / "2-8-5-200" / "default" / "2-8-5-200.xlsx"
+
+sys.path.insert(0, str(REPO / "scripts"))
+from intake_reader import column_map, header_row  # noqa: E402
 
 AIR_SUBNET = "10.78.255.0/24"
+AIR_SUBNET_ROW = "Air Management Subnet"
 
-pytestmark = pytest.mark.skipif(not BASE.exists(), reason="brownfield workbook absent")
+
+def _rows(ws):
+    """(row_index, {normalised header: cell}) for every data row of an intake table."""
+    cols = column_map(ws)
+    for r in range(header_row(ws) + 1, ws.max_row + 1):
+        yield r, {name: ws.cell(r, c) for name, c in cols.items()}
 
 
 def _switch_names():
-    """Read the two core and two OOB switch names out of the workbook.
-
-    Previously these were four hardcoded constants carrying a customer's
-    site-prefixed hostnames. Deriving them keeps the identifier out of shipped
-    source, and makes the test independent of whose workbook it runs against —
-    which matters because this module skips wherever that workbook is absent
-    (CI included), so a hardcoded name is only ever checked on one machine.
-    """
-    wb = openpyxl.load_workbook(BASE, read_only=True, data_only=True)
+    """The two core and two OOB switch names, read from the workbook's Switch Data
+    sheet rather than hardcoded."""
+    wb = openpyxl.load_workbook(BASE)
     try:
-        rows = wb["Nodes"].iter_rows(min_row=2, values_only=True)
-        cores, oobs = [], []
-        for r in rows:
-            name = str((r[1] if len(r) > 1 else "") or "").strip()
-            if name.startswith("oob-switch-"):
-                oobs.append(name)
-            elif name.startswith("core-"):
-                cores.append(name)
+        names = [str(cells["name"].value or "").strip() for _, cells in _rows(wb["Switch Data"])]
     finally:
         wb.close()
+    cores = [n for n in names if n.startswith("core-")]
+    oobs = [n for n in names if n.startswith("oob-switch-")]
     assert len(cores) >= 2 and len(oobs) >= 2, (
         f"workbook must declare >=2 core and >=2 oob switches; got {cores}, {oobs}")
     return cores[0], cores[1], oobs[0], oobs[1]
 
 
 def _a_server_name():
-    """Any non-switch node — used to prove the gate fires on servers too."""
-    wb = openpyxl.load_workbook(BASE, read_only=True, data_only=True)
+    """Any addressed non-switch host -- used to prove the gate fires on servers too."""
+    wb = openpyxl.load_workbook(BASE)
     try:
-        for r in wb["Nodes"].iter_rows(min_row=2, values_only=True):
-            name = str((r[1] if len(r) > 1 else "") or "").strip()
-            if name and not name.startswith(("core-", "oob-switch-", "csl-", "gsl-",
-                                             "cust-net-edge", "external-", "utility")):
-                return name
+        for _, cells in _rows(wb["Host Data"]):
+            if (str(cells["type"].value or "").strip() == "node"
+                    and str(cells["ip"].value or "").strip()):
+                return str(cells["system name"].value).strip()
     finally:
         wb.close()
-    raise AssertionError("workbook declares no non-switch node")
+    raise AssertionError("workbook declares no addressed non-switch host")
 
 
-CORE1, CORE2, OOB1, OOB2 = _switch_names() if BASE.exists() else ("", "", "", "")
-SERVER = _a_server_name() if BASE.exists() else ""
+CORE1, CORE2, OOB1, OOB2 = _switch_names()
+SERVER = _a_server_name()
+# The brownfield shape: the operator's switches already answer on .21-.24.
+PINS = {CORE1: "10.78.255.21", CORE2: "10.78.255.22",
+        OOB1: "10.78.255.23", OOB2: "10.78.255.24"}
 
 
 def _air_deploy():
@@ -96,23 +101,33 @@ def _air_deploy():
 
 @pytest.fixture
 def workbook(tmp_path):
-    """Copy the brownfield workbook, set the air subnet, apply mgmt-IP edits."""
-    def _go(mutations=None, air_subnet=AIR_SUBNET):
+    """Copy the shipped workbook, move the air-mgmt plane, pin the switches.
+
+    `mutations` overrides PINS (switch Mgmt IP) or sets a Host Data IP; a value
+    of None blanks the cell, leaving that switch to auto-assign. `pins=False`
+    keeps the workbook's own OOB-plane switch addresses (nothing pinned).
+    """
+    def _go(mutations=None, air_subnet=AIR_SUBNET, pins=True):
+        edits = {**(PINS if pins else {}), **(mutations or {})}
         dst = tmp_path / "2-8-5-200.xlsx"
         shutil.copy2(BASE, dst)
         wb = openpyxl.load_workbook(dst)
-        ws = wb["Air_Only"]
+        ws = wb["Deployment"]
+        found = False
         for r in range(1, ws.max_row + 1):
-            if str(ws.cell(r, 1).value or "").strip() == "Air Management Subnet":
+            if str(ws.cell(r, 1).value or "").strip() == AIR_SUBNET_ROW:
                 ws.cell(r, 2).value = air_subnet
-        nodes = wb["Nodes"]
-        hdr = [str(c.value or "").strip() for c in nodes[1]]
-        name_c = hdr.index("Name") + 1
-        ip_c = hdr.index("Mgmt IP Address") + 1
-        for r in range(2, nodes.max_row + 1):
-            nm = str(nodes.cell(r, name_c).value or "").strip()
-            if nm in (mutations or {}):
-                nodes.cell(r, ip_c).value = (mutations or {})[nm]
+                found = True
+        assert found, f"Deployment sheet has no '{AIR_SUBNET_ROW}' row"
+        applied = set()
+        for sheet, name_col, ip_col in (("Switch Data", "name", "mgmt ip"),
+                                        ("Host Data", "system name", "ip")):
+            for _, cells in _rows(wb[sheet]):
+                nm = str(cells[name_col].value or "").strip()
+                if nm in edits:
+                    cells[ip_col].value = edits[nm]
+                    applied.add(nm)
+        assert applied == set(edits), f"no row for {set(edits) - applied}"
         wb.save(dst)
         return dst
     return _go
@@ -124,9 +139,9 @@ def _errors(xlsx):
     return [ln.strip() for ln in proc.stdout.splitlines() if "❌" in ln]
 
 
-def _ansible_hosts(xlsx, tmp_path):
-    """Generate inventory for `xlsx` and return {switch: ansible_host}."""
-    site = "pytest" + tmp_path.name[-8:]
+def _generate(xlsx, tmp_path, tag=""):
+    """Generate inventory for `xlsx` and return {host: host_vars text}."""
+    site = "pytest" + tag + tmp_path.name[-8:]
     inp = REPO / "input" / "2-8-5-200" / site
     out = REPO / "output" / "2-8-5-200" / site
     inp.mkdir(parents=True, exist_ok=True)
@@ -135,15 +150,24 @@ def _ansible_hosts(xlsx, tmp_path):
         subprocess.run([sys.executable, "scripts/excel_parser.py",
                         "--arch", "2-8-5-200", "--site", site],
                        capture_output=True, text=True, cwd=str(REPO), check=True)
-        hosts = {}
-        for hv in (out / "inventory" / "host_vars").glob("*.yml"):
-            for line in hv.read_text().splitlines():
-                if line.startswith("ansible_host:"):
-                    hosts[hv.stem] = line.split(":", 1)[1].strip()
-        return hosts
+        return {hv.stem: hv.read_text()
+                for hv in (out / "inventory" / "host_vars").glob("*.yml")}
     finally:
         shutil.rmtree(inp, ignore_errors=True)
         shutil.rmtree(out, ignore_errors=True)
+
+
+def _var(text, key):
+    for line in text.splitlines():
+        if line.startswith(f"{key}:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
+def _ansible_hosts(xlsx, tmp_path):
+    """Generate inventory for `xlsx` and return {switch: ansible_host}."""
+    return {h: _var(t, "ansible_host") for h, t in _generate(xlsx, tmp_path).items()
+            if _var(t, "ansible_host") is not None}
 
 
 # --- air-deploy.py follows air_mgmt_subnet --------------------------------
@@ -184,7 +208,7 @@ def test_air_mgmt_owner_map_matches_reserved_set():
 # --- pins are honoured ----------------------------------------------------
 
 def test_real_brownfield_addresses_validate_clean(workbook):
-    """The shipping case: customer's live .21-.24 on their own mgmt subnet."""
+    """The brownfield case: live .21-.24 pins on a moved air-mgmt plane."""
     assert _errors(workbook()) == []
 
 
@@ -207,21 +231,14 @@ def test_unpinned_switches_auto_assign_around_pins(workbook, tmp_path):
 
 def test_oob_svi_plane_is_untouched_by_pinning(workbook, tmp_path):
     """Pinning eth0 must not disturb the BMC plane the OOB switches serve."""
-    xlsx = workbook()
-    inp = REPO / "input" / "2-8-5-200" / "pytestsvi"
-    out = REPO / "output" / "2-8-5-200" / "pytestsvi"
-    inp.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(xlsx, inp / "2-8-5-200.xlsx")
-    try:
-        subprocess.run([sys.executable, "scripts/excel_parser.py",
-                        "--arch", "2-8-5-200", "--site", "pytestsvi"],
-                       capture_output=True, text=True, cwd=str(REPO), check=True)
-        hv = (out / "inventory" / "host_vars" / f"{OOB1}.yml").read_text()
-        assert "svi_ip: 10.78.220.130/25" in hv
-        assert "default_gateway: 10.78.220.129" in hv
-    finally:
-        shutil.rmtree(inp, ignore_errors=True)
-        shutil.rmtree(out, ignore_errors=True)
+    pinned = _generate(workbook(), tmp_path, "p")[OOB1]
+    unpinned = _generate(workbook(pins=False), tmp_path, "u")[OOB1]
+    svi, gw = _var(pinned, "svi_ip"), _var(pinned, "default_gateway")
+    assert svi and gw, pinned
+    assert (svi, gw) == (_var(unpinned, "svi_ip"), _var(unpinned, "default_gateway"))
+    air = ipaddress.IPv4Network(AIR_SUBNET)
+    assert ipaddress.IPv4Interface(svi).ip not in air
+    assert ipaddress.IPv4Address(gw) not in air
 
 
 # --- the three gates ------------------------------------------------------

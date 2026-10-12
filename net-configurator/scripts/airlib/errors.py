@@ -14,6 +14,7 @@ so a caller can do `sys.exit(err.exit_code)` without re-deriving it:
     AirConfigError  1   credentials or settings missing / unusable
     AirSSHError     2   could not connect or authenticate over SSH
     AirAPIError     3   Air answered, but with an error or something unexpected
+      AirAuthError  3   ...specifically 401/403: the key was refused for that call
 """
 
 # Exit codes
@@ -35,6 +36,13 @@ class AirConfigError(AirError):
 class AirAPIError(AirError):
     """Air API returned an error or unexpected response."""
     exit_code = EXIT_API
+
+
+class AirAuthError(AirAPIError):
+    """Air refused the bearer token (401/403) reading the image catalog.
+
+    `authenticate()` still raises plain AirAPIError for its own 401/403.
+    """
 
 
 class AirSSHError(AirError):

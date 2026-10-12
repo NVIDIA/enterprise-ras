@@ -30,7 +30,6 @@ from topology_generator import (
     TopologyGenerator,
     WiremapRow,
     SWITCH_MODELS,
-    SWITCH_OS_FALLBACK,
     SERVER_OS,
     NODE_DEFAULTS,
 )
@@ -48,18 +47,29 @@ def _reset_mac_reg():
 # Helper: build minimal Excel files on disk (TopologyGenerator needs file paths)
 # ---------------------------------------------------------------------------
 
-def _build_wiremap_workbook(rows=None, settings=None, air_only_rows=None):
+def _build_wiremap_workbook(rows=None, settings=None, air_only_rows=None,
+                            image_map_rows=None):
     """Create an openpyxl Workbook with Wire Map (and optionally Air_Only/Settings)."""
     wb = openpyxl.Workbook()
+    if image_map_rows is None:
+        image_map_rows = [("5.18.0", "cumulus-vx-5.18.0")]
 
     # Remove default sheet
     wb.remove(wb.active)
 
     # Settings sheet
     ws_settings = wb.create_sheet("Settings")
-    if settings:
-        for key, value in settings:
-            ws_settings.append([key, value])
+    settings = list(settings or [])
+    if not any(str(key).strip().lower() == "switch function"
+               for key, _ in settings):
+        settings.extend([
+            ("VERSIONS", None),
+            ("Switch Function", "Cumulus Version"),
+            ("core", "5.18.0"),
+            ("oob-switch", "5.18.0"),
+        ])
+    for key, value in settings:
+        ws_settings.append([key, value])
 
     # Wire Map sheet with 13 columns
     ws = wb.create_sheet("Wire Map")
@@ -76,16 +86,22 @@ def _build_wiremap_workbook(rows=None, settings=None, air_only_rows=None):
             ws.append(padded[:13])
 
     # Air_Only sheet (optional, new format)
-    if air_only_rows is not None:
+    if air_only_rows is not None or image_map_rows is not None:
         ws_air = wb.create_sheet("Air_Only")
         air_header = [
             "Display in Air", "System Role", "System Name", "NIC/Port",
             "Network Profile", "Switch Role", "Switch Name", "Switch Port",
         ]
         ws_air.append(air_header)
-        for row in air_only_rows:
+        for row in air_only_rows or []:
             padded = list(row) + [None] * (8 - len(row))
             ws_air.append(padded[:8])
+        if image_map_rows is not None:
+            ws_air.append([None] * 8)
+            ws_air.append(["Friendly Version", "Air Image"])
+            for row in image_map_rows:
+                padded = list(row) + [None] * (8 - len(row))
+                ws_air.append(padded[:8])
 
     return wb
 
@@ -276,12 +292,14 @@ class TestTopologyGenerator:
     """Tests for the TopologyGenerator class."""
 
     def _make_minimal_topology(self, tmp_path, wiremap_rows, settings=None,
-                               air_only_rows=None, arch="2-8-5-200"):
+                               air_only_rows=None, image_map_rows=None,
+                               arch="2-8-5-200"):
         """Helper: write workbook and instantiate TopologyGenerator."""
         wb = _build_wiremap_workbook(
             rows=wiremap_rows,
             settings=settings,
             air_only_rows=air_only_rows,
+            image_map_rows=image_map_rows,
         )
         path = _write_workbook(wb, tmp_path, arch=arch)
         return TopologyGenerator(path, arch)
@@ -321,7 +339,7 @@ class TestTopologyGenerator:
         topo = gen.generate()
 
         nodes = topo["content"]["nodes"]
-        assert nodes["core-01"]["os"] == SWITCH_OS_FALLBACK
+        assert nodes["core-01"]["os"] == "cumulus-vx-5.18.0"
         assert nodes["su-01-node-01"]["os"] == SERVER_OS
 
     def test_switches_only_drops_servers_keeps_ports(self, tmp_path):
@@ -559,7 +577,7 @@ class TestTopologyGenerator:
 class TestL3OobInjection:
     """Tests for _inject_l3_oob_nodes — the L3-OOB Air topology path.
 
-    Design doc: docs/plans/2026-05-20-l3-oob-air-topology.md
+    Design doc: ADR-0067
     """
 
     def _l3_wiremap(self):
@@ -788,6 +806,37 @@ class TestL3OobInjection:
         assert "air-oob-switch" in topo["content"]["nodes"]
         assert "external-conn" not in topo["content"]["nodes"]
 
+    def test_case_and_whitespace_normalised_like_parser(self, tmp_path):
+        """' L3 ' is L3 for the topology exactly as it is for the parser."""
+        wb = _build_wiremap_workbook(
+            rows=self._l3_wiremap(),
+            settings=[("oob_uplink_mode", " L3 ")],
+        )
+        path = _write_workbook(wb, tmp_path, arch="2-8-5-200")
+        topo = TopologyGenerator(path, "2-8-5-200").generate()
+
+        assert topo["_oob_uplink_mode"] == "l3"
+        assert "external-conn" in topo["content"]["nodes"]
+
+    def test_unknown_mode_falls_back_to_l2_with_warning(self, tmp_path, capsys):
+        """GitLab #71: a typo must not leak into `_oob_uplink_mode`.
+
+        The parser already rejected unknown values and fell back to l2; the
+        generator recorded the raw string, so the inventory was L2 while the
+        topology was neither. Both now share utils.normalize_oob_uplink_mode.
+        """
+        wb = _build_wiremap_workbook(
+            rows=self._l3_wiremap(),
+            settings=[("oob_uplink_mode", "LAYER3")],
+        )
+        path = _write_workbook(wb, tmp_path, arch="2-8-5-200")
+        topo = TopologyGenerator(path, "2-8-5-200").generate()
+
+        assert topo["_oob_uplink_mode"] == "l2"
+        assert "air-oob-switch" in topo["content"]["nodes"]
+        assert "external-conn" not in topo["content"]["nodes"]
+        assert "LAYER3" in capsys.readouterr().out
+
     def test_l3_mode_auto_creates_edge_when_missing(self, tmp_path):
         """L3 mode with no cust-net-edge-01 in wiremap → auto-creates it."""
         # Wiremap with cores and oob-switch but NO cust-net-edge
@@ -975,7 +1024,19 @@ class TestWiremapRowEnabled:
         subport it would have connected to still emits (as an unconnected stub)."""
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
-        wb.create_sheet("Settings")
+        ws_settings = wb.create_sheet("Settings")
+        ws_settings.append(["VERSIONS", None])
+        ws_settings.append(["Switch Function", "Cumulus Version"])
+        ws_settings.append(["core", "5.18.0"])
+        ws_settings.append(["oob-switch", "5.18.0"])
+        ws_air = wb.create_sheet("Air_Only")
+        ws_air.append([
+            "Display in Air", "System Role", "System Name", "NIC/Port",
+            "Network Profile", "Switch Role", "Switch Name", "Switch Port",
+        ])
+        ws_air.append([None] * 8)
+        ws_air.append(["Friendly Version", "Air Image"])
+        ws_air.append(["5.18.0", "cumulus-vx-5.18.0"])
         ws_nodes = wb.create_sheet("Nodes")
         ws_nodes.append(["Function", "Name", "MAC", "Mgmt IP", "Prefix", "Gateway", "ZTP", "Enabled"])
         ws_nodes.append(["gpu", "su-01-node-01", "", "192.168.200.10", "24", "192.168.200.1", "Yes", "Yes"])
@@ -1015,7 +1076,11 @@ class TestWiremapRowEnabled:
 # ---------------------------------------------------------------------------
 
 class TestOobUplinkModeNormalization:
-    """The parser's _normalize_oob_uplink_mode should handle typos cleanly."""
+    """The parser's _normalize_oob_uplink_mode should handle typos cleanly.
+
+    It is a thin wrapper over utils.normalize_oob_uplink_mode, which the
+    topology generator and every `_oob_uplink_mode` reader also use.
+    """
 
     def test_normalize_empty_defaults_to_l2(self):
         # Imported lazily to avoid circular issues
@@ -1043,6 +1108,33 @@ class TestOobUplinkModeNormalization:
         # Warning should be emitted (operator typo signal)
         captured = capsys.readouterr()
         assert "not in" in captured.out
+
+    def test_parser_wrapper_delegates_to_utils(self):
+        from excel_parser import _normalize_oob_uplink_mode
+        from utils import normalize_oob_uplink_mode
+        for raw in (None, "", "l2", "L3", " l3 ", "LAYER3", 3):
+            assert _normalize_oob_uplink_mode({"oob_uplink_mode": raw}) == \
+                normalize_oob_uplink_mode(raw, warn=False)
+
+    def test_topology_reader_normalises_and_defaults(self):
+        from utils import topology_oob_uplink_mode
+        assert topology_oob_uplink_mode({}) == "l2"
+        assert topology_oob_uplink_mode(None) == "l2"
+        assert topology_oob_uplink_mode({"_oob_uplink_mode": "l3"}) == "l3"
+        assert topology_oob_uplink_mode({"_oob_uplink_mode": " L3 "}) == "l3"
+        assert topology_oob_uplink_mode({"_oob_uplink_mode": "LAYER3"}) == "l2"
+        assert topology_oob_uplink_mode({"_oob_uplink_mode": ""}) == "l2"
+
+    def test_topology_file_reader_tolerates_missing_and_garbage(self, tmp_path):
+        from utils import read_topology_oob_uplink_mode
+        assert read_topology_oob_uplink_mode(tmp_path / "absent.json") == "l2"
+        bad = tmp_path / "bad.json"
+        bad.write_text("{not json")
+        assert read_topology_oob_uplink_mode(bad) == "l2"
+        good = tmp_path / "good.json"
+        good.write_text(json.dumps({"_oob_uplink_mode": "L3"}))
+        assert read_topology_oob_uplink_mode(good) == "l3"
+        assert read_topology_oob_uplink_mode(str(good)) == "l3"
 
 
 class TestParseCidr:
@@ -1089,11 +1181,7 @@ class TestResolveInfraNodes:
             Path(__file__).parent.parent / "scripts" / "air-deploy.py",
         )
         mod = importlib.util.module_from_spec(spec)
-        # The module imports httpx etc — best-effort import; skip if env unavailable.
-        try:
-            spec.loader.exec_module(mod)
-        except ImportError as exc:
-            pytest.skip(f"air-deploy.py cannot be imported in this test env: {exc}")
+        spec.loader.exec_module(mod)
         return mod._resolve_infra_nodes
 
     def test_resolves_l2(self):
@@ -1153,10 +1241,7 @@ class TestSwitchNIPasswordNotLeaked:
             Path(__file__).parent.parent / "scripts" / "air-deploy.py",
         )
         mod = importlib.util.module_from_spec(spec)
-        try:
-            spec.loader.exec_module(mod)
-        except ImportError as exc:
-            pytest.skip(f"air-deploy.py cannot be imported in this test env: {exc}")
+        spec.loader.exec_module(mod)
         return mod.build_switch_ni_commands
 
     def _decode_apply_script(self, commands):
@@ -1377,10 +1462,7 @@ class TestSwitchNIApplyVerifiesAppliedState:
             Path(__file__).parent.parent / "scripts" / "air-deploy.py",
         )
         mod = importlib.util.module_from_spec(spec)
-        try:
-            spec.loader.exec_module(mod)
-        except ImportError as exc:
-            pytest.skip(f"air-deploy.py cannot be imported in this test env: {exc}")
+        spec.loader.exec_module(mod)
         return mod.build_switch_ni_commands
 
     def _apply_script(self):
@@ -1461,14 +1543,14 @@ class TestSwitchNIApplySilentFailureIsCaught:
             Path(__file__).parent.parent / "scripts" / "air-deploy.py",
         )
         mod = importlib.util.module_from_spec(spec)
-        try:
-            spec.loader.exec_module(mod)
-        except ImportError as exc:
-            pytest.skip(f"air-deploy.py cannot be imported in this test env: {exc}")
+        spec.loader.exec_module(mod)
         return mod.build_switch_ni_commands
 
     def _run(self, tmp_path, nv_stub_body):
-        import base64, os, shutil, subprocess
+        import base64
+        import os
+        import shutil
+        import subprocess
         if shutil.which("bash") is None:
             pytest.skip("bash unavailable")
 

@@ -30,6 +30,11 @@ vlan_interfaces:
   vrr: 172.16.179.1/24
   vlan: '400'
   vrf: INBAND
+- id: vlan900
+  ip: 192.168.0.2/24
+  vrr: 192.168.0.1/24
+  vlan: '900'
+  vrf: GPU
 - id: vlan901
   ip: 192.168.1.2/24
   vrr: 192.168.1.1/24
@@ -45,13 +50,8 @@ vlan_interfaces:
   vrr: 192.168.3.1/24
   vlan: '903'
   vrf: GPU
-- id: vlan904
-  ip: 192.168.4.2/24
-  vrr: 192.168.4.1/24
-  vlan: '904'
-  vrf: GPU
 gpu_rail_interfaces:
-  rail1:
+  rail0:
     ports:
     - 6
     - 7
@@ -75,7 +75,7 @@ gpu_rail_interfaces:
     - 25
     breakout: 2
     lanes: 4
-    vlan: 901
+    vlan: 900
     state: up
     port_overrides:
       6:
@@ -139,7 +139,7 @@ gpu_rail_interfaces:
         subports:
         - 0
     speed: 400G
-  rail3:
+  rail2:
     ports:
     - 6
     - 7
@@ -163,7 +163,7 @@ gpu_rail_interfaces:
     - 25
     breakout: 2
     lanes: 4
-    vlan: 903
+    vlan: 902
     state: up
     port_overrides:
       6:
@@ -231,7 +231,7 @@ vrf_loopbacks:
   EXIT: 172.16.176.183/32
   INBAND: 172.16.176.167/32
   OOB: 172.16.176.151/32
-  GPU: 192.168.1.5/32
+  GPU: 172.16.176.215/32
   STORAGE: 172.16.176.199/32
 prefix_list:
 - id: ALL_PREFIXES

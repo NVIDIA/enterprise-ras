@@ -135,3 +135,47 @@ def test_matching_lo_ip_and_router_id_is_not_a_self_collision():
     c = claims_for(("cl-01", {"lo_ip": "172.16.176.11/32",
                               "router_id": "172.16.176.11"}))
     _assert_no_duplicate_loopbacks(c)
+
+
+# --- the guard must fire BEFORE anything reaches disk (GitLab #74) -----------
+
+def _core(name, index):
+    return {"name": name, "role": name, "category": "core", "index": index,
+            "mgmt_ip": "", "status": "Active"}
+
+
+def test_a_collision_leaves_no_host_vars_behind(tmp_path):
+    """Generation is atomic: a collision writes nothing.
+
+    The guard used to run after the write loop had already emitted every
+    host_vars file, so a collision raised over a half-built inventory. An
+    operator scripting on the output directory rather than the exit status
+    could act on that output.
+    """
+    from excel_parser import generate_host_vars
+
+    nodes = [_core("core-01", 1), _core("core-02", 2)]
+    collide = {"core-01": {"lo": "172.16.176.11/32"},
+               "core-02": {"lo": "172.16.176.11/32"}}
+
+    with pytest.raises(ValueError, match="Duplicate switch loopback"):
+        generate_host_vars(nodes, [], tmp_path, "2-8-9-800",
+                           {"architecture": "2-8-9-800"},
+                           loopback_overrides=collide)
+
+    written = sorted(p.name for p in (tmp_path / "host_vars").glob("*.yml"))
+    assert written == [], (
+        f"a rejected generation left {len(written)} host_vars file(s) on disk: "
+        f"{written}")
+
+
+def test_a_clean_run_still_writes_every_host(tmp_path):
+    """The buffering must not lose writes — the obvious way to break #74's fix."""
+    from excel_parser import generate_host_vars
+
+    nodes = [_core("core-01", 1), _core("core-02", 2)]
+    generate_host_vars(nodes, [], tmp_path, "2-8-9-800",
+                       {"architecture": "2-8-9-800"})
+
+    written = sorted(p.stem for p in (tmp_path / "host_vars").glob("*.yml"))
+    assert written == ["core-01", "core-02"], written

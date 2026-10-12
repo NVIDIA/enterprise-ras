@@ -30,12 +30,14 @@ whichever arch crosses the line next would otherwise reach Air undetected.
 import collections
 import importlib.util
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 import openpyxl
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 EDGE_PREFIX = "cust-net-edge"
@@ -57,15 +59,11 @@ TG = _load_topology_generator()
 
 
 def _committed_sites():
-    out = subprocess.run(
-        ["git", "ls-files", "net-configurator/input/*/*/*.xlsx"],
-        cwd=REPO.parent, capture_output=True, text=True, check=True,
-    ).stdout.split()
-    sites = []
-    for rel in out:
-        parts = Path(rel).parts
-        sites.append((parts[-3], parts[-2]))
-    return sorted(sites)
+    """(arch, site) for every shipped workbook. A glob, not `git ls-files`: the
+    public tree is not a git checkout and has no monorepo parent."""
+    return sorted((p.parts[-3], p.parts[-2])
+                  for site in ("default", "largescale")
+                  for p in REPO.glob(f"input/*/{site}/*.xlsx"))
 
 
 SITES = _committed_sites()
@@ -122,7 +120,7 @@ def test_no_edge_uses_a_port_index_past_the_limit(arch, site):
 
 @pytest.mark.parametrize("arch,site", SITES)
 def test_every_wiremap_edge_is_declared_in_nodes(arch, site):
-    """Defect 2: a Wire Map edge with no Nodes row is not treated as a switch.
+    """Defect 2: a wiremap edge with no node row is not treated as a switch.
 
     It is then wired with ethN interfaces instead of swpN and its uplink load
     is invisible to the sizing pass, so the management star lands on top of it.
@@ -130,23 +128,20 @@ def test_every_wiremap_edge_is_declared_in_nodes(arch, site):
     workbook = REPO / "input" / arch / site / f"{arch}.xlsx"
     wb = openpyxl.load_workbook(workbook, data_only=True)
 
-    wiremap_edges = set()
-    for row in wb["Wire Map"].iter_rows(min_row=2, values_only=True):
-        for name in (row[1], row[5]):
-            if name and str(name).startswith(EDGE_PREFIX):
-                wiremap_edges.add(str(name))
-
-    header = [str(c.value).strip() if c.value else "" for c in wb["Nodes"][1]]
-    name_col = header.index("Name")
+    wiremap_edges = {
+        str(name)
+        for row in workbook_access.wiremap_rows(wb)
+        for name in (row["a_name"], row["z_name"])
+        if name and str(name).startswith(EDGE_PREFIX)
+    }
     declared = {
-        str(row[name_col])
-        for row in wb["Nodes"].iter_rows(min_row=2, values_only=True)
-        if row[name_col] and str(row[name_col]).startswith(EDGE_PREFIX)
+        str(row["name"]) for row in workbook_access.node_rows(wb)
+        if str(row["name"]).startswith(EDGE_PREFIX)
     }
 
     assert wiremap_edges <= declared, (
-        f"{arch}/{site}: Wire Map names {sorted(wiremap_edges - declared)} "
-        f"but the Nodes tab does not declare them. topology_generator will "
+        f"{arch}/{site}: the wiremap names {sorted(wiremap_edges - declared)} "
+        f"but no node row declares them. topology_generator will "
         f"skip their rows and wire them as generic nodes."
     )
 

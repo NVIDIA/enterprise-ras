@@ -1,7 +1,7 @@
 # ============================================================================
 # 2-4-3-200 Deployment Inventory (Generated from Excel)
 # ============================================================================
-# 6 switches: 2 Core, 4 OOB
+# 5 switches: 2 Core, 3 OOB
 # ============================================================================
 
 [core]
@@ -12,7 +12,6 @@ core-02
 oob-switch-01
 oob-switch-02
 oob-switch-03
-oob-switch-04
 
 [nodes]
 su-01-node-01
@@ -35,18 +34,6 @@ su-05-node-01
 su-05-node-02
 su-05-node-03
 su-05-node-04
-su-06-node-01
-su-06-node-02
-su-06-node-03
-su-06-node-04
-su-07-node-01
-su-07-node-02
-su-07-node-03
-su-07-node-04
-su-08-node-01
-su-08-node-02
-su-08-node-03
-su-08-node-04
 
 [support]
 support-01

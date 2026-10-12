@@ -28,7 +28,6 @@ Usage:
 
 import argparse
 import base64
-import importlib
 import json
 import shlex
 import sys
@@ -41,7 +40,6 @@ import yaml
 # so importlib is the cleanest way to load it.
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
-_air_deploy = importlib.import_module("air-deploy".replace("-", "_")) if False else None
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("air_deploy", _HERE / "air-deploy.py")
 _air_deploy = _ilu.module_from_spec(_spec)
@@ -50,6 +48,8 @@ build_server_ni_commands = _air_deploy.build_server_ni_commands
 build_switch_ni_commands = _air_deploy.build_switch_ni_commands
 SERVER_NI_SKIP_PREFIXES = _air_deploy.SERVER_NI_SKIP_PREFIXES
 SWITCH_HOST_PREFIXES = _air_deploy.SWITCH_HOST_PREFIXES
+from utils import topology_oob_uplink_mode  # noqa: E402
+from secrets_loader import SecretsError, load_switch_password  # noqa: E402
 
 
 def write_file_cmd(path: str, content: str) -> str:
@@ -451,7 +451,13 @@ def main() -> None:
     # Mode detection: L2 emits the air-oob-switch + dhcp-oob + oob-server-01
     # trio; L3 mode has no Air-injected bridge node and uses external-conn /
     # external-dhcp / utility (NI generation for the L3 trio is v2 follow-on).
-    mode = topology.get("_oob_uplink_mode", "l2")
+    mode = topology_oob_uplink_mode(topology)
+
+    try:
+        switch_password = load_switch_password(inventory)
+    except SecretsError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        sys.exit(1)
 
     # Generate scripts
     print(f"\n  Writing to {output_dir}/  (mode: {mode})")
@@ -514,13 +520,6 @@ def main() -> None:
         server_count += 1
 
     # Switch NIs ----------------------------------------------------------
-    secrets_path = inventory / "group_vars" / "all" / "secrets.yml"
-    switch_password = "Cumu1usLinux!"  # documented placeholder
-    if secrets_path.exists():
-        with open(secrets_path) as f:
-            sec = yaml.safe_load(f) or {}
-        switch_password = sec.get("switch_password") or switch_password
-
     configs_dir = base / "configs"
     switch_count = 0
     for node_name in sorted(topo_nodes):
@@ -573,4 +572,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SecretsError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        sys.exit(1)

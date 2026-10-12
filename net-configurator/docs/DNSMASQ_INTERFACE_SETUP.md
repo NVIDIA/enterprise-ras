@@ -11,6 +11,18 @@ One of the most common issues when setting up the ZTP server is **wrong network 
 
 **Cause**: Modern Linux systems use predictable network interface names like `ens3`, `ens4`, `enp0s3` instead of the traditional `eth0`, `eth1`.
 
+> **Generated inventories use `ztp_interfaces`, not the top-level keys.**
+> `make import` writes a per-interface `ztp_interfaces` list (`name`, `ip`,
+> `network`, `gateway`, `dhcp_range_start`, `dhcp_range_end`,
+> `dnsmasq_listen`) into `group_vars/all/main.yml`, and `dnsmasq.conf.j2`
+> renders one `interface=` / `dhcp-range=interface:…` scope per entry. Fix
+> the interface name or range **inside the matching `ztp_interfaces` entry**;
+> the generator no longer emits `dnsmasq_interface` / `dhcp_range_start` /
+> `dhcp_range_end` / `dhcp_gateway` / `dhcp_lease_time`, and those keys are
+> ignored whenever `ztp_interfaces` is present. The rest of this page
+> (top-level keys) applies only to hand-written inventories that have no
+> `ztp_interfaces` — the legacy single-interface branch of the template.
+
 ## Quick Fix
 
 Edit `output/<arch>/<site>/inventory/group_vars/all/main.yml`:

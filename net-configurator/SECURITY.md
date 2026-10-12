@@ -54,17 +54,17 @@ Password authentication still exposes secrets in the OS **process table**
 1. **Air `ProxyCommand`** (`playbooks/vars/air_proxy.yml`) passes the jump-host
    password via `sshpass -p '<pw>'` — visible to any local user on the **control
    node**.
-2. **Validation probes** (`scripts/switch_health_probe.sh` and the per-switch/
-   server fan-out in `validate-*`/`restart-ldap-switches`) pass a password as a
-   **positional argument** — to the local probe invocation (visible on the
-   **jump host**) and, for the switch-health sudo password, into a remote
-   `bash -s -- '<pw>'` session (visible in `ps` on the **target switch**).
+2. **`restart-ldap-switches`** and **`push-switch-configs`** hand the password to
+   the task through Ansible's `environment:` / the task text, which Ansible's
+   own `/bin/sh -c` wrapper carries in its argv (visible on the **jump host**).
 
-The SSH-auth password itself is now passed via the `SSHPASS` **environment
-variable** (`sshpass -e`), not `-p`, in `validate-config` / `validate-ping-matrix`
-/ `restart-ldap-switches` **and in the Air SSH helpers** (`scripts/airlib/ssh.py`,
-used by `air-deploy` / `air-ssh-check`) — a prior `-p` argv exposure that has
-since been fixed.
+The validation playbooks (`validate-ztp`, `validate-servers`, `validate-config`,
+`validate-switch-health`, `validate-oob-bgp`, `validate-ping-matrix`) and their
+probe scripts no longer do this: the password reaches the task on **stdin**,
+the task exports it as `SSHPASS` for `sshpass -e`, and a remote `sudo` reads
+it on stdin — never a positional argument, never shell text (ADR-0090). The
+Air SSH helpers (`scripts/airlib/ssh.py`, used by `air-deploy` /
+`air-ssh-check`) also use `sshpass -e`.
 On a multi-tenant host (shared bastion, CI runner with other tenants, jump box
 with other user accounts) the exposures in (1) and (2) above are still visible to
 any local user during the task.
@@ -72,13 +72,34 @@ any local user during the task.
 **Mitigation:** run this tool from a single-user host (your laptop,
 a dedicated controller VM). If you must run on shared infrastructure,
 ensure no other users have local shell access during
-`make validate-*` / `make restart-ldap` / Air deployments.
+`make restart-ldap` / `make push-switch-configs` / Air deployments.
 
 The LDAP server provisioning role (`roles/ldap/tasks/main.yml`) no longer
 exposes its bind/user passwords on the command line — `slappasswd` and
 `ldapadd` now read the secret from a mode-`0600` file (`-T` / `-y`) or the
 process environment, so the remaining `ps auxww` exposure is limited to the
 `sshpass`-based playbooks listed above.
+
+### Air API key only travels over HTTPS; SSH helpers do not forward your agent
+
+Every Air API call carries the NGC API key as a bearer token. `make air-setup`
+accepts only `https://` Air URLs, and every Air script refuses to start when
+the URL from the vault or `AIR_BASE_URL` is not `https://`. The SSH commands
+built by `scripts/airlib/ssh.py` (including the one `air-deploy` prints for
+reaching a sim) do not use agent forwarding (`-A`); add it yourself only for a
+host you trust, since anyone with root on that host can use your forwarded
+keys while the session is open.
+
+### Rendered switch configs are not left on the switch
+
+A rendered `<host>-config.sh` holds the LDAP bind password when LDAP is on.
+`make push-switch-configs` copies it to a private `mktemp` file (mode `0600`,
+random name) and deletes it after it has run, whether or not it succeeded.
+ZTP (`ztp.sh`) downloads it the same way and deletes it once it has been
+sourced; `/tmp/config-load.log` and `/tmp/config-apply.log` are written mode
+`0600`. The ZTP server's `/opt/ztp/manual-ztp.sh` helper reads the switch
+password from `SSHPASS` or a no-echo prompt and passes it with `sshpass -e`,
+never on the command line.
 
 ### Air bootstrap disables SSH host-key checking (accepted risk)
 
@@ -184,14 +205,20 @@ and removed after use.
 
 This project generates Ansible inventories that contain switch, server,
 and LDAP passwords. The defaults shipped in `output/<arch>/<site>/inventory/group_vars/all/secrets.yml`
-are documented placeholders (e.g. `Cumu1usLinux!`) intended for
-development and NVIDIA Air simulations. **For any real deployment you
-MUST:**
+include documented defaults. `Cumu1usLinux!` is allowed for switch passwords
+by `make secrets`, `make generate` and deploy checks, without an override on
+Air or physical targets. This is a tool policy, not a statement that a
+published password is private. Other placeholders such as `CHANGE_ME` remain
+rejected; the development-only opt-in applies to those remaining placeholders
+(see `docs/SECRETS_AND_VAULT.md`). The enabled status page still rejects the
+published default and needs a dedicated password.
 
-1. Replace every password in `output/<arch>/<site>/inventory/group_vars/all/secrets.yml`
-   before running `make deploy` / `make switch-ztp-deploy`.
-2. Encrypt the file with `ansible-vault encrypt` before committing, or
-   keep it outside version control entirely.
+1. Use unique passwords for production. `make secrets ARCH=<arch> [SITE=<site>]`
+   checks switch passwords and prompts for LDAP when the workbook or inventory
+   enables it. Disabled LDAP skips both LDAP passwords; unknown deployment
+   state still checks them. Only shared templates offer a default-no LDAP choice.
+2. Encrypt the file with `ansible-vault encrypt` before committing (the
+   wizard offers this step), or keep it outside version control entirely.
 3. Rotate passwords on personnel change and on any suspected
    compromise. NGC API keys should be rotated at least every 90 days
    — re-run `make air-setup` to update the shared vault.
@@ -206,12 +233,15 @@ exposed, rotate your NGC API key immediately and re-run
 
 Before `make deploy` or `make switch-ztp-deploy` against real hardware:
 
-- [ ] Opened `output/<arch>/<site>/inventory/group_vars/all/secrets.yml` and replaced **every** placeholder password (`switch_ansible_password`, `switch_bootstrap_password` if you are not using factory `cumulus`, `server_ansible_password`, `ansible_become_password`, `switch_password`, `ldap_admin_password`, `ldap_user_default_password`, `status_page_password`).
-- [ ] Ran `ansible-vault encrypt output/<arch>/<site>/inventory/group_vars/all/secrets.yml` (or kept the file outside version control).
-- [ ] Verified none of the placeholders (`Cumu1usLinux!`, `nvidia`, `CHANGE_ME`, `Ldap@123`) appear in the encrypted file:
-      `ansible-vault view output/<arch>/<site>/inventory/group_vars/all/secrets.yml | grep -E "Cumu1usLinux!|nvidia|CHANGE_ME|Ldap@123"` should return nothing.
+- [ ] Reviewed passwords for the services this deployment enables and chose
+      unique values for production. `Cumu1usLinux!` is allowed for switches;
+      unused LDAP credentials can be left unchanged.
+- [ ] Ran `make secrets ARCH=<arch> [SITE=<site>]` and addressed any rejected
+      values for active services. Status-page credentials must be dedicated.
+- [ ] Ran `ansible-vault encrypt output/<arch>/<site>/inventory/group_vars/all/secrets.yml`
+      (or kept the file outside version control).
 - [ ] Rotated NGC API key within the last 90 days (`make air-setup`, select `[2] api_key`).
-- [ ] Confirmed the deployment host is not shared with untrusted local users — some playbook tasks pass passwords to `sshpass` via CLI args, which are visible in `ps auxww`.
+- [ ] Confirmed the deployment host is not shared with untrusted local users — the Air `ProxyCommand` (`sshpass -p`) and `restart-ldap-switches` / `push-switch-configs` (Ansible's `/bin/sh -c` wrapper) still put passwords in process arguments, which are visible in `ps auxww` (see [Known Operational Risks](#known-operational-risks)).
 
 ### On compromise
 

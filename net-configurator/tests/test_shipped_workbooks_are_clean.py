@@ -16,8 +16,9 @@ shipped inputs were clean — only that individual checks behaved on synthetic f
 Covers both shipped sites — `default` and `largescale`. `largescale` was outside this gate
 until 2026-08-13: the flat `input/largescale-<arch>.xlsx` are byte copies of the per-arch
 largescale workbooks, so with only `default` checked they were unguarded on both sides.
-(`sample-<arch>.xlsx` needs no separate case: it is the default plus one Settings cell, and
-`test_flat_workbooks_match_sites.py` pins it to the file checked here.)
+The flat `input/sample-<arch>.xlsx` / `input/largescale-<arch>.xlsx` copies are checked too:
+they are what a partner downloads first, and the sample differs from the default by a
+Settings cell, which is enough to carry a finding of its own.
 
 Two levels, deliberately:
 
@@ -42,32 +43,26 @@ VALIDATOR = REPO / "scripts" / "validate_excel.py"
 # a developer's throwaway site under `input/<arch>/<name>/` must not be able to fail this
 # suite — and must not be able to *satisfy* it either.
 SHIPPED_SITES = ("default", "largescale")
-SHIPPED = sorted(p for site in SHIPPED_SITES for p in REPO.glob(f"input/*/{site}/*.xlsx"))
+NESTED = sorted(p for site in SHIPPED_SITES for p in REPO.glob(f"input/*/{site}/*.xlsx")
+                if not str(p).endswith(".intake.xlsx"))
+FLAT = sorted(p for p in REPO.glob("input/*.xlsx") if re.match(r"(sample|largescale)-", p.name))
+SHIPPED = NESTED + FLAT
 
 
 def _label(p: Path) -> str:
+    if p.parent == REPO / "input":
+        return p.name
     return f"{p.parent.parent.name}/{p.parent.name}"
+
 
 # Warning SHAPES our shipped defaults are currently allowed to emit. Substring match,
 # so counts and switch names inside a message do not need pinning. Each entry needs a
-# reason and an owner, not just a line.
-#
-#   ztp_enabled     — a Settings row with no consumer in the pipeline. Ours to delete
-#                     from the generator; every partner sees it on every architecture.
-#   Default loopbacks — every workbook that has plane switches at all: 2-4-5-800 at both
-#                     sites, and 2-8-9-400 / 2-8-9-400-SP / 2-8-9-800 at largescale only
-#                     (their `default` sites are collapsed-core and ship zero plane
-#                     switches, which is why widening this suite to largescale added the
-#                     shape on three more archs). The dual-plane fabric addresses its
-#                     plane loopbacks outside Settings.loopback_base, which the
-#                     validator's own message calls expected for dual-plane archs.
+# reason and an owner, not just a line. Today no shipped workbook warns at all.
 #
 # Shrinking this set is always safe. GROWING it means a shipped workbook got worse, so
 # the addition has to be deliberate.
-ALLOWED_WARNING_SHAPES = {
-    "'ztp_enabled' is set but has no effect",
-    "switch(es) have Default loopbacks in",
-}
+ALLOWED_WARNING_SHAPES: set[str] = set()
+
 
 def _run(xlsx: Path) -> str:
     proc = subprocess.run([sys.executable, str(VALIDATOR), str(xlsx)],
@@ -140,7 +135,8 @@ def test_selection_covers_every_tracked_workbook():
     having. Tracked-ness is also the right definition of "shipped" — a developer's
     throwaway site under `input/<arch>/<name>/` is untracked and stays out of both sets.
     """
-    ls = subprocess.run(["git", "ls-files", "input/*/*/*.xlsx"],
+    ls = subprocess.run(["git", "ls-files", "input/*/*/*.xlsx",
+                         "input/sample-*.xlsx", "input/largescale-*.xlsx"],
                         cwd=str(REPO), capture_output=True, text=True)
     if ls.returncode != 0 or not ls.stdout.strip():
         pytest.skip("not a git checkout (source tarball) — nothing to cross-check against")
@@ -154,23 +150,38 @@ def test_selection_covers_every_tracked_workbook():
     )
 
 
+# The tag lives in the monorepo's history (a shallow CI clone may lack it);
+# a public checkout need not carry it at all. git runs where the marker looks:
+# the monorepo root, not the tool root.
+@pytest.mark.internal_only(".git")
 def test_the_gate_would_have_caught_the_v6_default():
     """Proof the gate is not vacuous, run against the file that motivated it.
 
     `public-v6.0.4`'s 2-8-9-800 default is the real regression this suite failed to
     catch. If this ever stops finding errors there, the parser above has drifted and
     both tests are passing for the wrong reason.
+
+    That workbook predates the intake form, and the validator no longer reads a
+    legacy workbook at all (ADR-0064 D1), so convert it first — the same one-time
+    step a partner on an old file takes. The defects are in the addressing, which
+    conversion carries across unchanged.
     """
     blob = subprocess.run(
         ["git", "show", "public-v6.0.4:input/2-8-9-800/default/2-8-9-800.xlsx"],
-        cwd=str(REPO), capture_output=True)
+        cwd=str(REPO.parent), capture_output=True)
     if blob.returncode != 0 or not blob.stdout:
         pytest.skip("public-v6.0.4 tag not present in this checkout")
 
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
+        legacy = Path(tmp) / "v6-legacy.xlsx"
+        legacy.write_bytes(blob.stdout)
         old = Path(tmp) / "v6.xlsx"
-        old.write_bytes(blob.stdout)
+        conv = subprocess.run(
+            [sys.executable, str(REPO / "scripts" / "convert_workbook.py"),
+             str(legacy), str(old)],
+            cwd=str(REPO), capture_output=True, text=True)
+        assert conv.returncode == 0, f"conversion failed:\n{conv.stdout}\n{conv.stderr}"
         errors = _section(_run(old), "ERRORS")
 
     assert errors, "the v6 default reported no errors — the section parser has drifted"

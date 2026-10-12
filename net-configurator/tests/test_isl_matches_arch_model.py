@@ -35,19 +35,17 @@ to fix an apply-breaking defect and left the model alone -- but ERA-00012
 Table 15 backs the MODEL ("Twin-port OSFP, 2x400 Gbps", 20 at SU=1), so which
 side is correct is open, not a simple stale model. Neither is auto-corrected.
 """
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
 # Arch models are internal-only (data-models/, ADR-0027) and absent from the
-# public tree, so this skips there rather than failing. Defined locally rather
-# than imported from conftest: conftest is loaded by pytest, not importable.
-_HAVE_ARCH_MODELS = (Path(__file__).resolve().parents[2] / "data-models" / "models").exists()
-needs_arch_models = pytest.mark.skipif(
-    not _HAVE_ARCH_MODELS,
-    reason="arch models are internal-only (data-models/), absent in the public tree")
+# public tree, which deselects these tests (internal_only, tests/conftest.py).
+needs_arch_models = pytest.mark.internal_only("data-models/models")
 
 REPO = Path(__file__).resolve().parent.parent
 VALIDATOR = REPO / "scripts" / "validate_excel.py"
@@ -131,15 +129,10 @@ def test_geometry_message_names_both_sides(tmp_path):
 
     # Rewrite the ISL row's geometry to disagree with the model (400G 2x4).
     wb = openpyxl.load_workbook(xlsx)
-    ws = wb["VLANs & Profiles"]
-    for r in range(1, ws.max_row + 1):
-        if str(ws.cell(r, 1).value or "").strip().upper() == "ISL":
-            ws.cell(r, 8).value = "200G"
-            ws.cell(r, 9).value = 4
-            ws.cell(r, 10).value = 2
-            break
-    else:
-        pytest.fail("no ISL port-profile row to perturb")
+    ws, cols, r = workbook_access.port_profile_row(wb, "ISL")
+    ws.cell(r, cols["speed"]).value = "200G"
+    ws.cell(r, cols["breakout"]).value = 4
+    ws.cell(r, cols["lanes"]).value = 2
     wb.save(xlsx)
 
     p = _run(xlsx)

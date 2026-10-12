@@ -18,13 +18,12 @@ from pathlib import Path
 
 import openpyxl
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
 # Arch models are internal-only (data-models/, ADR-0027) and absent from the
-# public tree, so this skips there rather than failing. Defined locally rather
-# than imported from conftest: conftest is loaded by pytest, not importable.
-_HAVE_ARCH_MODELS = (Path(__file__).resolve().parents[2] / "data-models" / "models").exists()
-needs_arch_models = pytest.mark.skipif(
-    not _HAVE_ARCH_MODELS,
-    reason="arch models are internal-only (data-models/), absent in the public tree")
+# public tree, which deselects these tests (internal_only, tests/conftest.py).
+needs_arch_models = pytest.mark.internal_only("data-models/models")
 
 NC = Path(__file__).resolve().parent.parent
 VALIDATOR = NC / "scripts" / "validate_excel.py"
@@ -57,11 +56,10 @@ def _strip_uplinks(src, dst, profile, keep):
     """Copy `src` to `dst` keeping only `keep` rows of `profile`."""
     shutil.copy(src, dst)
     wb = openpyxl.load_workbook(dst)
-    ws = wb["Wire Map"]
-    hdr = [str(c.value or "").strip() for c in next(ws.iter_rows())]
-    ip = hdr.index("Network Profile") + 1
+    ws, cols, first = workbook_access.sheet_table(wb, "Wiremap")
+    ip = cols["network profile"]
     seen, drop = 0, []
-    for r in range(ws.max_row, 1, -1):
+    for r in range(ws.max_row, first - 1, -1):
         if str(ws.cell(r, ip).value or "").strip() == profile:
             seen += 1
             if seen > keep:

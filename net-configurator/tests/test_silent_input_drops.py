@@ -29,6 +29,9 @@ import openpyxl
 import pytest
 import yaml
 
+sys.path.insert(0, str(Path(__file__).parent))
+import workbook_access  # noqa: E402
+
 REPO = Path(__file__).resolve().parent.parent
 PARSER = REPO / "scripts" / "excel_parser.py"
 
@@ -74,12 +77,8 @@ def _hv(inv, host):
 # --------------------------------------------------- ERA-54: plane-mate lo ---
 
 def _set_loopback(wb, switch, value):
-    ws = wb["Loopbacks & ASNs"]
-    for row in ws.iter_rows(min_row=2):
-        if str(row[0].value or "").strip() == switch:
-            row[1].value = value
-            return
-    raise AssertionError(f"{switch} not found on the Loopbacks sheet")
+    assert workbook_access.set_loopback_ip(wb, switch, value), \
+        f"{switch} not found on Switch Data"
 
 
 def test_plane_mate_follows_the_loopbacks_sheet(gen):
@@ -129,19 +128,17 @@ _REWIRED = {}
 
 def _rewire_node_to_bare_port(wb):
     """Move ALL of one parent port's node links from swpNsM onto bare swpN."""
-    ws = wb["Wire Map"]
-    hdr = [str(c.value or "").strip() for c in ws[1]]
-    b_port = hdr.index("Port (B)") + 1
+    ws, cols, first = workbook_access.sheet_table(wb, "Wiremap")
+    z_port = cols["port (z)"]
     parent = None
-    for row in ws.iter_rows(min_row=2):
-        val = str(row[b_port - 1].value or "")
-        m = re.match(r"^(swp\d+)s\d+$", val)
+    for r in range(first, ws.max_row + 1):
+        m = re.match(r"^(swp\d+)s\d+$", str(ws.cell(r, z_port).value or ""))
         if not m:
             continue
         if parent is None:
             parent = m.group(1)
         if m.group(1) == parent:
-            row[b_port - 1].value = parent
+            ws.cell(r, z_port).value = parent
     assert parent, "no sub-port node link found to rewire"
     _REWIRED["parent"] = parent
 
@@ -167,12 +164,11 @@ def test_bare_swp_node_port_is_not_silently_dropped(gen):
 def test_unrecognised_switch_port_warns_rather_than_vanishing(gen):
     """Anything that is neither swpN nor swpNsM should say so on stderr."""
     def mutate(wb):
-        ws = wb["Wire Map"]
-        hdr = [str(c.value or "").strip() for c in ws[1]]
-        b_port = hdr.index("Port (B)") + 1
-        for row in ws.iter_rows(min_row=2):
-            if re.match(r"^swp\d+s\d+$", str(row[b_port - 1].value or "")):
-                row[b_port - 1].value = "not-a-port"
+        ws, cols, first = workbook_access.sheet_table(wb, "Wiremap")
+        z_port = cols["port (z)"]
+        for r in range(first, ws.max_row + 1):
+            if re.match(r"^swp\d+s\d+$", str(ws.cell(r, z_port).value or "")):
+                ws.cell(r, z_port).value = "not-a-port"
                 return
     p, _ = gen(ARCH_GSL, "era57-b", mutate)
     assert p.returncode == 0, p.stdout + p.stderr

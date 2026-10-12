@@ -5,8 +5,8 @@
 All functions raise AirAPIError on failure instead of calling sys.exit().
 
 NGC v3 uses a mix of API versions:
-  - v3: simulations, resource-budgets, SSH services (query)
-  - v2: SSH service creation, topology export, userconfigs, ZTP
+  - v3: simulations, resource-budgets, SSH services (query and creation)
+  - v2: topology export, userconfigs, ZTP
   - v1: simulation-node, simulation-interface, sshkey
 """
 
@@ -14,11 +14,11 @@ import json
 import re
 import time
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from airlib.errors import AirAPIError
+from airlib.errors import AirAPIError, AirAuthError, AirConfigError
 from airlib.models import ResourceBudget, SSHService, SimState, Simulation
 
 
@@ -42,11 +42,8 @@ _AIR_UI_TO_API = {
     "air-ngc.nvidia.com": "https://api.dsx-air.nvidia.com",       # legacy alias
     # Internal
     "inside.dsx-air.nvidia.com": "https://api.inside.dsx-air.nvidia.com",
-    # NOTE: the legacy internal host ngc.air-inside.nvidia.com is deliberately
-    # NOT listed. It is already handled by the generic ngc.<env> → api.<env>
-    # rule below, and api.air-inside.nvidia.com still resolves (same address as
-    # api.inside.dsx-air.nvidia.com). Adding it here would gain nothing and
-    # would break the documented generic-rewrite contract.
+    # Legacy ngc.<env> hosts use the generic rewrite below; do not add
+    # aliases here that would change that compatibility contract.
 }
 
 # Retained for callers that introspect the public UI host list.
@@ -60,12 +57,9 @@ def _api(base_url: str) -> str:
     Air serves the web UI and API on different hostnames, and the mapping is
     not mechanical — it is an explicit table (``_AIR_UI_TO_API``):
 
-    - Internal: ``inside.dsx-air.nvidia.com`` → ``api.inside.dsx-air.nvidia.com``
-    - Public:   ``dsx-air.nvidia.com`` → ``api.dsx-air.nvidia.com``
-
-    The previous names (``ngc.air-inside.nvidia.com``, ``air-ngc.nvidia.com``)
-    are kept so existing ``.era-secrets`` vaults keep working; both still
-    resolve to the same addresses as their replacements.
+    For example, ``dsx-air.nvidia.com`` maps to ``api.dsx-air.nvidia.com``.
+    Legacy aliases and the generic ``ngc.<env>`` rewrite are retained for
+    existing ``.era-secrets`` vaults.
 
     If ``base_url`` is already an API hostname (e.g., ``api.dsx-air.nvidia.com``),
     it is returned unchanged.
@@ -79,20 +73,26 @@ def _api(base_url: str) -> str:
     return re.sub(r"^(https?://)ngc\.", r"\1api.", base_url)
 
 
-def _checked_next(base_url: str, next_url: str | None) -> str | None:
+def _checked_next(base_url: str, next_url: str | None,
+                  page_url: str | None = None) -> str | None:
     """Guard a paginated ``next`` URL before following it with the bearer token.
 
     The server controls ``next``; an absolute URL pointing off-origin would make
     the client send ``Authorization: Bearer <token>`` to an attacker host
     (security review #4 / CWE-200). Relative ``next`` values are same-origin by definition
-    and allowed; absolute values must match the Air API scheme+host. Returns the
-    URL unchanged (or ``None``) when safe; raises ``AirAPIError`` otherwise.
+    and are resolved (RFC 3986) against ``page_url``, the page that returned them, or
+    the Air API root when it is not given (callers' clients have no base URL);
+    absolute values must match the Air API scheme+host. Returns the URL to fetch
+    (or ``None``) when safe; raises ``AirAPIError`` otherwise.
     """
     if not next_url:
         return next_url
-    api = urlsplit(_api(base_url))
+    api_url = _api(base_url)
+    api = urlsplit(api_url)
     nxt = urlsplit(next_url)
-    if nxt.netloc and (nxt.scheme, nxt.netloc) != (api.scheme, api.netloc):
+    if not nxt.netloc:
+        return urljoin(page_url or api_url.rstrip("/") + "/", next_url)
+    if (nxt.scheme, nxt.netloc) != (api.scheme, api.netloc):
         raise AirAPIError(
             f"Refusing to follow pagination to off-origin host {nxt.netloc!r} "
             f"(expected {api.netloc!r}) — would leak the bearer token."
@@ -103,22 +103,6 @@ def _checked_next(base_url: str, next_url: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-@dataclass
-class AirSSHKey:
-    """SSH key registered in user's Air account."""
-    id: str
-    name: str
-    fingerprint: str
-
-    @classmethod
-    def from_api(cls, data: dict) -> "AirSSHKey":
-        return cls(
-            id=data.get("id", ""),
-            name=data.get("name", ""),
-            fingerprint=data.get("fingerprint", ""),
-        )
-
 
 @dataclass
 class UserConfig:
@@ -139,9 +123,8 @@ class UserConfig:
 
 
 # Optional NGC org id sent as the `nv-ngc-org` header on every Air API call.
-# None/empty (the default) means the header is omitted — which the air-inside
-# gateway currently accepts (verified 2026-06-29). Set it via set_ngc_org()
-# from config to future-proof for a gateway that mandates the org. Sending a
+# None/empty (the default) omits the header. Set it via set_ngc_org()
+# from config when the selected gateway requires an organization id. Sending a
 # wrong/empty value could itself 400, so we only attach it when explicitly set.
 _NGC_ORG: str | None = None
 
@@ -195,6 +178,109 @@ def _checked_json(resp: httpx.Response) -> dict | list:
 
 
 # ---------------------------------------------------------------------------
+# Image catalog (v3)
+# ---------------------------------------------------------------------------
+
+_VERSION_RE = re.compile(r"(?<![\d.])\d+\.\d+\.\d+(?![\d])")
+
+
+def list_image_names(
+    client: httpx.Client, base_url: str, token: str,
+) -> dict[str, str]:
+    """GET /api/v3/images/ — map each image's name and id to its name.
+
+    Covers every image this key can see; a topology `os` may be either key.
+
+    401/403 raises AirAuthError; any other failure, including a timeout or a
+    dropped connection, raises AirAPIError.
+    """
+    url = f"{_api(base_url)}/api/v3/images/"
+    names: dict[str, str] = {}
+    while url:
+        try:
+            resp = client.get(url, headers=_headers(token))
+        except httpx.RequestError as exc:
+            raise AirAPIError(
+                f"Could not read the Air image catalog at {url}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+        if resp.status_code in (401, 403):
+            raise AirAuthError(
+                f"Air refused the API key reading the image catalog "
+                f"(HTTP {resp.status_code} at {url}): {resp.text[:300]}\n"
+                f"The key authenticated but cannot list images. Check that it "
+                f"belongs to the Air instance in `air_url`, or re-run `make air-setup`."
+            )
+        try:
+            data = _checked_json(resp)
+        except AirAPIError as exc:
+            raise AirAPIError(f"Could not read the Air image catalog: {exc}") from exc
+        if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+            raise AirAPIError(f"Unexpected image catalog response from {url}: {str(data)[:300]}")
+        for image in data["results"]:
+            if not isinstance(image, dict) or not isinstance(image.get("name"), str):
+                raise AirAPIError(
+                    f"Unexpected image catalog entry from {url}: {str(image)[:300]}"
+                )
+            names[image["name"]] = image["name"]
+            if image.get("id"):
+                names[str(image["id"])] = image["name"]
+        url = _checked_next(base_url, data.get("next"), url)
+    return names
+
+
+def topology_images(topology_json: dict) -> dict[str, list[str]]:
+    """Map each image a topology's nodes reference (`os`) to those node names."""
+    used: dict[str, list[str]] = {}
+    for node, props in sorted(topology_json.get("content", {}).get("nodes", {}).items()):
+        image = (props or {}).get("os")
+        if image:
+            used.setdefault(image, []).append(node)
+    return used
+
+
+def check_topology_images(
+    client: httpx.Client, base_url: str, token: str, topology_json: dict,
+) -> list[str]:
+    """Refuse a topology that names an image this Air instance does not have.
+
+    Air accepts such an import with HTTP 200 and then moves the simulation to
+    INVALID with no nodes and no reason, so the failure has to be caught here.
+    Returns the sorted image names on success; raises AirConfigError listing
+    every missing name (with the nodes using it and any catalog image of the
+    same version), or AirAuthError / AirAPIError if the catalog can't be read.
+    """
+    used = topology_images(topology_json)
+    if not used:
+        return []
+    catalog = list_image_names(client, base_url, token)
+    missing = [name for name in sorted(used) if name not in catalog]
+    if not missing:
+        return sorted(used)
+    lines = [f"{len(missing)} image(s) in the topology do not exist on {_api(base_url)}:"]
+    for name in missing:
+        nodes = used[name]
+        shown = ", ".join(nodes[:5]) + (f", … (+{len(nodes) - 5})" if len(nodes) > 5 else "")
+        lines.append(f"  - {name!r}: {len(nodes)} node(s): {shown}")
+        version = _VERSION_RE.search(name)
+        same = (
+            re.compile(rf"(?<![\d.]){re.escape(version.group(0))}(?![\dA-Za-z])")
+            if version else None
+        )
+        similar = sorted(
+            {c for c in catalog.values() if same and same.search(c)}
+        )
+        if similar:
+            lines.append(f"      same version on this instance: {', '.join(similar[:5])}")
+    lines.append(
+        "No simulation was created. The image name comes from the workbook's "
+        "Cumulus version via AIR_IMAGE_MAP and is never substituted (ADR-0075); "
+        "deploy to an Air instance that has it, or have the image added there."
+    )
+    raise AirConfigError("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
 # Simulation CRUD (v3)
 # ---------------------------------------------------------------------------
 
@@ -208,7 +294,7 @@ def list_simulations(
         resp = client.get(url, headers=_headers(token))
         data = _checked_json(resp)
         results.extend(Simulation.from_api(s) for s in data.get("results", []))
-        url = _checked_next(base_url, data.get("next"))
+        url = _checked_next(base_url, data.get("next"), url)
     return results
 
 
@@ -388,7 +474,7 @@ def list_userconfigs(
         resp = client.get(url, headers=_headers(token))
         data = _checked_json(resp)
         results.extend(UserConfig.from_api(c) for c in data.get("results", []))
-        url = _checked_next(base_url, data.get("next"))
+        url = _checked_next(base_url, data.get("next"), url)
     return results
 
 
@@ -500,14 +586,6 @@ def get_simulation_detail(
         headers=_headers(token),
     )
     return _checked_json(resp)
-
-
-def get_simulation_state(
-    client: httpx.Client, base_url: str, token: str, sim_id: str,
-) -> str:
-    """GET /api/v3/simulations/{id}/ and return the mapped state string."""
-    data = get_simulation_detail(client, base_url, token, sim_id)
-    return Simulation.from_api(data).state
 
 
 def check_node_errors(
@@ -633,7 +711,8 @@ def create_ssh_service_for_node(
 
     Uses v3 endpoints. SSH services can only be added to outbound (unlinked)
     interfaces — typically eth0 which has external connectivity in ERA topologies.
-    ERA needs SSH services on oob-server-01 and dhcp-oob.
+    Callers select infra nodes for the configured OOB mode: utility,
+    external-conn and external-dhcp for L3; oob-server-01 and dhcp-oob for L2.
     """
     headers = _headers(token)
     api = _api(base_url)
@@ -651,7 +730,7 @@ def create_ssh_service_for_node(
                 node_id = n["id"]
         if node_id:
             break
-        url = _checked_next(base_url, data.get("next"))
+        url = _checked_next(base_url, data.get("next"), url)
 
     if not node_id:
         raise AirAPIError(
@@ -672,7 +751,7 @@ def create_ssh_service_for_node(
                 break
         if iface_id:
             break
-        url = _checked_next(base_url, data.get("next"))
+        url = _checked_next(base_url, data.get("next"), url)
 
     if not iface_id:
         raise AirAPIError(
@@ -719,7 +798,7 @@ def create_service_for_node(
                 node_id = n["id"]
         if node_id:
             break
-        url = _checked_next(base_url, data.get("next"))
+        url = _checked_next(base_url, data.get("next"), url)
 
     if not node_id:
         raise AirAPIError(f"Node '{node_name}' not found in simulation.")
@@ -736,7 +815,7 @@ def create_service_for_node(
                 break
         if iface_id:
             break
-        url = _checked_next(base_url, data.get("next"))
+        url = _checked_next(base_url, data.get("next"), url)
 
     if not iface_id:
         raise AirAPIError(
@@ -751,35 +830,6 @@ def create_service_for_node(
         json={"name": service_name, "interface": iface_id, "node_port": node_port},
     )
     return SSHService.from_api(_checked_json(resp))
-
-
-def get_or_create_ssh_service_for_node(
-    client: httpx.Client,
-    base_url: str,
-    token: str,
-    sim_id: str,
-    node_name: str,
-) -> SSHService:
-    """Find existing SSH service for a node, or create one."""
-    return create_ssh_service_for_node(client, base_url, token, sim_id, node_name)
-
-
-# ---------------------------------------------------------------------------
-# Node listing (v1 — still used by NGC v3)
-# ---------------------------------------------------------------------------
-
-def list_simulation_nodes(
-    client: httpx.Client, base_url: str, token: str, sim_id: str,
-) -> list[dict]:
-    """List all nodes in a simulation (v3, paginated)."""
-    all_nodes = []
-    url = f"{_api(base_url)}/api/v3/simulations/nodes/?simulation={sim_id}&limit=500&ordering=name"
-    while url:
-        resp = client.get(url, headers=_headers(token))
-        data = _checked_json(resp)
-        all_nodes.extend(data.get("results", []))
-        url = _checked_next(base_url, data.get("next"))
-    return all_nodes
 
 
 # ---------------------------------------------------------------------------
@@ -810,17 +860,9 @@ def prefetch_node_ids(
             name = n.get("name", "")
             if name:
                 mapping[name] = n["id"]
-        url = _checked_next(base_url, data.get("next"))
+        url = _checked_next(base_url, data.get("next"), url)
     _NODE_ID_CACHE[sim_id] = mapping
     return mapping
-
-
-def clear_node_id_cache(sim_id: str | None = None) -> None:
-    """Drop the cached node map for a sim (or all sims)."""
-    if sim_id is None:
-        _NODE_ID_CACHE.clear()
-    else:
-        _NODE_ID_CACHE.pop(sim_id, None)
 
 
 def _find_node_id(

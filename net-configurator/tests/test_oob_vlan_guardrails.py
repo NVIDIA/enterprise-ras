@@ -21,7 +21,6 @@ import sys
 from pathlib import Path
 
 import openpyxl
-import pytest
 
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
